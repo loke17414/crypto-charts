@@ -1,0 +1,92 @@
+#!/bin/bash
+# Fix "Not Found" / 404 on /api/bot/* — pull latest code, kill stale processes, restart.
+#
+# Run on VPS as root (SSH):
+#   cd ~/crypto-charts   # or wherever you cloned the repo
+#   chmod +x deploy/update-server.sh
+#   sudo ./deploy/update-server.sh
+#
+# Success: curl shows "apiVersion": 2 and /api/bot/status returns JSON (not 404).
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+echo "==> CryptoCharts update-server"
+echo "    Root: $ROOT"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "==> Re-run with sudo: sudo $0"
+  exit 1
+fi
+
+echo "==> git pull (hard reset to origin/main)"
+git fetch origin
+git reset --hard origin/main
+
+echo "==> Stop old processes on ports 8000 / 8765"
+systemctl stop crypto-web 2>/dev/null || true
+for port in 8000 8765; do
+  if command -v fuser >/dev/null; then
+    fuser -k "${port}/tcp" 2>/dev/null || true
+  fi
+done
+sleep 1
+
+if ! command -v python3 >/dev/null; then
+  apt-get update
+  apt-get install -y python3 python3-venv python3-pip curl
+fi
+
+if [ ! -d .venv ]; then
+  python3 -m venv .venv
+fi
+# shellcheck disable=SC1091
+source .venv/bin/activate
+pip install -q -r requirements.txt
+
+if ! command -v node >/dev/null; then
+  echo "==> Installing Node.js..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+echo "    node: $(node -v)"
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+fi
+grep -q '^LISTEN_HOST=' .env 2>/dev/null || echo 'LISTEN_HOST=0.0.0.0' >> .env
+
+echo "==> Install systemd unit (paths -> $ROOT)"
+sed "s|/root/crypto-charts|$ROOT|g" deploy/crypto-web.service > /etc/systemd/system/crypto-web.service
+systemctl daemon-reload
+systemctl enable crypto-web
+systemctl start crypto-web
+sleep 3
+
+echo ""
+echo "==> Verify API"
+HEALTH=$(curl -sf "http://127.0.0.1:8000/api/health" || echo "FAIL")
+echo "$HEALTH"
+
+if echo "$HEALTH" | grep -q '"apiVersion": 2'; then
+  echo "OK: API version 2"
+else
+  echo "ERROR: apiVersion 2 not found — API still old or not running"
+  journalctl -u crypto-web -n 40 --no-pager
+  exit 1
+fi
+
+BOT=$(curl -sf "http://127.0.0.1:8000/api/bot/status" || echo "FAIL")
+echo "$BOT"
+if echo "$BOT" | grep -q '"ok"'; then
+  echo "OK: /api/bot/status works"
+else
+  echo "ERROR: /api/bot/status still 404"
+  exit 1
+fi
+
+PUBLIC=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+echo ""
+echo "==> Done. Open: http://${PUBLIC}:8765/trading.html"
+echo "    Then Ctrl+F5 refresh and start bot."
