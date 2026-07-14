@@ -1,6 +1,15 @@
 /* Local API client for Binance Futures Testnet */
 const FuturesApiClient = (() => {
-  const API_BASE = 'http://127.0.0.1:8000';
+  // Same host as the page, port 8000 — works on localhost and on a remote VPS
+  // (http://<server-ip>:8765 → API http://<server-ip>:8000).
+  function resolveApiBase() {
+    if (typeof window !== 'undefined' && window.location?.hostname) {
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      return `${protocol}//${window.location.hostname}:8000`;
+    }
+    return 'http://127.0.0.1:8000';
+  }
+  const API_BASE = resolveApiBase();
   let connected = false;
 
   function formatApiError(data, status) {

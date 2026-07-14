@@ -1,0 +1,29 @@
+# systemd unit — CryptoCharts web UI + API on VPS (24/7, Method 2)
+#
+# Setup:
+#   sudo cp deploy/crypto-web.service /etc/systemd/system/crypto-web.service
+#   # edit User / paths if needed
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now crypto-web
+#
+# Logs: journalctl -u crypto-web -f
+# Stop headless bot first: docker stop crypto-bot
+
+[Unit]
+Description=CryptoCharts web UI and Futures API (remote)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/crypto-charts
+Environment=LISTEN_HOST=0.0.0.0
+EnvironmentFile=-/root/crypto-charts/.env
+ExecStart=/root/crypto-charts/.venv/bin/python launch.py
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

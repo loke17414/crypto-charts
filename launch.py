@@ -14,6 +14,8 @@ from pathlib import Path
 
 WEB_PORT = 8765
 API_PORT = 8000
+LISTEN_HOST = os.environ.get("LISTEN_HOST", "127.0.0.1").strip() or "127.0.0.1"
+REMOTE_MODE = LISTEN_HOST not in ("127.0.0.1", "localhost", "::1")
 
 
 def app_dir() -> Path:
@@ -90,7 +92,7 @@ def start_api_server() -> None:
 
     from bot.server import app
 
-    uvicorn.run(app, host="127.0.0.1", port=API_PORT, log_level="info")
+    uvicorn.run(app, host=LISTEN_HOST, port=API_PORT, log_level="info")
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -107,7 +109,7 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 def start_web_server(root: Path, port: int) -> None:
     os.chdir(root)
     handler = QuietHandler
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    httpd = http.server.ThreadingHTTPServer((LISTEN_HOST, port), handler)
     httpd.serve_forever()
 
 
@@ -119,12 +121,12 @@ def main() -> int:
     print("  CryptoCharts 시작 중...")
     print()
 
-    if not port_available(API_PORT):
+    if not port_available(API_PORT, LISTEN_HOST):
         print(port_in_use_message(API_PORT))
         input("  Enter 키를 누르면 종료합니다...")
         return 1
 
-    if not port_available(WEB_PORT):
+    if not port_available(WEB_PORT, LISTEN_HOST):
         print(port_in_use_message(WEB_PORT))
         input("  Enter 키를 누르면 종료합니다...")
         return 1
@@ -142,20 +144,30 @@ def main() -> int:
     web_thread.start()
     time.sleep(0.3)
 
-    trading_url = f"http://localhost:{WEB_PORT}/trading.html"
-    chart_url = f"http://localhost:{WEB_PORT}/index.html"
+    host_label = LISTEN_HOST if REMOTE_MODE else "localhost"
+    trading_url = f"http://{host_label}:{WEB_PORT}/trading.html"
+    chart_url = f"http://{host_label}:{WEB_PORT}/index.html"
+    api_url = f"http://{host_label}:{API_PORT}"
 
     print("  웹 UI:        ", chart_url)
     print("  자동매매:     ", trading_url)
-    print("  API 서버:     ", f"http://localhost:{API_PORT}")
+    print("  API 서버:     ", api_url)
+    if REMOTE_MODE:
+        print()
+        print("  [원격 모드] 브라우저에서 http://<서버IP>:8765/trading.html 로 접속하세요.")
+        print("  Vultr 방화벽: TCP 8765, 8000 허용 필요. headless 봇(docker)과 동시 실행 금지.")
     print()
-    print("  브라우저(Chrome)가 자동으로 열립니다. 종료: Ctrl+C")
+    if REMOTE_MODE:
+        print("  종료: Ctrl+C")
+    else:
+        print("  브라우저(Chrome)가 자동으로 열립니다. 종료: Ctrl+C")
     print()
 
-    opened = open_in_chrome(trading_url)
-    if not opened:
-        print("  [안내] Chrome을 찾지 못해 기본 브라우저로 엽니다.")
-        webbrowser.open(trading_url)
+    if not REMOTE_MODE:
+        opened = open_in_chrome(trading_url)
+        if not opened:
+            print("  [안내] Chrome을 찾지 못해 기본 브라우저로 엽니다.")
+            webbrowser.open(trading_url)
 
     try:
         while True:
