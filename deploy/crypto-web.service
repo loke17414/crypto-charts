@@ -18,6 +18,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/root/crypto-charts
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=LISTEN_HOST=0.0.0.0
 EnvironmentFile=-/root/crypto-charts/.env
 ExecStart=/root/crypto-charts/.venv/bin/python launch.py

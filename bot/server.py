@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.exchange import BinanceFuturesClient
-from bot.server_bot import bot_status, restore_bot_if_needed, save_strategy_json, start_bot, stop_bot
+from bot.server_bot import bot_diagnostics, bot_status, restore_bot_if_needed, save_strategy_json, start_bot, stop_bot
 from bot.strategy_ai import ai_available, configure_openai_api_key, interpret_strategy, test_openai_api_key
 from bot.strategy_schema import StrategyInterpretRequest, StrategyInterpretResponse, StrategySettings
 
@@ -132,6 +132,7 @@ def health() -> dict[str, Any]:
         "testnet": True,
         "strategyAi": ai,
         "bot": bot_status(),
+        "botDiagnostics": bot_diagnostics(),
     }
 
 

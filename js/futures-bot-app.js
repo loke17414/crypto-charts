@@ -585,6 +585,13 @@ const FuturesBotApp = (() => {
       addLog('서버 봇 실행 중 — 브라우저를 닫아도 24/7 거래 계속', 'info');
     }
 
+    const diag = health.botDiagnostics;
+    if (diag && !diag.nodeFound) {
+      addLog('서버에 Node.js가 없습니다. VPS에서 nodejs 설치 후 crypto-web 재시작 필요', 'loss');
+    } else if (diag && !diag.botScriptExists) {
+      addLog('서버에 bot-js/bot.js가 없습니다. git pull 후 재시작하세요.', 'loss');
+    }
+
     return health;
   }
 
@@ -1406,7 +1413,10 @@ const FuturesBotApp = (() => {
           'info',
         );
       } catch (err) {
-        addLog(`서버 봇 시작 실패: ${err.message}`, 'loss');
+        const hint = /Node\.js|node/i.test(err.message)
+          ? ' → VPS SSH: sudo apt install -y nodejs && sudo systemctl restart crypto-web'
+          : '';
+        addLog(`서버 봇 시작 실패: ${err.message}${hint}`, 'loss');
         return;
       }
     } else {
