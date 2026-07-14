@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoCharts — 비트코인·이더리움 실시간 암호화폐 차트</title>
+  <meta name="description" content="비트코인, 이더리움 등 주요 암호화폐의 실시간 가격 차트를 무료로 확인하세요. 캔들·라인 차트, 시가총액 Top 30, 코인 검색 지원.">
+  <meta name="keywords" content="암호화폐, 비트코인, 이더리움, 코인 차트, 암호화폐 차트, BTC, ETH, 실시간 가격, 캔들차트">
+  <meta name="author" content="CryptoCharts">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://crypto-charts-kr.netlify.app/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="CryptoCharts — 암호화폐 실시간 차트">
+  <meta property="og:description" content="비트코인, 이더리움 등 주요 암호화폐의 실시간 가격 차트를 무료로 확인하세요.">
+  <meta property="og:url" content="https://crypto-charts-kr.netlify.app/">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:site_name" content="CryptoCharts">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="CryptoCharts — 암호화폐 실시간 차트">
+  <meta name="twitter:description" content="비트코인, 이더리움 등 주요 암호화폐의 실시간 가격 차트를 무료로 확인하세요.">
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%233b82f6'/><path d='M12 16L15 19L20 13' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "CryptoCharts",
+    "description": "비트코인, 이더리움 등 주요 암호화폐의 실시간 가격 차트",
+    "url": "https://crypto-charts-kr.netlify.app/",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" },
+    "inLanguage": "ko"
+  }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header__brand">
+        <svg class="header__logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 16L15 19L20 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h1 class="header__title">CryptoCharts</h1>
+      </div>
+      <nav class="header__nav">
+        <a href="index.html" class="header__nav-link header__nav-link--active">차트</a>
+        <a href="trading.html" class="header__nav-link">자동매매</a>
+      </nav>
+      <div class="header__search">
+        <svg class="header__search-icon" viewBox="0 0 20 20" fill="none">
+          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M13 13L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input type="text" id="searchInput" class="header__search-input" placeholder="코인 검색 (예: bitcoin, ethereum)" autocomplete="off">
+        <div id="searchResults" class="search-results hidden"></div>
+      </div>
+      <div class="header__status">
+        <button id="aiToggleBtn" class="btn btn--ghost ai-toggle-btn" title="AI 어시스턴트 (/)">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none">
+            <path d="M10 2a6 6 0 00-6 6v2a2 2 0 002 2h1v2l3-2h3a2 2 0 002-2V8a6 6 0 00-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="7" cy="9" r="0.8" fill="currentColor"/><circle cx="10" cy="9" r="0.8" fill="currentColor"/><circle cx="13" cy="9" r="0.8" fill="currentColor"/>
+          </svg>
+          AI
+        </button>
+        <span id="lastUpdated" class="header__updated">—</span>
+        <button id="refreshBtn" class="btn btn--ghost" title="새로고침" aria-label="새로고침">
+          <svg viewBox="0 0 20 20" fill="none" width="16" height="16">
+            <path d="M4 10a6 6 0 0110.5-4M16 10a6 6 0 01-10.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M14.5 3.5H17V6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5.5 16.5H3V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <aside class="sidebar">
+        <div class="sidebar__header">
+          <h2 class="sidebar__title">시가총액 Top 30</h2>
+        </div>
+        <ul id="coinList" class="coin-list">
+          <li class="coin-list__loading">불러오는 중...</li>
+        </ul>
+      </aside>
+
+      <section class="chart-panel">
+        <div class="coin-header" id="coinHeader">
+          <div class="coin-header__info">
+            <img id="coinIcon" class="coin-header__icon" src="" alt="" hidden>
+            <div>
+              <h2 id="coinName" class="coin-header__name">—</h2>
+              <span id="coinSymbol" class="coin-header__symbol"></span>
+            </div>
+          </div>
+          <div class="coin-header__price">
+            <span id="currentPrice" class="coin-header__current">—</span>
+            <span id="priceChange" class="coin-header__change">—</span>
+          </div>
+          <div class="coin-header__stats">
+            <div class="stat">
+              <span class="stat__label">24h 최고</span>
+              <span id="high24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">24h 최저</span>
+              <span id="low24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">거래량 (24h)</span>
+              <span id="volume24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">시가총액</span>
+              <span id="marketCap" class="stat__value">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-controls">
+          <div class="chart-controls__type">
+            <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
+            <button class="btn btn--tab" data-chart-type="line">라인</button>
+            <span id="liveIndicator" class="live-indicator hidden">
+              <span class="live-indicator__dot"></span>LIVE
+            </span>
+          </div>
+          <div class="chart-controls__tools">
+            <div class="indicator-dropdown">
+              <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="기술적 지표">
+                <svg viewBox="0 0 20 20" width="16" height="16" fill="none"><path d="M3 15L8 8L12 11L17 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                지표
+              </button>
+              <div id="indicatorMenu" class="indicator-menu hidden">
+                <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
+                <div id="indicatorMenuList"></div>
+              </div>
+            </div>
+            <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="드로잉 도구">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none"><path d="M4 16L16 4M13 4h3v3M7 16H4v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              도구
+            </button>
+          </div>
+          <div class="chart-controls__range">
+            <button class="btn btn--tab" data-interval="1m">1분</button>
+            <button class="btn btn--tab" data-interval="5m">5분</button>
+            <button class="btn btn--tab" data-interval="15m">15분</button>
+            <button class="btn btn--tab active" data-interval="1h">1시간</button>
+            <button class="btn btn--tab" data-interval="4h">4시간</button>
+            <button class="btn btn--tab" data-interval="1d">1일</button>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <div class="chart-workspace">
+            <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
+            <div class="chart-main">
+              <div id="chartArea" class="chart-area"></div>
+              <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
+              <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간으로 이동 ⟳</button>
+              <div id="chartLoading" class="chart-loading hidden">
+                <div class="spinner"></div>
+                <span>차트 데이터 로딩 중...</span>
+              </div>
+              <div id="chartError" class="chart-error hidden">
+                <p>차트를 불러오지 못했습니다.</p>
+                <button id="retryBtn" class="btn btn--primary">다시 시도</button>
+              </div>
+            </div>
+          </div>
+          <div class="indicator-section" id="indicatorSection">
+            <div id="activeIndicators" class="indicator-overview hidden"></div>
+            <div id="indicatorPanes" class="indicator-panes"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside id="aiPanel" class="ai-panel">
+        <div class="ai-panel__header">
+          <div class="ai-panel__title-wrap">
+            <h3 class="ai-panel__title">AI 어시스턴트</h3>
+            <span class="ai-panel__badge">모의매매</span>
+          </div>
+          <button type="button" id="aiPanelClose" class="ai-panel__close" aria-label="닫기">×</button>
+        </div>
+        <div id="aiMessages" class="ai-panel__messages"></div>
+        <div class="ai-panel__quick">
+          <button type="button" class="ai-quick-btn" data-ai-cmd="MACD랑 RSI 켜줘">MACD+RSI</button>
+          <button type="button" class="ai-quick-btn" data-ai-cmd="볼린저 밴드 추가">BOLL</button>
+          <button type="button" class="ai-quick-btn" data-ai-cmd="지금 상황 분석해줘">분석</button>
+          <button type="button" class="ai-quick-btn" data-ai-cmd="잔고 보여줘">잔고</button>
+        </div>
+        <div class="ai-panel__input">
+          <button type="button" id="aiVoiceBtn" class="ai-voice-btn" title="음성 명령 (Chrome)">🎤</button>
+          <input type="text" id="aiInput" class="ai-panel__text" placeholder="말하거나 입력... (예: 이더리움 4시간봉 매수)" autocomplete="off">
+          <button type="button" id="aiSendBtn" class="btn btn--primary ai-send-btn">전송</button>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <p>데이터 제공: <a href="https://www.binance.com" target="_blank" rel="noopener">Binance</a> · <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a> · <a href="trading.html">선물 자동매매</a></p>
+    </footer>
+  </div>
+
+  <div id="indicatorSettingsModal" class="indicator-settings hidden">
+    <div id="indicatorSettingsBackdrop" class="indicator-settings__backdrop"></div>
+    <div class="indicator-settings__panel" role="dialog" aria-labelledby="indicatorSettingsTitle">
+      <div class="indicator-settings__header">
+        <h3 id="indicatorSettingsTitle">지표 설정</h3>
+        <button type="button" id="indicatorSettingsClose" class="indicator-settings__close" aria-label="닫기">×</button>
+      </div>
+      <form id="indicatorSettingsForm" class="indicator-settings__form"></form>
+      <div class="indicator-settings__actions">
+        <button type="button" id="indicatorSettingsReset" class="btn btn--ghost">기본값</button>
+        <button type="button" id="indicatorSettingsApply" class="btn btn--primary">적용</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="js/ta-math.js"></script>
+  <script src="js/ta-extended.js"></script>
+  <script src="js/indicator-catalog.js"></script>
+  <script src="js/indicators.js"></script>
+  <script src="js/drawings.js"></script>
+  <script src="js/kline-loader.js"></script>
+  <script src="js/ai-trading.js"></script>
+  <script src="js/ai-commands.js"></script>
+  <script src="js/ai-assistant.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

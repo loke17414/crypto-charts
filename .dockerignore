@@ -1,0 +1,19 @@
+.git
+.gitignore
+dist
+build
+*.spec
+logs
+bot-state.json
+bot-js-state.json
+.env
+.env.example
+__pycache__
+*.pyc
+node_modules
+*.md
+strategy.json
+# Chart/UI-only assets not needed by the headless bot
+css
+*.html
+launch.py

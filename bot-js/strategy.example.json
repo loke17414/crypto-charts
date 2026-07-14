@@ -1,0 +1,28 @@
+{
+  "_comment": "Example strategy for the headless bot. Prefer exporting your real strategy from the trading UI ('전략 내보내기 (서버용)' button) and saving it as strategy.json. This example = Bollinger lower-band re-entry (long), dynamic SL at previous candle low, TP at 1.5:1 risk-reward.",
+  "symbol": "BTCUSDT",
+  "interval": "1h",
+  "leverage": 5,
+  "riskPerTradePct": 1.0,
+  "maxAccountLossPct": 5.0,
+  "allowShort": false,
+  "stopLossPct": 1.5,
+  "takeProfitPct": 3.0,
+  "pollSeconds": 60,
+  "entryRules": {
+    "long": {
+      "enabled": true,
+      "logic": "all",
+      "conditions": [
+        { "type": "band_reentry", "side": "long", "indicator": "boll", "params": { "period": 20, "mult": 2 } }
+      ]
+    },
+    "short": { "enabled": false, "logic": "all", "conditions": [] }
+  },
+  "exitRules": {
+    "long": {
+      "stopLoss": { "type": "candle_extreme", "field": "low", "offset": 1 },
+      "takeProfit": { "type": "risk_reward", "ratio": 1.5 }
+    }
+  }
+}

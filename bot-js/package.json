@@ -1,0 +1,14 @@
+{
+  "name": "crypto-charts-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless 24/7 futures bot running the exact CryptoCharts strategy engine",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "check": "node --check bot.js && node --check binance.js && node --check config.js && node --check strategy-runtime.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

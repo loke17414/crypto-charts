@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>비트코인 선물 자동매매 — BTC 레버리지 봇 | CryptoCharts</title>
+  <meta name="description" content="바이낸스 USDT-M 선물 비트코인(BTCUSDT) 자동매매 웹 봇. EMA+RSI 전략, 레버리지 설정, 모의매매 지원. 무료로 브라우저에서 바로 사용하세요.">
+  <meta name="keywords" content="비트코인 자동매매, 바이낸스 선물, BTC 선물, 레버리지 트레이딩, 암호화폐 봇, EMA RSI, 모의매매, crypto trading bot">
+  <meta name="author" content="CryptoCharts">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://crypto-charts-kr.netlify.app/trading.html">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="비트코인 선물 자동매매 — CryptoCharts">
+  <meta property="og:description" content="바이낸스 선물 BTCUSDT EMA+RSI 자동매매. 레버리지 설정, 실시간 차트, 모의매매.">
+  <meta property="og:url" content="https://crypto-charts-kr.netlify.app/trading.html">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:site_name" content="CryptoCharts">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="비트코인 선물 자동매매 — CryptoCharts">
+  <meta name="twitter:description" content="바이낸스 선물 BTCUSDT EMA+RSI 자동매매 봇. 무료 모의매매.">
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%233b82f6'/><path d='M12 16L15 19L20 13' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "CryptoCharts BTC Futures Bot",
+    "description": "바이낸스 USDT-M 선물 비트코인 자동매매 웹 봇 — EMA+RSI 전략, 레버리지, 모의매매",
+    "url": "https://crypto-charts-kr.netlify.app/trading.html",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "inLanguage": "ko"
+  }
+  </script>
+</head>
+<body class="trading-page">
+  <div class="app">
+    <header class="header">
+      <div class="header__brand">
+        <a href="index.html" class="header__brand-link">
+          <svg class="header__logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 16L15 19L20 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h1 class="header__title">CryptoCharts</h1>
+        </a>
+      </div>
+      <nav class="header__nav">
+        <a href="index.html" class="header__nav-link">차트</a>
+        <a href="trading.html" class="header__nav-link header__nav-link--active">자동매매</a>
+      </nav>
+      <div class="header__status">
+        <span id="modeBadge" class="paper-badge">모의매매</span>
+        <span id="btcPrice" class="header__price">—</span>
+      </div>
+    </header>
+
+    <main class="trading-main">
+      <aside class="trading-panel trading-panel--settings">
+        <h2 class="trading-panel__title">데모 API 연결</h2>
+        <p class="api-hint">
+          <a href="https://testnet.binancefuture.com/" target="_blank" rel="noopener">Binance Futures Testnet</a>에서 API 키를 발급하세요.
+        </p>
+
+        <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
+
+        <div class="form-group">
+          <label for="apiKey">API Key</label>
+          <input type="text" id="apiKey" placeholder="Testnet API Key" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="apiSecret">API Secret</label>
+          <input type="password" id="apiSecret" placeholder="Testnet API Secret" autocomplete="off">
+        </div>
+
+        <div class="trading-actions">
+          <button type="button" id="connectApiBtn" class="btn btn--primary btn--block">테스트넷 연결</button>
+          <button type="button" id="disconnectApiBtn" class="btn btn--ghost btn--block" disabled>연결 해제</button>
+        </div>
+
+        <hr class="trading-divider">
+        <h2 class="trading-panel__title">전략 설정</h2>
+
+        <div class="form-group">
+          <label for="leverage">레버리지</label>
+          <input type="number" id="leverage" value="5" min="1" max="125" step="1">
+        </div>
+
+        <hr class="trading-divider">
+        <h2 class="trading-panel__title">리스크 관리</h2>
+        <p class="api-hint">손절(-1.5%) 시 원금 대비 손실 비율로 증거금을 자동 계산합니다. 포지션이 열려 있으면 추가 진입하지 않습니다.</p>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="riskPerTrade">1회 거래 리스크 (%)</label>
+            <input type="number" id="riskPerTrade" value="1" min="0.1" max="10" step="0.1">
+          </div>
+          <div class="form-group">
+            <label for="maxAccountLoss">최대 계좌 손실 (%)</label>
+            <input type="number" id="maxAccountLoss" value="5" min="1" max="50" step="0.5">
+          </div>
+        </div>
+
+        <div class="form-group form-group--check hidden">
+          <label><input type="checkbox" id="allowShort" checked> 숏 포지션 허용</label>
+        </div>
+
+        <hr class="trading-divider">
+        <h2 class="trading-panel__title">RSI 과매수 · 과매도</h2>
+        <p class="api-hint strategy-rules" id="strategyRules">
+          · <strong>롱/숏 조건</strong>: 지표 + 캔들 패턴 규칙<br>
+          · 손절 -1.5% · 익절 +3% (진입가 기준)
+        </p>
+        <button type="button" id="exportStrategyBtn" class="btn btn--ghost btn--block btn--sm" title="현재 전략을 24/7 서버 봇(strategy.json)에서 그대로 쓰도록 내보냅니다">전략 내보내기 (서버용)</button>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="rsiPeriod">RSI 기간</label>
+            <input type="number" id="rsiPeriod" value="14" min="5" max="50" step="1">
+          </div>
+          <div class="form-group">
+            <label for="rsiOversold">과매도 (롱)</label>
+            <input type="number" id="rsiOversold" value="25" min="10" max="50" step="1">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="rsiOverbought">과매수 (숏)</label>
+          <input type="number" id="rsiOverbought" value="70" min="50" max="90" step="1">
+        </div>
+
+        <hr class="trading-divider">
+        <h2 class="trading-panel__title">AI 전략 편집</h2>
+        <p class="api-hint">자연어로 진입 조건을 설명하면 GPT가 규칙을 수정합니다. 이전 대화를 기억하며 요청한 항목만 변경합니다. 76개 지표 + 캔들 패턴을 조합할 수 있으며, 차트에 지표를 추가하지 않아도 자동 분석됩니다.</p>
+        <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
+        <div id="strategyAiDetails" class="strategy-ai-details"></div>
+        <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
+        <div class="form-group">
+          <label for="openaiApiKey">OpenAI API Key</label>
+          <input type="password" id="openaiApiKey" placeholder="sk-proj-... (전체 키 붙여넣기)" autocomplete="off" spellcheck="false">
+          <p class="api-hint">키는 <code>sk-</code>로 시작합니다. 일부만 붙여넣으면 인증에 실패합니다.</p>
+        </div>
+        <div class="strategy-ai-actions">
+          <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--block btn--sm">연결 테스트</button>
+          <button type="button" id="strategyAiKeySaveBtn" class="btn btn--primary btn--block btn--sm">검증 후 저장</button>
+          <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--block btn--sm">저장된 키 재검사</button>
+          <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--block btn--sm">대화 기록 초기화</button>
+        </div>
+        <div id="strategyAiMessages" class="strategy-ai-messages" aria-live="polite"></div>
+        <div class="strategy-ai-quick">
+          <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 12가 26을 상향 돌파하면 골든크로스 롱, 하향이면 숏">골든크로스</button>
+          <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="상승 장악형 캔들과 RSI 30 이하일 때 롱 진입">장악+RSI</button>
+          <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="볼린저 밴드 하단 이탈 후 밴드 안으로 재진입하면 롱, 손절은 재진입 직전 캔들 저가, 익절은 손절 대비 1.5배">BB 재진입 롱</button>
+          <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="양봉 해머 패턴이면서 종가가 EMA 25 위일 때 롱">해머+EMA</button>
+        </div>
+        <div class="strategy-ai-input">
+          <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="예: RSI 30 이하에서만 롱 진입, 손절 1%, 익절 2.5%"></textarea>
+          <button type="button" id="strategyAiSendBtn" class="btn btn--primary btn--block">전략 적용</button>
+        </div>
+
+        <input type="hidden" id="stopLoss" value="1.5">
+        <input type="hidden" id="takeProfit" value="3">
+        <input type="hidden" id="macdFast" value="12">
+        <input type="hidden" id="macdSlow" value="26">
+        <input type="hidden" id="macdSignal" value="9">
+        <input type="hidden" id="emaFast" value="12">
+        <input type="hidden" id="emaSlow" value="26">
+        <input type="hidden" id="useMacd" value="0">
+        <input type="hidden" id="swingLookback" value="50">
+        <input type="hidden" id="swingPivotBars" value="5">
+
+        <hr class="trading-divider">
+        <h2 class="trading-panel__title">차트 지표 표시</h2>
+        <p class="api-hint">봇·백테스트는 전략 규칙의 지표를 자동 계산합니다. 아래 버튼은 차트 표시만 토글합니다.</p>
+        <div class="indicator-toggles" id="chartIndicatorToggles">
+          <button type="button" class="ind-toggle ind-toggle--off" data-chart-ind="ema" title="차트 표시만 토글">EMA</button>
+          <button type="button" class="ind-toggle ind-toggle--off" data-chart-ind="rsi" title="차트 표시만 토글">RSI</button>
+          <button type="button" class="ind-toggle ind-toggle--off" data-chart-ind="macd" title="차트 표시만 토글">MACD</button>
+        </div>
+
+        <div class="form-group">
+          <label for="pollSeconds">체크 주기 (초)</label>
+          <input type="number" id="pollSeconds" value="60" min="10" step="10">
+        </div>
+
+        <div class="trading-actions">
+          <button type="button" id="startBotBtn" class="btn btn--primary btn--block">봇 시작</button>
+          <button type="button" id="stopBotBtn" class="btn btn--ghost btn--block" disabled>봇 정지</button>
+        </div>
+
+        <p class="trading-hint">API 서버(<code>run-server.ps1</code>) 실행 후 테스트넷 키를 연결하면 <strong>데모 실주문</strong>이 가능합니다.</p>
+      </aside>
+
+      <section class="trading-center chart-panel chart-panel--embedded">
+        <div class="trading-chart-header">
+          <div>
+            <p class="trading-signal" id="signalInfo">대기 중...</p>
+          </div>
+          <div class="trading-indicators trading-indicators--inline">
+            <span>RSI: <strong id="rsiValue">—</strong></span>
+            <span>명목가: <strong id="notionalInfo">—</strong></span>
+          </div>
+        </div>
+
+        <div class="coin-header coin-header--compact" id="coinHeader">
+          <div class="coin-header__info">
+            <img id="coinIcon" class="coin-header__icon" src="" alt="" hidden>
+            <div>
+              <h2 id="coinName" class="coin-header__name">Bitcoin</h2>
+              <span id="coinSymbol" class="coin-header__symbol">BTC/USDT</span>
+            </div>
+          </div>
+          <div class="coin-header__price">
+            <span id="currentPrice" class="coin-header__current">—</span>
+            <span id="priceChange" class="coin-header__change">—</span>
+          </div>
+          <div class="coin-header__stats">
+            <div class="stat">
+              <span class="stat__label">24h 최고</span>
+              <span id="high24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">24h 최저</span>
+              <span id="low24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">거래량</span>
+              <span id="volume24h" class="stat__value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">시총</span>
+              <span id="marketCap" class="stat__value">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-controls">
+          <div class="chart-controls__type">
+            <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
+            <button class="btn btn--tab" data-chart-type="line">라인</button>
+            <span id="liveIndicator" class="live-indicator hidden">
+              <span class="live-indicator__dot"></span>LIVE
+            </span>
+          </div>
+          <div class="chart-controls__tools">
+            <div class="indicator-dropdown">
+              <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="기술적 지표">
+                <svg viewBox="0 0 20 20" width="16" height="16" fill="none"><path d="M3 15L8 8L12 11L17 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                지표
+              </button>
+              <div id="indicatorMenu" class="indicator-menu hidden">
+                <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
+                <div id="indicatorMenuList"></div>
+              </div>
+            </div>
+            <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="드로잉 도구">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none"><path d="M4 16L16 4M13 4h3v3M7 16H4v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              도구
+            </button>
+          </div>
+          <div class="chart-controls__range">
+            <button class="btn btn--tab" data-interval="1m">1분</button>
+            <button class="btn btn--tab" data-interval="5m">5분</button>
+            <button class="btn btn--tab" data-interval="15m">15m</button>
+            <button class="btn btn--tab active" data-interval="1h">1시간</button>
+            <button class="btn btn--tab" data-interval="4h">4시간</button>
+            <button class="btn btn--tab" data-interval="1d">1일</button>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <div class="chart-workspace">
+            <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
+            <div class="chart-main">
+              <div id="chartArea" class="chart-area"></div>
+              <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
+              <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간으로 이동 ⟳</button>
+              <div id="chartLoading" class="chart-loading hidden">
+                <div class="spinner"></div>
+                <span>차트 데이터 로딩 중...</span>
+              </div>
+              <div id="chartError" class="chart-error hidden">
+                <p>차트를 불러오지 못했습니다.</p>
+                <button id="retryBtn" class="btn btn--primary">다시 시도</button>
+              </div>
+            </div>
+          </div>
+          <div class="indicator-section" id="indicatorSection">
+            <div id="activeIndicators" class="indicator-overview hidden"></div>
+            <div id="indicatorPanes" class="indicator-panes"></div>
+          </div>
+        </div>
+
+        <div class="backtest-bar">
+          <label class="backtest-toggle">
+            <input type="checkbox" id="showBacktest" checked> 과거 진입/청산·SL/TP 표시
+          </label>
+          <label class="backtest-count-label" title="목표 거래 횟수 (해당 봉 간격 차트 데이터 내)">
+            회수
+            <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100" step="1">
+          </label>
+          <button type="button" id="runBacktestBtn" class="btn btn--ghost btn--sm" title="선택한 봉 간격 차트 데이터로 설정 회수만큼 백테스트">
+            백테스트 실행
+          </button>
+          <span id="backtestStats" class="backtest-stats">백테스트: —</span>
+          <span class="backtest-legend">
+            <span class="legend-item legend-item--long">▲ LONG</span>
+            <span class="legend-item legend-item--short">▼ SHORT</span>
+            <span class="legend-item legend-item--close">● 청산</span>
+            <span class="legend-item legend-item--bt-sl">- - SL</span>
+            <span class="legend-item legend-item--bt-tp">- - TP</span>
+            <span class="legend-item legend-item--high">— 전고점</span>
+            <span class="legend-item legend-item--low">— 전저점</span>
+            <span class="legend-item legend-item--stop">— 손절</span>
+          </span>
+        </div>
+      </section>
+
+      <aside class="trading-panel trading-panel--status">
+        <h2 class="trading-panel__title">포지션</h2>
+        <div class="status-card">
+          <div class="status-row">
+            <span>봇 상태</span>
+            <span id="botStatus" class="bot-status bot-status--off">정지</span>
+          </div>
+          <div class="status-row">
+            <span>계좌 자산</span>
+            <strong id="equityInfo">—</strong>
+          </div>
+          <div class="status-row">
+            <span>사용 가능</span>
+            <strong id="availableMargin">—</strong>
+          </div>
+          <div class="status-row">
+            <span>누적 손익</span>
+            <strong id="totalPnl">—</strong>
+          </div>
+        </div>
+
+        <div class="position-card">
+          <div id="positionInfo" class="position-card__info"><span class="text-muted">포지션 없음</span></div>
+          <div id="positionPnl" class="position-card__pnl"></div>
+        </div>
+
+        <div class="trading-actions">
+          <button type="button" id="closeBtn" class="btn btn--ghost btn--block">수동 청산</button>
+          <button type="button" id="resetBtn" class="btn btn--ghost btn--block">모의 계좌 초기화</button>
+        </div>
+
+        <h3 class="trading-panel__subtitle">거래 로그</h3>
+        <div id="tradeLog" class="trade-log"></div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <p>
+        <a href="index.html">차트</a> ·
+        데이터: <a href="https://www.binance.com" target="_blank" rel="noopener">Binance Futures</a> ·
+        모의매매 — 실제 주문 없음
+      </p>
+      <p class="footer__warn">레버리지 선물 거래는 고위험입니다. 투자 손실에 대한 책임은 본인에게 있습니다.</p>
+    </footer>
+  </div>
+
+  <div id="indicatorSettingsModal" class="indicator-settings hidden">
+    <div id="indicatorSettingsBackdrop" class="indicator-settings__backdrop"></div>
+    <div class="indicator-settings__panel" role="dialog" aria-labelledby="indicatorSettingsTitle">
+      <div class="indicator-settings__header">
+        <h3 id="indicatorSettingsTitle">지표 설정</h3>
+        <button type="button" id="indicatorSettingsClose" class="indicator-settings__close" aria-label="닫기">×</button>
+      </div>
+      <form id="indicatorSettingsForm" class="indicator-settings__form"></form>
+      <div class="indicator-settings__actions">
+        <button type="button" id="indicatorSettingsReset" class="btn btn--ghost">기본값</button>
+        <button type="button" id="indicatorSettingsApply" class="btn btn--primary">적용</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="js/ta-math.js?v=20260714e"></script>
+  <script src="js/ta-extended.js?v=20260714e"></script>
+  <script src="js/indicator-catalog.js?v=20260714e"></script>
+  <script src="js/indicators.js?v=20260714e"></script>
+  <script src="js/candle-patterns.js"></script>
+  <script src="js/strategy-engine.js?v=20260714e"></script>
+  <script src="js/drawings.js"></script>
+  <script src="js/kline-loader.js"></script>
+  <script src="js/app.js?v=20260714f"></script>
+  <script src="js/futures-paper.js"></script>
+  <script src="js/futures-strategy.js?v=20260714f"></script>
+  <script src="js/backtest-loader.js?v=20260714e"></script>
+  <script src="js/futures-api-client.js"></script>
+  <script src="js/risk-sizing.js"></script>
+  <script src="js/swing-levels.js"></script>
+  <script src="js/futures-bot-app.js?v=20260714g"></script>
+  <script src="js/strategy-ai.js?v=20260714"></script>
+</body>
+</html>

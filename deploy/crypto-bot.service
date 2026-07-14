@@ -1,0 +1,37 @@
+# systemd unit for running the headless Node bot 24/7 on a Linux VPS
+# without Docker. The bot runs the EXACT browser strategy engine (bot-js/bot.js
+# loads js/*.js via Node's vm), so decisions match the trading UI exactly.
+#
+# Prereqs on the server:
+#   - Node.js 18+ installed (node -v)
+#   - repo cloned, .env filled in, strategy.json exported from the UI and placed
+#     in the repo root
+#
+# Setup (run once as root on the server):
+#   sudo cp deploy/crypto-bot.service /etc/systemd/system/crypto-bot.service
+#   # edit User / WorkingDirectory / ExecStart paths below to match your box
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now crypto-bot
+#
+# View logs:   journalctl -u crypto-bot -f
+# Restart:     sudo systemctl restart crypto-bot
+# Stop:        sudo systemctl stop crypto-bot
+
+[Unit]
+Description=CryptoCharts headless auto-trading bot (Node, UI-identical strategy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/crypto-charts
+# Loads BINANCE_API_KEY / DRY_RUN / SYMBOL / ... (strategy.json overrides most).
+EnvironmentFile=/home/ubuntu/crypto-charts/.env
+ExecStart=/usr/bin/node bot-js/bot.js
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

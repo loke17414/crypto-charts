@@ -1,0 +1,13 @@
+.env
+.venv/
+logs/
+bot-state.json
+bot-js-state.json
+strategy.json
+node_modules/
+.github/workflows/
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
