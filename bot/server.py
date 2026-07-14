@@ -127,6 +127,7 @@ def health() -> dict[str, Any]:
     ai = ai_available()
     return {
         "ok": True,
+        "apiVersion": 2,
         "connected": _session is not None,
         "credentialsSaved": credentials_configured(),
         "testnet": True,

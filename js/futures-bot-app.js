@@ -585,7 +585,11 @@ const FuturesBotApp = (() => {
       addLog('서버 봇 실행 중 — 브라우저를 닫아도 24/7 거래 계속', 'info');
     }
 
-    const diag = health.botDiagnostics;
+    if (health?.ok && health.apiVersion !== 2) {
+      addLog('API 서버가 구버전입니다. VPS에서 git pull && sudo systemctl restart crypto-web', 'loss');
+    }
+
+    const diag = health?.botDiagnostics;
     if (diag && !diag.nodeFound) {
       addLog('서버에 Node.js가 없습니다. VPS에서 nodejs 설치 후 crypto-web 재시작 필요', 'loss');
     } else if (diag && !diag.botScriptExists) {

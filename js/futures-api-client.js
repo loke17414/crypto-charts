@@ -21,16 +21,27 @@ const FuturesApiClient = (() => {
     if (detail && typeof detail === 'object') {
       return detail.message || JSON.stringify(detail);
     }
-    return data?.message || `API error ${status}`;
+    return data?.message || (status === 404 ? 'Not Found' : `API error ${status}`);
+  }
+
+  function formatNotFoundHint(path, method) {
+    return (
+      `${method} ${path} → Not Found. ` +
+      'API 서버가 구버전입니다. VPS SSH에서: cd ~/crypto-charts && git pull && sudo systemctl restart crypto-web'
+    );
   }
 
   async function request(path, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
     const res = await fetch(`${API_BASE}${path}`, {
       headers: { 'Content-Type': 'application/json', ...options.headers },
       ...options,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 404) {
+        throw new Error(formatNotFoundHint(path, method));
+      }
       throw new Error(formatApiError(data, res.status));
     }
     return data;
