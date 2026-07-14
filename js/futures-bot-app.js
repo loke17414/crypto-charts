@@ -15,12 +15,15 @@ const FuturesBotApp = (() => {
 
   let botTimer = null;
   let botRunning = false;
+  let serverBotActive = false;
+  let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
   let showBacktest = true;
   let backtestDebounce = null;
   let backtestRunId = 0;
   let backtestHistoryCache = null;
+  let lastRenderedBacktestKey = null;
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -273,6 +276,9 @@ const FuturesBotApp = (() => {
   function applyStrategySettings(settings, { rulesHtml = null, summary = null, changedFields = [] } = {}) {
     if (!settings) return;
 
+    readFormSettings();
+    const prevSettings = getSettings();
+
     setFieldValue('rsiPeriod', settings.rsiPeriod);
     setFieldValue('rsiOversold', settings.rsiOversold);
     setFieldValue('rsiOverbought', settings.rsiOverbought);
@@ -291,13 +297,17 @@ const FuturesBotApp = (() => {
       state.allowShort = true;
     }
 
-    if (settings.entryRules) {
-      state.entryRules = StrategyEngine.sanitizeEntryRules(settings.entryRules);
+    if (Object.prototype.hasOwnProperty.call(settings, 'entryRules')) {
+      state.entryRules = settings.entryRules
+        ? StrategyEngine.sanitizeEntryRules(settings.entryRules)
+        : null;
     }
-    if (settings.exitRules) {
-      state.exitRules = StrategyEngine.sanitizeExitRules
-        ? StrategyEngine.sanitizeExitRules(settings.exitRules)
-        : settings.exitRules;
+    if (Object.prototype.hasOwnProperty.call(settings, 'exitRules')) {
+      state.exitRules = settings.exitRules
+        ? (StrategyEngine.sanitizeExitRules
+          ? StrategyEngine.sanitizeExitRules(settings.exitRules)
+          : settings.exitRules)
+        : null;
     }
 
     if (state.entryRules && StrategyEngine.validateEntryRules) {
@@ -306,11 +316,22 @@ const FuturesBotApp = (() => {
     }
     saveStrategyStorage(state.entryRules, state.exitRules);
 
+    readFormSettings();
+    const nextSettings = getSettings();
+    const strategyChanged = getBacktestCacheKey(nextSettings) !== getBacktestCacheKey(prevSettings);
+
     backtestHistoryCache = null;
 
     updateStrategyRulesDisplay(settings, rulesHtml);
     updateChartIndicatorButtons();
-    scheduleBacktest(lastCandles);
+
+    if (strategyChanged) {
+      invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
+      clearTimeout(backtestDebounce);
+      applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
+    } else {
+      scheduleBacktest(lastCandles);
+    }
     updateSignalDisplay();
     updateUI();
 
@@ -387,7 +408,7 @@ const FuturesBotApp = (() => {
         `계좌 손실 한도 도달 (원금 대비 -${state.maxAccountLossPct}%) — 봇 정지`,
         'loss',
       );
-      stopBot();
+      await stopBot();
       return true;
     }
     return false;
@@ -432,7 +453,7 @@ const FuturesBotApp = (() => {
   }
 
   function isTestnetMode() {
-    return state.mode === 'testnet' && FuturesApiClient.isConnected();
+    return state.mode === 'testnet';
   }
 
   function syncFromChart() {
@@ -486,9 +507,85 @@ const FuturesBotApp = (() => {
   }
 
   async function refreshTestnetStatus() {
-    if (!FuturesApiClient.isConnected()) return null;
+    if (!isTestnetMode()) return null;
     testnetStatus = await FuturesApiClient.getStatus();
     return testnetStatus;
+  }
+
+  function stopStatusPolling() {
+    if (statusPollTimer) {
+      clearInterval(statusPollTimer);
+      statusPollTimer = null;
+    }
+  }
+
+  function startStatusPolling() {
+    stopStatusPolling();
+    if (!isTestnetMode()) return;
+    statusPollTimer = setInterval(async () => {
+      try {
+        await refreshTestnetStatus();
+        if (serverBotActive) {
+          const st = await FuturesApiClient.getBotStatus();
+          if (st && !st.running && botRunning) {
+            serverBotActive = false;
+            botRunning = false;
+            $('#startBotBtn').disabled = false;
+            $('#stopBotBtn').disabled = true;
+            addLog('서버 봇이 종료되었습니다', 'info');
+          }
+        }
+        updateUI();
+      } catch { /* ignore */ }
+    }, 3000);
+  }
+
+  async function syncStrategyToServer() {
+    const strategy = buildServerStrategyExport();
+    await FuturesApiClient.syncStrategy(strategy);
+    return strategy;
+  }
+
+  async function restoreSessionFromServer() {
+    const health = await FuturesApiClient.getHealth();
+    if (!health?.ok) {
+      updateApiServerStatus(false);
+      return health;
+    }
+
+    updateApiServerStatus(true, health.connected);
+
+    if (health.connected) {
+      state.mode = 'testnet';
+      FuturesApiClient.setConnected(true);
+      await refreshTestnetStatus();
+      sessionStartEquity = await getEquity();
+      $('#connectApiBtn').disabled = true;
+      $('#disconnectApiBtn').disabled = false;
+      $('#apiKey').disabled = true;
+      $('#apiSecret').disabled = true;
+      if (health.credentialsSaved) {
+        $('#apiKey').placeholder = '서버에 저장됨';
+        $('#apiSecret').placeholder = '서버에 저장됨';
+      }
+      setModeBadge();
+      addLog('서버 API 세션 연결됨 (브라우저를 닫아도 유지)', 'info');
+      startStatusPolling();
+    } else if (health.credentialsSaved) {
+      $('#apiKey').placeholder = '비워두면 저장된 키로 연결';
+      $('#apiSecret').placeholder = '비워두면 저장된 키로 연결';
+      addLog('API 키가 서버에 저장되어 있습니다. 연결 버튼으로 재연결하세요.', 'info');
+    }
+
+    if (health.bot?.running) {
+      serverBotActive = true;
+      botRunning = true;
+      $('#startBotBtn').disabled = true;
+      $('#stopBotBtn').disabled = false;
+      addLog('서버 봇 실행 중 — 브라우저를 닫아도 24/7 거래 계속', 'info');
+    }
+
+    return health;
   }
 
   function setModeBadge() {
@@ -656,17 +753,29 @@ const FuturesBotApp = (() => {
   }
 
   function backtestCacheKey(interval, targetTrades, settings) {
-    const strategyKey = JSON.stringify({
-      entryRules: settings.entryRules,
-      exitRules: settings.exitRules,
-      stopLossPct: settings.stopLossPct,
-      takeProfitPct: settings.takeProfitPct,
-      allowShort: settings.allowShort,
-      rsiPeriod: settings.rsiPeriod,
-      rsiOversold: settings.rsiOversold,
-      rsiOverbought: settings.rsiOverbought,
-    });
-    return `${state.symbol}:${interval}:${targetTrades}:${strategyKey}`;
+    return `${state.symbol}:${interval}:${targetTrades}:${JSON.stringify(settings)}`;
+  }
+
+  function getBacktestCacheKey(settings = getSettings()) {
+    const interval = window.CryptoCharts?.getState()?.interval || state.interval;
+    readFormSettings();
+    return backtestCacheKey(interval, state.backtestTradeCount, settings);
+  }
+
+  function clearBacktestChartDisplay(chartCandles) {
+    if (!window.CryptoCharts) return;
+    const candles = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
+    CryptoCharts.setMarkers(getSwingPivotMarkers(candles));
+    clearBacktestOverlays();
+  }
+
+  function invalidateBacktestChart(chartCandles, { message = null } = {}) {
+    backtestRunId += 1;
+    backtestHistoryCache = null;
+    lastRenderedBacktestKey = null;
+    if (showBacktest) clearBacktestChartDisplay(chartCandles);
+    const statsEl = $('#backtestStats');
+    if (message && statsEl) statsEl.textContent = message;
   }
 
   function filterTradesToChart(trades, chartCandles) {
@@ -790,10 +899,15 @@ const FuturesBotApp = (() => {
         displayCandles = CryptoCharts.getCandles() || displayCandles;
       }
 
+      if (runId !== backtestRunId) return;
+
       let visibleMarkers = filterMarkersToChart(markers, displayCandles);
       let visibleTrades = filterTradesToChart(trades, displayCandles);
 
+      if (runId !== backtestRunId) return;
+
       if (showBacktest || force) {
+        clearBacktestOverlays();
         CryptoCharts.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
         syncBacktestOverlays(visibleTrades, displayCandles);
         if (trades.length) focusBacktestTrades(trades, displayCandles);
@@ -802,6 +916,7 @@ const FuturesBotApp = (() => {
         clearBacktestOverlays();
       }
 
+      lastRenderedBacktestKey = backtestCacheKey(interval, targetTrades, settings);
       if (statsEl) statsEl.innerHTML = formatBacktestStats(stats, interval);
     } catch (err) {
       console.error('Backtest failed:', err);
@@ -811,6 +926,11 @@ const FuturesBotApp = (() => {
 
   function scheduleBacktest(chartCandles) {
     clearTimeout(backtestDebounce);
+    readFormSettings();
+    const pendingKey = getBacktestCacheKey();
+    if (showBacktest && lastRenderedBacktestKey != null && pendingKey !== lastRenderedBacktestKey) {
+      invalidateBacktestChart(chartCandles, { message: '백테스트: 조건 변경 — 재계산 중...' });
+    }
     backtestDebounce = setTimeout(() => {
       applyBacktest(chartCandles).catch((err) => console.error('Backtest failed:', err));
     }, 600);
@@ -897,10 +1017,6 @@ const FuturesBotApp = (() => {
   async function connectApi() {
     const apiKey = $('#apiKey').value.trim();
     const apiSecret = $('#apiSecret').value.trim();
-    if (!apiKey || !apiSecret) {
-      addLog('API Key와 Secret을 입력하세요.', 'loss');
-      return;
-    }
 
     const serverOk = await FuturesApiClient.checkServer();
     if (!serverOk) {
@@ -910,9 +1026,19 @@ const FuturesBotApp = (() => {
     }
 
     try {
-      if (botRunning) stopBot();
       readFormSettings();
-      const data = await FuturesApiClient.connect(apiKey, apiSecret);
+      let data;
+      if (!apiKey || !apiSecret) {
+        const health = await FuturesApiClient.getHealth();
+        if (!health?.credentialsSaved) {
+          addLog('API Key와 Secret을 입력하세요.', 'loss');
+          return;
+        }
+        data = await FuturesApiClient.reconnect();
+        addLog('저장된 API 키로 재연결', 'info');
+      } else {
+        data = await FuturesApiClient.connect(apiKey, apiSecret);
+      }
       state.mode = 'testnet';
       const marginPreview = await calcTradeMarginForTrade();
       await FuturesApiClient.setup({
@@ -927,9 +1053,12 @@ const FuturesBotApp = (() => {
       $('#disconnectApiBtn').disabled = false;
       $('#apiKey').disabled = true;
       $('#apiSecret').disabled = true;
+      $('#apiKey').placeholder = '서버에 저장됨';
+      $('#apiSecret').placeholder = '서버에 저장됨';
       setModeBadge();
       updateApiServerStatus(true, true);
-      addLog(`테스트넷 연결 성공 — 잔고 $${data.balance.toFixed(2)} USDT`, 'info');
+      startStatusPolling();
+      addLog(`테스트넷 연결 성공 — 잔고 $${data.balance.toFixed(2)} USDT (키 서버 저장됨)`, 'info');
       updateUI();
     } catch (err) {
       addLog(`연결 실패: ${err.message}`, 'loss');
@@ -937,20 +1066,25 @@ const FuturesBotApp = (() => {
   }
 
   async function disconnectApi() {
+    if (!confirm('세션을 해제할까요? 저장된 API 키는 유지되며 서버 봇은 정지됩니다.')) return;
     try {
-      if (botRunning) stopBot();
-      await FuturesApiClient.disconnect();
+      if (botRunning) await stopBot();
+      await FuturesApiClient.disconnect(false);
     } catch { /* ignore */ }
+    stopStatusPolling();
     state.mode = 'paper';
     testnetStatus = null;
+    serverBotActive = false;
     FuturesApiClient.setConnected(false);
     $('#connectApiBtn').disabled = false;
     $('#disconnectApiBtn').disabled = true;
     $('#apiKey').disabled = false;
     $('#apiSecret').disabled = false;
+    $('#apiKey').placeholder = 'Testnet API Key';
+    $('#apiSecret').placeholder = 'Testnet API Secret';
     setModeBadge();
     updateApiServerStatus(await FuturesApiClient.checkServer(), false);
-    addLog('테스트넷 연결 해제 — 모의매매 모드', 'info');
+    addLog('세션 해제 — 저장된 키는 서버에 유지 (재연결 가능)', 'info');
     updateUI();
   }
 
@@ -991,7 +1125,9 @@ const FuturesBotApp = (() => {
       $('#equityInfo').textContent = `$${equity.toFixed(2)}`;
     }
 
-    $('#botStatus').textContent = botRunning ? '실행 중' : '정지';
+    $('#botStatus').textContent = botRunning
+      ? (serverBotActive ? '서버 실행 중' : '실행 중')
+      : '정지';
     $('#botStatus').className = botRunning ? 'bot-status bot-status--on' : 'bot-status bot-status--off';
 
     if (isTestnetMode()) {
@@ -1132,6 +1268,7 @@ const FuturesBotApp = (() => {
   // missed. Ticks stream through the wick prices, so checking here catches them.
   async function evaluateLiveExit() {
     if (liveExitBusy || !botRunning) return;
+    if (isTestnetMode() && serverBotActive) return;
     const price = state.lastPrice;
     if (!price) return;
 
@@ -1247,26 +1384,111 @@ const FuturesBotApp = (() => {
     if (botRunning) return;
     readFormSettings();
     sessionStartEquity = await getEquity();
-    botRunning = true;
-    $('#startBotBtn').disabled = true;
-    $('#stopBotBtn').disabled = false;
-    addLog(
-      `봇 시작 — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x, 1회 리스크 ${state.riskPerTradePct}%`,
-      'info',
-    );
-    botTick();
-    botTimer = setInterval(botTick, state.pollSeconds * 1000);
+
+    if (isTestnetMode()) {
+      try {
+        await syncStrategyToServer();
+        const marginPreview = await calcTradeMarginForTrade();
+        await FuturesApiClient.setup({
+          leverage: state.leverage,
+          marginType: 'ISOLATED',
+          symbol: state.symbol,
+          tradeMarginUsdt: marginPreview,
+        });
+        await FuturesApiClient.startServerBot();
+        serverBotActive = true;
+        botRunning = true;
+        $('#startBotBtn').disabled = true;
+        $('#stopBotBtn').disabled = false;
+        startStatusPolling();
+        addLog(
+          `서버 봇 시작 — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x (브라우저 닫아도 계속 실행)`,
+          'info',
+        );
+      } catch (err) {
+        addLog(`서버 봇 시작 실패: ${err.message}`, 'loss');
+        return;
+      }
+    } else {
+      botRunning = true;
+      $('#startBotBtn').disabled = true;
+      $('#stopBotBtn').disabled = false;
+      addLog(
+        `봇 시작 — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x, 1회 리스크 ${state.riskPerTradePct}%`,
+        'info',
+      );
+      botTick();
+      botTimer = setInterval(botTick, state.pollSeconds * 1000);
+    }
     updateUI();
   }
 
-  function stopBot() {
+  async function stopBot() {
+    if (!botRunning) return;
+
+    if (isTestnetMode() && serverBotActive) {
+      try {
+        await FuturesApiClient.stopServerBot();
+      } catch (err) {
+        addLog(`서버 봇 정지 실패: ${err.message}`, 'loss');
+      }
+      serverBotActive = false;
+    } else {
+      clearInterval(botTimer);
+      botTimer = null;
+    }
+
     botRunning = false;
-    clearInterval(botTimer);
-    botTimer = null;
     $('#startBotBtn').disabled = false;
     $('#stopBotBtn').disabled = true;
     addLog('봇 정지', 'info');
     updateUI();
+  }
+
+  async function manualOpen(side) {
+    if (!isTestnetMode()) {
+      addLog('수동 주문은 테스트넷 연결 후 사용할 수 있습니다.', 'info');
+      return;
+    }
+    if (await checkAccountLossLimit()) return;
+
+    await refreshTestnetStatus();
+    if (hasOpenPosition()) {
+      addLog('이미 포지션이 있습니다.', 'info');
+      return;
+    }
+
+    const price = state.lastPrice;
+    if (!price) {
+      addLog('가격 정보가 없습니다.', 'loss');
+      return;
+    }
+
+    readFormSettings();
+    const tradeMargin = await calcTradeMarginForTrade();
+    const levels = calcEntryLevels(side);
+    if (!levels) {
+      addLog('진입 실패: 손절/익절 계산 불가', 'loss');
+      return;
+    }
+
+    try {
+      await FuturesApiClient.setup({
+        leverage: state.leverage,
+        marginType: 'ISOLATED',
+        symbol: state.symbol,
+        tradeMarginUsdt: tradeMargin,
+      });
+      const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
+      positionStopPrice = levels.stopPrice;
+      positionTakeProfitPrice = levels.takeProfitPrice;
+      addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+      updatePositionStopLine();
+      await refreshTestnetStatus();
+      updateUI();
+    } catch (err) {
+      addLog(`${side} 진입 실패: ${err.message}`, 'loss');
+    }
   }
 
   async function manualClose() {
@@ -1318,7 +1540,7 @@ const FuturesBotApp = (() => {
     state.interval = e.detail?.interval || CryptoCharts.getState().interval;
     state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
     updateSignalDisplay();
-    if (botRunning) evaluateLiveExit();
+    if (botRunning && !(isTestnetMode() && serverBotActive)) evaluateLiveExit();
     if (e.detail?.newBar) {
       scheduleBacktest(lastCandles);
       updateUI();
@@ -1363,8 +1585,7 @@ const FuturesBotApp = (() => {
     updateSwingLevelsUi();
     sessionStartEquity = await getEquity();
 
-    const serverOk = await FuturesApiClient.checkServer();
-    updateApiServerStatus(serverOk, false);
+    await restoreSessionFromServer();
     setModeBadge();
 
     if (CryptoCharts.getCandles().length) {
@@ -1375,7 +1596,7 @@ const FuturesBotApp = (() => {
     if (window.CryptoCharts) {
       syncChartIndicators();
     }
-    if (serverOk) addLog('API 서버 감지 — 테스트넷 키 연결 가능', 'info');
+    if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 테스트넷 키 연결 가능', 'info');
 
     document.querySelectorAll('[data-chart-ind]').forEach((btn) => {
       btn.addEventListener('click', () => toggleChartIndicator(btn.dataset.chartInd));
@@ -1388,6 +1609,8 @@ const FuturesBotApp = (() => {
     $('#startBotBtn').addEventListener('click', startBot);
     $('#stopBotBtn').addEventListener('click', stopBot);
     $('#closeBtn').addEventListener('click', manualClose);
+    $('#longBtn')?.addEventListener('click', () => manualOpen('LONG'));
+    $('#shortBtn')?.addEventListener('click', () => manualOpen('SHORT'));
     $('#resetBtn')?.addEventListener('click', resetWallet);
 
     const macdLineFilterEl = $('#useMacdLineFilter');

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,21 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from bot.config import BotConfig
+from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.exchange import BinanceFuturesClient
+from bot.server_bot import bot_status, restore_bot_if_needed, save_strategy_json, start_bot, stop_bot
 from bot.strategy_ai import ai_available, configure_openai_api_key, interpret_strategy, test_openai_api_key
 from bot.strategy_schema import StrategyInterpretRequest, StrategyInterpretResponse, StrategySettings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-app = FastAPI(title="CryptoCharts Futures API", version="1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @dataclass
@@ -36,6 +30,55 @@ class Session:
 
 
 _session: Session | None = None
+
+
+def _connect_session(api_key: str, api_secret: str) -> Session:
+    config = BotConfig.from_credentials(api_key, api_secret, use_testnet=True)
+    client = BinanceFuturesClient(config)
+    if not client.ping():
+        raise HTTPException(status_code=502, detail="Cannot reach Binance Futures Testnet")
+    try:
+        balance = client.get_usdt_balance()
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid API key: {exc}") from exc
+    logger.info("Testnet connected — balance $%.2f USDT", balance)
+    return Session(config=config, client=client)
+
+
+def auto_connect_from_env() -> bool:
+    global _session
+    creds = load_binance_credentials()
+    if not creds:
+        return False
+    api_key, api_secret = creds
+    try:
+        _session = _connect_session(api_key, api_secret)
+    except HTTPException as exc:
+        logger.warning("Auto-connect failed: %s", exc.detail)
+        return False
+    except Exception as exc:
+        logger.warning("Auto-connect failed: %s", exc)
+        return False
+    logger.info("Auto-connected from .env")
+    return True
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    auto_connect_from_env()
+    restore_bot_if_needed()
+    yield
+    stop_bot()
+
+
+app = FastAPI(title="CryptoCharts Futures API", version="1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ConnectBody(BaseModel):
@@ -65,6 +108,14 @@ class StrategyTestKeyBody(BaseModel):
     openai_api_key: str = Field(default="", max_length=512)
 
 
+class StrategySyncBody(BaseModel):
+    strategy: dict[str, Any]
+
+
+class DisconnectBody(BaseModel):
+    clear_saved_keys: bool = False
+
+
 def _require_session() -> Session:
     if not _session:
         raise HTTPException(status_code=401, detail="API key not connected")
@@ -77,8 +128,10 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "connected": _session is not None,
+        "credentialsSaved": credentials_configured(),
         "testnet": True,
         "strategyAi": ai,
+        "bot": bot_status(),
     }
 
 
@@ -142,34 +195,50 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
 def connect(body: ConnectBody) -> dict[str, Any]:
     global _session
 
-    config = BotConfig.from_credentials(body.api_key, body.api_secret, use_testnet=True)
-    client = BinanceFuturesClient(config)
-
-    if not client.ping():
-        raise HTTPException(status_code=502, detail="Cannot reach Binance Futures Testnet")
-
     try:
-        balance = client.get_usdt_balance()
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid API key: {exc}") from exc
+        persist_binance_credentials(body.api_key, body.api_secret)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f".env 저장 실패: {exc}") from exc
 
-    _session = Session(config=config, client=client)
-    logger.info("Testnet connected — balance $%.2f USDT", balance)
+    _session = _connect_session(body.api_key, body.api_secret)
+    balance = _session.client.get_usdt_balance()
 
     return {
         "ok": True,
         "balance": balance,
         "testnet": True,
-        "message": "Binance Futures Testnet connected",
+        "credentialsSaved": True,
+        "message": "Binance Futures Testnet connected — 키가 서버 .env에 저장되었습니다.",
+    }
+
+
+@app.post("/api/reconnect")
+def reconnect() -> dict[str, Any]:
+    if not auto_connect_from_env():
+        raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
+    balance = _session.client.get_usdt_balance()
+    return {
+        "ok": True,
+        "balance": balance,
+        "testnet": True,
+        "credentialsSaved": True,
+        "message": "Reconnected from saved .env credentials",
     }
 
 
 @app.post("/api/disconnect")
-def disconnect() -> dict[str, bool]:
+def disconnect(body: DisconnectBody | None = None) -> dict[str, Any]:
     global _session
+    stop_bot()
     _session = None
-    logger.info("Testnet disconnected")
-    return {"ok": True}
+    if body and body.clear_saved_keys:
+        clear_binance_credentials()
+        logger.info("Testnet disconnected — saved keys removed")
+        return {"ok": True, "credentialsSaved": False}
+    logger.info("Testnet session cleared (saved keys kept)")
+    return {"ok": True, "credentialsSaved": credentials_configured()}
 
 
 @app.get("/api/status")
@@ -276,6 +345,35 @@ def close_order() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
+
+
+@app.post("/api/strategy/sync")
+def strategy_sync(body: StrategySyncBody) -> dict[str, Any]:
+    if not body.strategy:
+        raise HTTPException(status_code=400, detail="strategy payload required")
+    path = save_strategy_json(body.strategy)
+    return {"ok": True, "path": str(path)}
+
+
+@app.get("/api/bot/status")
+def get_bot_status() -> dict[str, Any]:
+    return {"ok": True, **bot_status()}
+
+
+@app.post("/api/bot/start")
+def bot_start() -> dict[str, Any]:
+    if not _session:
+        if not auto_connect_from_env():
+            raise HTTPException(status_code=401, detail="API key not connected — connect testnet first")
+    try:
+        return start_bot()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/bot/stop")
+def bot_stop() -> dict[str, Any]:
+    return stop_bot()
 
 
 def main() -> None:

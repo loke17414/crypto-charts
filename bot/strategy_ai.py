@@ -410,6 +410,7 @@ def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
 
 
 def ai_available(*, verify: bool = False) -> dict[str, Any]:
+    _reload_env()
     api_key, model = _openai_config()
     configured = bool(api_key)
     status = {

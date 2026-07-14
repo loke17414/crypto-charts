@@ -12,10 +12,10 @@ import time
 import webbrowser
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 WEB_PORT = 8765
 API_PORT = 8000
-LISTEN_HOST = os.environ.get("LISTEN_HOST", "127.0.0.1").strip() or "127.0.0.1"
-REMOTE_MODE = LISTEN_HOST not in ("127.0.0.1", "localhost", "::1")
 
 
 def app_dir() -> Path:
@@ -23,6 +23,11 @@ def app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+load_dotenv(app_dir() / ".env", override=False)
+LISTEN_HOST = os.environ.get("LISTEN_HOST", "127.0.0.1").strip() or "127.0.0.1"
+REMOTE_MODE = LISTEN_HOST not in ("127.0.0.1", "localhost", "::1")
 
 
 def resource_root() -> Path:
@@ -45,8 +50,16 @@ def port_available(port: int, host: str = "127.0.0.1") -> bool:
 def port_in_use_message(port: int) -> str:
     return (
         f"  [오류] 포트 {port}이(가) 이미 사용 중입니다.\n"
-        f"  start.ps1, run-server.ps1 등 다른 서버를 종료한 뒤 다시 실행하세요."
+        f"  start.ps1, run-server.ps1, crypto-web 등 다른 서버를 종료한 뒤 다시 실행하세요."
     )
+
+
+def fail_port_in_use(port: int) -> None:
+    print(port_in_use_message(port))
+    if REMOTE_MODE:
+        raise SystemExit(1)
+    input("  Enter 키를 누르면 종료합니다...")
+    raise SystemExit(1)
 
 
 def chrome_paths() -> list[Path]:
@@ -115,6 +128,7 @@ def start_web_server(root: Path, port: int) -> None:
 
 def main() -> int:
     os.chdir(app_dir())
+    load_dotenv(app_dir() / ".env", override=True)
     static_root = resource_root()
 
     print()
@@ -122,14 +136,10 @@ def main() -> int:
     print()
 
     if not port_available(API_PORT, LISTEN_HOST):
-        print(port_in_use_message(API_PORT))
-        input("  Enter 키를 누르면 종료합니다...")
-        return 1
+        fail_port_in_use(API_PORT)
 
     if not port_available(WEB_PORT, LISTEN_HOST):
-        print(port_in_use_message(WEB_PORT))
-        input("  Enter 키를 누르면 종료합니다...")
-        return 1
+        fail_port_in_use(WEB_PORT)
 
     api_thread = threading.Thread(target=start_api_server, name="api-server", daemon=True)
     api_thread.start()

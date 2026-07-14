@@ -777,6 +777,45 @@ a:hover { text-decoration: underline; }
   100% { color: inherit; }
 }
 
+.chart-live-ohlc {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.85rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--radius);
+  background: rgba(19, 23, 34, 0.82);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+  backdrop-filter: blur(4px);
+}
+
+.chart-live-ohlc b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chart-live-ohlc--up b,
+.chart-live-ohlc--up .chart-live-ohlc__chg {
+  color: var(--green);
+}
+
+.chart-live-ohlc--down b,
+.chart-live-ohlc--down .chart-live-ohlc__chg {
+  color: var(--red);
+}
+
+.chart-live-ohlc__chg {
+  font-weight: 600;
+}
+
 .footer {
   padding: 0.75rem 1.5rem;
   border-top: 1px solid var(--border);
@@ -1089,6 +1128,10 @@ a:hover { text-decoration: underline; }
 }
 
 .trading-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem; }
+.trading-actions--manual { flex-direction: row; }
+.trading-actions--manual .btn { flex: 1; }
+.btn--short { background: var(--red); color: #fff; }
+.btn--short:hover { filter: brightness(1.08); }
 .btn--block { width: 100%; }
 
 .trading-hint {
@@ -1352,6 +1395,11 @@ a:hover { text-decoration: underline; }
   display: grid;
   gap: 0.35rem;
   margin-bottom: 0.5rem;
+}
+
+.strategy-ai-key-group.strategy-ai-key--saved input[type="password"] {
+  border-color: var(--green);
+  opacity: 0.85;
 }
 
 .testnet-badge { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }

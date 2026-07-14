@@ -83,6 +83,34 @@ const StrategyAI = (() => {
     }
   }
 
+  function updateKeyField(status) {
+    const input = $('#openaiApiKey');
+    const group = $('#openaiApiKeyGroup');
+    const hint = $('#openaiApiKeyHint');
+    const saveBtn = $('#strategyAiKeySaveBtn');
+    if (!input) return;
+
+    const configured = Boolean(status?.configured);
+    const preview = status?.keyPreview;
+
+    if (configured && preview) {
+      input.value = '';
+      input.placeholder = `서버에 저장됨 (${preview}) — 변경할 때만 입력`;
+      if (group) group.classList.add('strategy-ai-key--saved');
+      if (hint) {
+        hint.textContent = '키는 서버 .env에 저장됩니다. PC·브라우저를 바꿔도 다시 입력할 필요 없습니다.';
+      }
+      if (saveBtn) saveBtn.textContent = '키 변경·저장';
+    } else {
+      input.placeholder = 'sk-proj-... (최초 1회 입력 → 서버 .env 저장)';
+      if (group) group.classList.remove('strategy-ai-key--saved');
+      if (hint) {
+        hint.textContent = "키는 sk-로 시작합니다. '검증 후 저장'하면 서버에 영구 저장됩니다.";
+      }
+      if (saveBtn) saveBtn.textContent = '검증 후 저장';
+    }
+  }
+
   function renderDetails(status, serverOnline) {
     const el = $('#strategyAiDetails');
     if (!el) return;
@@ -119,6 +147,8 @@ const StrategyAI = (() => {
         status?.verified ? 'strategy-ai-note--ok' : status?.configured ? 'strategy-ai-note--warn' : 'strategy-ai-note--muted'
       }`;
     }
+
+    updateKeyField(status);
   }
 
   function setStatus(status, serverOnline) {
@@ -336,14 +366,26 @@ const StrategyAI = (() => {
   async function init() {
     loadHistory();
     bindEvents();
-    await refreshStatus({ verify: true });
+    const status = await refreshStatus({ verify: true });
 
     if (conversationHistory.length) {
       restoreHistoryToUi();
+    } else if (status?.configured && status?.verified) {
+      addMessage(
+        'assistant',
+        `서버에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 바로 전략을 설명하세요.`,
+        { persist: false },
+      );
+    } else if (status?.configured) {
+      addMessage(
+        'assistant',
+        `서버에 키가 있지만 인증에 실패했습니다. '저장된 키 재검사'를 누르거나 키를 다시 저장하세요.`,
+        { persist: false },
+      );
     } else {
       addMessage(
         'assistant',
-        '1) OpenAI API Key 입력 → 2) 연결 테스트 또는 저장 → 3) 전략을 자연어로 설명하세요.\n이전 대화는 기억하며, 요청한 항목만 수정합니다.',
+        '1) OpenAI API Key 입력 → 2) 검증 후 저장 (서버 .env에 1회 저장) → 3) 전략을 자연어로 설명하세요.\n이후에는 키를 다시 입력할 필요 없습니다.',
         { persist: true },
       );
     }

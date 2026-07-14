@@ -37,18 +37,47 @@ if [ ! -d .venv ]; then
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install -q -r requirements.txt
+pip install -r requirements.txt
 
 if [ ! -f .env ]; then
-  echo "==> No .env — copying .env.example (edit BINANCE_API_KEY / SECRET before trading)."
+  echo "==> No .env — copying .env.example (add BINANCE keys before trading)."
   cp .env.example .env
+fi
+
+if ! grep -q '^LISTEN_HOST=' .env 2>/dev/null; then
+  echo "LISTEN_HOST=0.0.0.0" >> .env
+fi
+
+if ! grep -qE '^OPENAI_API_KEY=.+' .env 2>/dev/null; then
+  echo ""
+  echo "==> OPENAI_API_KEY not set in .env (GPT strategy AI)"
+  echo "    One-time setup — pick either:"
+  echo "      nano .env   # add: OPENAI_API_KEY=sk-..."
+  echo "    Or open trading.html → paste key once → '검증 후 저장' (writes server .env)"
+  echo ""
+fi
+
+if ! command -v node >/dev/null; then
+  echo "==> Installing Node.js (required for 24/7 server bot)..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+
+if [ -f bot-js/package.json ] && [ ! -d bot-js/node_modules ]; then
+  echo "==> Installing bot-js dependencies..."
+  (cd bot-js && npm install --omit=dev)
 fi
 
 export LISTEN_HOST=0.0.0.0
 
 echo ""
-echo "==> Starting web + API (Ctrl+C to stop)"
-echo "    Open: http://$(curl -s ifconfig.me 2>/dev/null || echo '<SERVER_IP>'):8765/trading.html"
+echo "==> Port check (8765 web, 8000 API)..."
+ss -tlnp | grep -E ':8765|:8000' || true
+
+echo ""
+echo "==> Starting web + API (keep this window open; Ctrl+C to stop)"
+PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+echo "    Open: http://${PUBLIC_IP:-<SERVER_IP>}:8765/trading.html"
 echo ""
 
 exec python launch.py

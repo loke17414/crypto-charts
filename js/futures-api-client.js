@@ -36,13 +36,17 @@ const FuturesApiClient = (() => {
     return data;
   }
 
-  async function checkServer() {
+  async function getHealth() {
     try {
-      const data = await request('/api/health');
-      return data.ok === true;
+      return await request('/api/health');
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  async function checkServer() {
+    const data = await getHealth();
+    return data?.ok === true;
   }
 
   async function connect(apiKey, apiSecret) {
@@ -54,8 +58,17 @@ const FuturesApiClient = (() => {
     return data;
   }
 
-  async function disconnect() {
-    await request('/api/disconnect', { method: 'POST' });
+  async function reconnect() {
+    const data = await request('/api/reconnect', { method: 'POST' });
+    connected = true;
+    return data;
+  }
+
+  async function disconnect(clearSavedKeys = false) {
+    await request('/api/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({ clear_saved_keys: clearSavedKeys }),
+    });
     connected = false;
   }
 
@@ -122,6 +135,25 @@ const FuturesApiClient = (() => {
     });
   }
 
+  async function syncStrategy(strategy) {
+    return request('/api/strategy/sync', {
+      method: 'POST',
+      body: JSON.stringify({ strategy }),
+    });
+  }
+
+  async function getBotStatus() {
+    return request('/api/bot/status');
+  }
+
+  async function startServerBot() {
+    return request('/api/bot/start', { method: 'POST' });
+  }
+
+  async function stopServerBot() {
+    return request('/api/bot/stop', { method: 'POST' });
+  }
+
   function isConnected() {
     return connected;
   }
@@ -133,7 +165,9 @@ const FuturesApiClient = (() => {
   return {
     API_BASE,
     checkServer,
+    getHealth,
     connect,
+    reconnect,
     disconnect,
     getStatus,
     setup,
@@ -143,6 +177,10 @@ const FuturesApiClient = (() => {
     testOpenAiKey,
     interpretStrategy,
     configureOpenAiKey,
+    syncStrategy,
+    getBotStatus,
+    startServerBot,
+    stopServerBot,
     isConnected,
     setConnected,
   };
