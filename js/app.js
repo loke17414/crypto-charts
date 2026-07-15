@@ -636,6 +636,7 @@ function initChart(container) {
       const h = workspace?.clientHeight || mainEl?.clientHeight || 280;
       chart.applyOptions({ width: container.clientWidth, height: h });
       if (typeof DrawingManager !== 'undefined') DrawingManager.redraw();
+      updatePositionOverlayLabels();
     }
   });
   resizeObserver.observe(workspace || mainEl || container);
@@ -1913,100 +1914,20 @@ function setSignalOverlay(signal) {
   }
 }
 
-// Open-position overlay: dashed horizontal segments for entry / SL / TP (same
-// style as backtest trade overlays, but spanning from entry bar to latest bar).
-const POSITION_OVERLAY_OPTS = {
-  sl: {
-    color: '#ef5350',
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    lastValueVisible: true,
-    priceLineVisible: false,
-    crosshairMarkerVisible: false,
-    autoscaleInfoProvider: () => ({ priceRange: null }),
-  },
-  tp: {
-    color: '#26a69a',
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    lastValueVisible: true,
-    priceLineVisible: false,
-    crosshairMarkerVisible: false,
-    autoscaleInfoProvider: () => ({ priceRange: null }),
-  },
-  entry: {
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    lastValueVisible: true,
-    priceLineVisible: false,
-    crosshairMarkerVisible: false,
-    autoscaleInfoProvider: () => ({ priceRange: null }),
-  },
-};
-
-function resolvePositionSegmentTimes(entryTimeSec) {
-  const candles = state.lastCandles;
-  if (!candles?.length) return null;
-  const barSec = getBarIntervalSeconds(candles);
-  const minT = candles[0].time;
-  const maxT = candles.at(-1).time;
-  let tStart = Math.max(minT, maxT - barSec * 50);
-  if (entryTimeSec != null && Number.isFinite(entryTimeSec)) {
-    for (let i = candles.length - 1; i >= 0; i--) {
-      if (candles[i].time <= entryTimeSec) {
-        tStart = candles[i].time;
-        break;
-      }
-    }
-    tStart = Math.max(minT, tStart);
-  }
-  let tEnd = maxT;
-  if (tStart > tEnd) tEnd = Math.min(tStart + barSec, maxT);
-  return { tStart, tEnd, barSec };
-}
-
-function upsertPositionLineSeries(currentSeries, price, opts, tStart, tEnd, barSec) {
-  if (!chart || !Number.isFinite(price) || tStart == null || tEnd == null) {
-    if (currentSeries) {
-      try { chart.removeSeries(currentSeries); } catch { /* ignore */ }
-    }
-    return null;
-  }
-  const end = tEnd <= tStart ? tStart + (barSec || 60) : tEnd;
-  const data = [{ time: tStart, value: price }, { time: end, value: price }];
-  if (currentSeries) {
-    currentSeries.setData(data);
-    return currentSeries;
-  }
-  const series = chart.addLineSeries(opts);
-  series.setData(data);
-  return series;
-}
-
+// Open-position overlay: left-side labels + SVG dashed lines (Binance projection style).
 function renderPositionOverlaySegments() {
   if (!positionOverlayPending || !chart || !state.lastCandles?.length) {
     updatePositionOverlayLabels();
     return;
   }
-  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = positionOverlayPending;
-  const times = resolvePositionSegmentTimes(entryTime);
-  if (!times) return;
-  const { tStart, tEnd, barSec } = times;
-  const buy = side === 'LONG';
 
-  positionSlSeries = upsertPositionLineSeries(
-    positionSlSeries, stopPrice, POSITION_OVERLAY_OPTS.sl, tStart, tEnd, barSec,
-  );
-  positionTpSeries = upsertPositionLineSeries(
-    positionTpSeries, takeProfitPrice, POSITION_OVERLAY_OPTS.tp, tStart, tEnd, barSec,
-  );
-  const entryOpts = {
-    ...POSITION_OVERLAY_OPTS.entry,
-    color: buy ? '#2962ff' : '#f7931a',
-  };
-  positionEntrySeries = upsertPositionLineSeries(
-    positionEntrySeries, entryPrice, entryOpts, tStart, tEnd, barSec,
-  );
+  // Remove legacy line-series overlays; dashed lines are drawn via SVG from labels.
+  if (chart) {
+    for (const s of [positionSlSeries, positionTpSeries, positionEntrySeries]) {
+      if (s) { try { chart.removeSeries(s); } catch { /* ignore */ } }
+    }
+  }
+  positionSlSeries = positionTpSeries = positionEntrySeries = null;
 
   if (candleSeries && isPriceScaleAuto()) {
     candleSeries.applyOptions({ autoscaleInfoProvider: candleAutoscaleProvider });
@@ -2014,8 +1935,8 @@ function renderPositionOverlaySegments() {
   updatePositionOverlayLabels();
 }
 
-// Binance long/short position projection style labels: centered boxes on each
-// dashed line showing target/stop % and risk-reward (no filled zones).
+// Binance long/short position projection: labels on the left, dashed lines
+// extending rightward at each price level (no filled zones).
 function ensurePositionLabelWrap() {
   const main = document.querySelector('.chart-main');
   if (!main) return null;
@@ -2024,6 +1945,18 @@ function ensurePositionLabelWrap() {
     wrap = document.createElement('div');
     wrap.id = 'chartPositionLabels';
     wrap.className = 'chart-position-labels';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'pos-projection-lines');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const role of ['tp', 'entry', 'sl']) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('class', `pos-projection-line pos-projection-line--${role}`);
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-dasharray', '6 4');
+      line.setAttribute('visibility', 'hidden');
+      svg.appendChild(line);
+    }
+    wrap.appendChild(svg);
     for (const role of ['tp', 'entry', 'sl']) {
       const el = document.createElement('div');
       el.className = `pos-projection-label pos-projection-label--${role}`;
@@ -2035,18 +1968,29 @@ function ensurePositionLabelWrap() {
   return wrap;
 }
 
-function placePositionLabel(el, xMid, price, chartWidth) {
+function layoutPositionLabelRow(el, lineEl, price, strokeColor, chartWidth, paneHeight) {
   if (!el) return;
-  const y = candleSeries.priceToCoordinate(price);
-  if (!Number.isFinite(price) || y == null || y < 0) {
+  const y = candleSeries?.priceToCoordinate(price);
+  if (!Number.isFinite(price) || y == null || y < -24 || y > paneHeight + 24) {
     el.style.display = 'none';
+    if (lineEl) lineEl.setAttribute('visibility', 'hidden');
     return;
   }
+
+  const labelLeft = 4;
   el.style.display = 'block';
-  const half = el.offsetWidth / 2 || 60;
-  const x = Math.min(Math.max(xMid, half + 4), Math.max(chartWidth - half - 4, half + 4));
-  el.style.left = `${x}px`;
+  el.style.left = `${labelLeft}px`;
   el.style.top = `${y}px`;
+
+  if (!lineEl) return;
+  const x1 = labelLeft + el.offsetWidth + 4;
+  const x2 = Math.max(x1 + 12, chartWidth - 6);
+  lineEl.setAttribute('x1', String(x1));
+  lineEl.setAttribute('y1', String(y));
+  lineEl.setAttribute('x2', String(x2));
+  lineEl.setAttribute('y2', String(y));
+  lineEl.setAttribute('stroke', strokeColor);
+  lineEl.setAttribute('visibility', 'visible');
 }
 
 function updatePositionOverlayLabels() {
@@ -2057,17 +2001,10 @@ function updatePositionOverlayLabels() {
     return;
   }
 
-  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = positionOverlayPending;
-  const times = resolvePositionSegmentTimes(entryTime);
-  if (!times) { wrap.style.display = 'none'; return; }
-
+  const { side, entryPrice, stopPrice, takeProfitPrice } = positionOverlayPending;
   const ts = chart.timeScale();
   const chartWidth = ts.width() || $('#chartArea')?.clientWidth || 0;
-  let x1 = ts.timeToCoordinate(times.tStart);
-  let x2 = ts.timeToCoordinate(times.tEnd);
-  if (x1 == null) x1 = 0;
-  if (x2 == null) x2 = chartWidth;
-  const xMid = (x1 + x2) / 2;
+  const paneHeight = chart.paneSize(0)?.height || $('#chartArea')?.clientHeight || 0;
 
   const buy = side === 'LONG';
   const dir = buy ? 1 : -1;
@@ -2078,29 +2015,38 @@ function updatePositionOverlayLabels() {
   const rr = tpPct != null && slPct != null && slPct > 0 ? tpPct / slPct : null;
 
   wrap.style.display = 'block';
+  const svg = wrap.querySelector('.pos-projection-lines');
+  if (svg) {
+    svg.setAttribute('width', String(chartWidth));
+    svg.setAttribute('height', String(paneHeight));
+  }
 
   const tpEl = wrap.querySelector('[data-role="tp"]');
   const entryEl = wrap.querySelector('[data-role="entry"]');
   const slEl = wrap.querySelector('[data-role="sl"]');
+  const tpLine = svg?.querySelector('.pos-projection-line--tp');
+  const entryLine = svg?.querySelector('.pos-projection-line--entry');
+  const slLine = svg?.querySelector('.pos-projection-line--sl');
 
   if (tpEl) {
     tpEl.textContent = Number.isFinite(takeProfitPrice)
       ? `목표 ${formatPrice(takeProfitPrice)}${tpPct != null ? ` (+${tpPct.toFixed(2)}%)` : ''}`
       : '';
-    placePositionLabel(tpEl, xMid, takeProfitPrice, chartWidth);
+    layoutPositionLabelRow(tpEl, tpLine, takeProfitPrice, '#26a69a', chartWidth, paneHeight);
   }
   if (slEl) {
     slEl.textContent = Number.isFinite(stopPrice)
       ? `손절 ${formatPrice(stopPrice)}${slPct != null ? ` (-${slPct.toFixed(2)}%)` : ''}`
       : '';
-    placePositionLabel(slEl, xMid, stopPrice, chartWidth);
+    layoutPositionLabelRow(slEl, slLine, stopPrice, '#ef5350', chartWidth, paneHeight);
   }
   if (entryEl) {
     entryEl.classList.toggle('pos-projection-label--short', !buy);
     entryEl.textContent = Number.isFinite(entryPrice)
-      ? `${buy ? '롱' : '숏'} 진입 ${formatPrice(entryPrice)}${rr != null ? ` · 손익비 ${rr.toFixed(2)}` : ''}`
+      ? `${buy ? '롱' : '숏'} ${formatPrice(entryPrice)}${rr != null ? ` · R:R ${rr.toFixed(2)}` : ''}`
       : '';
-    placePositionLabel(entryEl, xMid, entryPrice, chartWidth);
+    const entryColor = buy ? '#2962ff' : '#f7931a';
+    layoutPositionLabelRow(entryEl, entryLine, entryPrice, entryColor, chartWidth, paneHeight);
   }
 }
 
@@ -2108,7 +2054,12 @@ function clearPositionOverlay() {
   positionOverlayPending = null;
   positionAutoscalePrices = [];
   const labelWrap = document.getElementById('chartPositionLabels');
-  if (labelWrap) labelWrap.style.display = 'none';
+  if (labelWrap) {
+    labelWrap.style.display = 'none';
+    labelWrap.querySelectorAll('.pos-projection-line').forEach((line) => {
+      line.setAttribute('visibility', 'hidden');
+    });
+  }
   if (chart) {
     for (const s of [positionSlSeries, positionTpSeries, positionEntrySeries]) {
       if (s) { try { chart.removeSeries(s); } catch { /* ignore */ } }
