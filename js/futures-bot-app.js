@@ -23,6 +23,7 @@ const FuturesBotApp = (() => {
   let lastCandles = [];
   let testnetStatus = null;
   let showBacktest = true;
+  let backtestHistoryExpandId = 0;
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -1827,7 +1828,7 @@ const FuturesBotApp = (() => {
       }
     }
     if (stats.chartVisibleTrades != null && stats.chartVisibleTrades < stats.trades) {
-      countLabel += ` (차트 데이터 ${stats.chartVisibleTrades}/${stats.trades}회 — 왼쪽으로 스크롤)`;
+      countLabel += ` (차트 최신 ${stats.chartVisibleTrades}/${stats.trades}회 — 과거는 왼쪽 스크롤)`;
     }
     return (
       `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
@@ -1893,6 +1894,7 @@ const FuturesBotApp = (() => {
   }
 
   function invalidateBacktestChart(chartCandles, { message = null } = {}) {
+    backtestHistoryExpandId += 1;
     BacktestRunner.invalidate({ message });
     if (showBacktest) clearBacktestChartDisplay(chartCandles);
   }
@@ -1910,14 +1912,49 @@ const FuturesBotApp = (() => {
 
   function focusBacktestTrades(trades, chartCandles) {
     if (!trades?.length || !chartCandles?.length) return;
-    const minTime = chartCandles[0].time;
-    const maxTime = chartCandles.at(-1).time;
-    const inView = trades.filter((t) => t.exitTime >= minTime && t.entryTime <= maxTime);
-    const focusPool = (inView.length ? inView : trades).slice(-8);
-    if (!focusPool.length) return;
+    // 백테스트 kept 목록은 과거→최신 순 — 차트에는 가장 최근 거래 구간부터 보여준다.
+    const newestCount = Math.min(8, trades.length);
+    const focusPool = trades.slice(-newestCount);
     const fromT = Math.min(...focusPool.map((t) => t.entryTime));
     const toT = Math.max(...focusPool.map((t) => t.exitTime));
     Chart.focusChartTimeRange(fromT, toT);
+  }
+
+  const BAR_SECONDS = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
+    '12h': 43200, '1d': 86400,
+  };
+
+  async function expandChartHistoryForTrades(trades, onDone) {
+    if (!trades?.length || !Chart.available()) {
+      onDone?.();
+      return;
+    }
+    const runId = ++backtestHistoryExpandId;
+    const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
+    const chartData = Chart.getCandles() || [];
+    if (!chartData.length || earliestEntry >= chartData[0].time) {
+      onDone?.();
+      return;
+    }
+    const interval = Chart.getState()?.interval || state.interval;
+    const barSec = BAR_SECONDS[interval] || 3600;
+    const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
+    const maxPages = Math.min(70, Math.ceil(needBars / 1000) + 3);
+    try {
+      await Chart.loadHistoryUntilTime(earliestEntry, maxPages, { relaxBarCap: true });
+    } catch (err) {
+      console.warn('[백테스트] 과거 차트 확장 실패:', err);
+    }
+    if (runId !== backtestHistoryExpandId) return;
+    onDone?.();
+  }
+
+  function applyBacktestMarkersToChart(markers, trades, chartCandles) {
+    const scoped = filterMarkersToChart(markers, chartCandles);
+    Chart.setMarkers(mergeChartMarkers(scoped, chartCandles));
+    syncBacktestOverlays(filterTradesToChart(trades, chartCandles), chartCandles);
   }
 
   function clearBacktestOverlays() {
@@ -1940,10 +1977,21 @@ const FuturesBotApp = (() => {
 
     if (showBacktest || force) {
       clearBacktestOverlays();
-      // 마커는 백테스트 전체 결과를 차트 데이터 범위 안에 모두 올린다 (뷰포트 밖도 스크롤로 확인).
-      Chart.setMarkers(mergeChartMarkers(markers, chartCandles));
-      syncBacktestOverlays(visibleTrades, chartCandles);
-      if (focusChart && trades.length) focusBacktestTrades(trades, chartCandles);
+      focusBacktestTrades(trades, chartCandles);
+      applyBacktestMarkersToChart(markers, trades, chartCandles);
+      const hiddenTrades = trades.length - visibleTrades.length;
+      if (hiddenTrades > 0) {
+        expandChartHistoryForTrades(trades, () => {
+          const updated = Chart.getCandles() || chartCandles;
+          applyBacktestMarkersToChart(markers, trades, updated);
+          const statsEl = $('#backtestStats');
+          if (statsEl && statsEl.innerHTML) {
+            const refreshedVisible = filterTradesToChart(trades, updated);
+            const refreshedStats = { ...reportStats, chartVisibleTrades: refreshedVisible.length };
+            statsEl.innerHTML = formatBacktestStats(refreshedStats, interval);
+          }
+        });
+      }
     } else {
       Chart.setMarkers(getSwingPivotMarkers(chartCandles));
       clearBacktestOverlays();

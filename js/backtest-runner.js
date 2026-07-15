@@ -124,17 +124,6 @@ const BacktestRunner = (() => {
     return { source: extended, fromCache: false, historyExhausted, loadTrades };
   }
 
-  async function ensureChartCoversTrades(trades, interval) {
-    if (!trades?.length || !deps.loadChartHistoryUntil) return;
-    const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
-    const chartData = deps.getChartCandles() || [];
-    if (!chartData.length || earliestEntry >= chartData[0].time) return;
-    const barSec = INTERVAL_SECONDS[interval] || 3600;
-    const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
-    const maxPages = Math.min(70, Math.ceil(needBars / 1000) + 3);
-    await deps.loadChartHistoryUntil(earliestEntry, maxPages, { relaxBarCap: true });
-  }
-
   async function compute(chartCandles, { force = false, focusChart = false } = {}) {
     lastError = null;
     deps.readFormSettings?.();
@@ -178,10 +167,6 @@ const BacktestRunner = (() => {
       const { markers, stats, trades } = FuturesStrategy.backtest(btSource, settings, { maxTrades: targetTrades });
 
       let displayCandles = chartCandles?.length ? chartCandles : btSource;
-      if (trades.length && deps.getShowBacktest?.()) {
-        await ensureChartCoversTrades(trades, interval);
-        displayCandles = deps.getChartCandles() || displayCandles;
-      }
 
       if (localRunId !== runId) {
         return { ok: false, cancelled: true, interval, settings, targetTrades };
