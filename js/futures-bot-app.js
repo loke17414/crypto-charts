@@ -1522,9 +1522,36 @@ const FuturesBotApp = (() => {
     }
   }
 
+  const BOT_INTERVAL_KEY = 'crypto-charts-bot-interval';
+
+  // Resolve which timeframe the bot should trade on when it starts. "chart"
+  // keeps whatever the chart shows; an explicit interval switches the chart
+  // (the whole pipeline — candles, signals, backtest — follows the chart).
+  async function applyBotIntervalOnStart() {
+    const sel = $('#botInterval')?.value || 'chart';
+    if (sel === 'chart' || !INTERVALS[sel]) return state.interval;
+
+    const chartInterval = window.CryptoCharts?.getState?.()?.interval;
+    if (chartInterval !== sel) {
+      addLog(`봇 봉 주기 ${INTERVALS[sel].label} — 차트를 전환하는 중...`, 'info');
+      const ok = await window.CryptoCharts?.setInterval?.(sel);
+      if (!ok) {
+        addLog(
+          `${INTERVALS[sel].label} 차트 전환 실패 — 현재 ${INTERVALS[state.interval]?.label || state.interval} 기준으로 시작합니다.`,
+          'loss',
+        );
+        return state.interval;
+      }
+      syncFromChart();
+    }
+    state.interval = sel;
+    return sel;
+  }
+
   async function startBot() {
     if (botRunning) return;
     readFormSettings();
+    await applyBotIntervalOnStart();
     sessionStartEquity = await getEquity();
 
     if (isTestnetMode()) {
@@ -1731,6 +1758,18 @@ const FuturesBotApp = (() => {
   function bindUiEvents() {
     document.addEventListener('chart-candles-updated', onChartCandlesUpdated);
     document.addEventListener('chart-candle-tick', onChartCandleTick);
+
+    const botIntervalEl = $('#botInterval');
+    if (botIntervalEl) {
+      const saved = localStorage.getItem(BOT_INTERVAL_KEY);
+      if (saved && (saved === 'chart' || INTERVALS[saved])) botIntervalEl.value = saved;
+      botIntervalEl.addEventListener('change', () => {
+        localStorage.setItem(BOT_INTERVAL_KEY, botIntervalEl.value);
+        if (botRunning) {
+          addLog('봉 주기 변경은 다음 봇 시작부터 적용됩니다. (봇 정지 후 다시 시작)', 'info');
+        }
+      });
+    }
 
     $('#showBacktest')?.addEventListener('change', (e) => {
       showBacktest = e.target.checked;
