@@ -15,6 +15,19 @@ const FuturesStrategy = (() => {
     return n;
   }
 
+  function useStopLossActive(settings, positionExtras = {}) {
+    if (positionExtras.useStopLoss === false) return false;
+    return settings?.useStopLoss !== false;
+  }
+
+  function resolveStopPrice(side, entryPrice, slPct, override, useSl) {
+    if (!useSl) return null;
+    if (override != null && Number.isFinite(override)) return override;
+    if (side === 'LONG') return entryPrice * (1 - slPct / 100);
+    if (side === 'SHORT') return entryPrice * (1 + slPct / 100);
+    return null;
+  }
+
   function atrAt(candles, index, period) {
     if (index < 1) return null;
     const p = Math.max(1, parseInt(period, 10) || 14);
@@ -99,7 +112,7 @@ const FuturesStrategy = (() => {
         context.index,
         exitRule,
       );
-      if (dynamic) return dynamic;
+      if (dynamic) return stripStopLossIfDisabled(dynamic, settings);
       if (!dynamicFallbackWarned) {
         dynamicFallbackWarned = true;
         console.warn(
@@ -114,24 +127,29 @@ const FuturesStrategy = (() => {
     const stopLossPct = getStopLossPct(settings);
     const takeProfitPct = getTakeProfitPct(settings);
     if (side === 'LONG') {
-      return {
+      return stripStopLossIfDisabled({
         side: 'LONG',
         stopPrice: entry * (1 - stopLossPct / 100),
         takeProfitPrice: entry * (1 + takeProfitPct / 100),
         stopLossPct,
         takeProfitPct,
-      };
+      }, settings);
     }
     if (side === 'SHORT') {
-      return {
+      return stripStopLossIfDisabled({
         side: 'SHORT',
         stopPrice: entry * (1 + stopLossPct / 100),
         takeProfitPrice: entry * (1 - takeProfitPct / 100),
         stopLossPct,
         takeProfitPct,
-      };
+      }, settings);
     }
     return null;
+  }
+
+  function stripStopLossIfDisabled(levels, settings) {
+    if (!levels || settings?.useStopLoss !== false) return levels;
+    return { ...levels, stopPrice: null, stopLossPct: null };
   }
 
   function calcLongEntryLevels(entryPrice, settings) {
@@ -198,11 +216,12 @@ const FuturesStrategy = (() => {
   function checkExit(side, entryPrice, currentPrice, settings, positionExtras = {}) {
     const slPct = positionExtras.stopLossPct ?? getStopLossPct(settings);
     const tpPct = positionExtras.takeProfitPct ?? getTakeProfitPct(settings);
+    const useSl = useStopLossActive(settings, positionExtras);
 
     if (side === 'LONG') {
-      const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 - slPct / 100);
+      const stopPrice = resolveStopPrice('LONG', entryPrice, slPct, positionExtras.stopPrice, useSl);
       const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 + tpPct / 100);
-      if (currentPrice <= stopPrice) {
+      if (useSl && stopPrice != null && currentPrice <= stopPrice) {
         return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})` };
       }
       if (currentPrice >= takeProfitPrice) {
@@ -212,9 +231,9 @@ const FuturesStrategy = (() => {
     }
 
     if (side === 'SHORT') {
-      const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 + slPct / 100);
+      const stopPrice = resolveStopPrice('SHORT', entryPrice, slPct, positionExtras.stopPrice, useSl);
       const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 - tpPct / 100);
-      if (currentPrice >= stopPrice) {
+      if (useSl && stopPrice != null && currentPrice >= stopPrice) {
         return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})` };
       }
       if (currentPrice <= takeProfitPrice) {
@@ -234,19 +253,21 @@ const FuturesStrategy = (() => {
     if (side !== 'LONG' && side !== 'SHORT') return null;
     const slPct = positionExtras.stopLossPct ?? getStopLossPct(settings);
     const tpPct = positionExtras.takeProfitPct ?? getTakeProfitPct(settings);
+    const useSl = useStopLossActive(settings, positionExtras);
     const { high, low, open } = candle;
     const isLong = side === 'LONG';
 
-    const stopPrice = positionExtras.stopPrice
-      ?? (isLong ? entryPrice * (1 - slPct / 100) : entryPrice * (1 + slPct / 100));
+    const stopPrice = resolveStopPrice(side, entryPrice, slPct, positionExtras.stopPrice, useSl);
     const takeProfitPrice = positionExtras.takeProfitPrice
       ?? (isLong ? entryPrice * (1 + tpPct / 100) : entryPrice * (1 - tpPct / 100));
 
-    const hitSl = isLong ? low <= stopPrice : high >= stopPrice;
+    const hitSl = useSl && stopPrice != null && (isLong ? low <= stopPrice : high >= stopPrice);
     const hitTp = isLong ? high >= takeProfitPrice : low <= takeProfitPrice;
     if (!hitSl && !hitTp) return null;
 
-    const slFill = isLong ? Math.min(stopPrice, open) : Math.max(stopPrice, open);
+    const slFill = stopPrice != null
+      ? (isLong ? Math.min(stopPrice, open) : Math.max(stopPrice, open))
+      : null;
     const tpFill = isLong ? Math.max(takeProfitPrice, open) : Math.min(takeProfitPrice, open);
     const slExit = { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: slFill };
     const tpExit = { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: tpFill };
