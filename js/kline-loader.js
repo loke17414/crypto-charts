@@ -1,8 +1,25 @@
-/* Paginated Binance kline history loader */
+/* Paginated Binance kline history loader (spot or USDT-M futures) */
 const KlineLoader = (() => {
-  const BINANCE_API = 'https://api.binance.com/api/v3';
+  const ENDPOINTS = {
+    spot: 'https://api.binance.com/api/v3',
+    futures: 'https://fapi.binance.com/fapi/v1',
+  };
+
+  let market = 'spot';
   const PAGE_SIZE = 1000;
   const MAX_PAGES = 50;
+
+  function setMarket(mode) {
+    market = mode === 'futures' ? 'futures' : 'spot';
+  }
+
+  function getMarket() {
+    return market;
+  }
+
+  function apiBase() {
+    return ENDPOINTS[market];
+  }
 
   function mapKlines(raw) {
     return raw.map((k) => ({
@@ -22,7 +39,7 @@ const KlineLoader = (() => {
   }
 
   async function fetchPage(symbol, interval, fetchJson, endTimeMs = null) {
-    let url = `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=${PAGE_SIZE}`;
+    let url = `${apiBase()}/klines?symbol=${symbol}&interval=${interval}&limit=${PAGE_SIZE}`;
     if (endTimeMs != null) url += `&endTime=${endTimeMs}`;
     const data = await fetchJson(url);
     if (!Array.isArray(data)) throw new Error('Invalid klines response');
@@ -62,6 +79,8 @@ const KlineLoader = (() => {
   }
 
   return {
+    setMarket,
+    getMarket,
     fetchHistorical,
     fetchOlder,
     fetchPage,

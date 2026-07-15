@@ -813,7 +813,21 @@ const FuturesBotApp = (() => {
       hour: '2-digit',
       minute: '2-digit',
     });
-    return `${bars}봉 · ${fmt(stats.rangeFromTime)} ~ ${fmt(stats.rangeToTime)}`;
+    const market = window.KlineLoader?.getMarket?.() === 'futures' ? '선물' : '현물';
+    return `${bars}봉 · ${market} · ${fmt(stats.rangeFromTime)} ~ ${fmt(stats.rangeToTime)}`;
+  }
+
+  function statsFromTrades(trades, base = {}) {
+    const wins = trades.filter((t) => t.pnlPct >= 0).length;
+    const totalPnl = trades.reduce((s, t) => s + t.pnlPct, 0);
+    return {
+      ...base,
+      trades: trades.length,
+      wins,
+      losses: trades.length - wins,
+      winRate: trades.length ? (wins / trades.length) * 100 : 0,
+      totalPnlPct: totalPnl,
+    };
   }
 
   function formatBacktestStats(stats, interval) {
@@ -823,7 +837,9 @@ const FuturesBotApp = (() => {
     let countLabel = stats.targetTrades
       ? `${stats.trades}/${stats.targetTrades}회`
       : `${stats.trades}회`;
-    if (stats.targetTrades && !stats.targetReached) {
+    if (stats.chartOnly && stats.totalTrades > stats.trades) {
+      countLabel = `차트 ${stats.trades}/${stats.totalTrades}회`;
+    } else if (stats.targetTrades && !stats.targetReached) {
       countLabel += ` · ${stats.candlesUsed.toLocaleString()}봉 한도`;
     }
     return (
@@ -997,8 +1013,19 @@ const FuturesBotApp = (() => {
         clearBacktestOverlays();
       }
 
+      let reportStats = stats;
+      if ((showBacktest || force) && visibleTrades.length && visibleTrades.length < trades.length) {
+        reportStats = statsFromTrades(visibleTrades, {
+          ...stats,
+          chartOnly: true,
+          totalTrades: stats.trades,
+          rangeFromTime: visibleTrades[0]?.entryTime ?? stats.rangeFromTime,
+          rangeToTime: visibleTrades.at(-1)?.exitTime ?? stats.rangeToTime,
+        });
+      }
+
       lastRenderedBacktestKey = backtestCacheKey(interval, targetTrades, settings);
-      if (statsEl) statsEl.innerHTML = formatBacktestStats(stats, interval);
+      if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);
     } catch (err) {
       console.error('Backtest failed:', err);
       if (statsEl) statsEl.textContent = `백테스트 실패: ${err.message}`;

@@ -1,12 +1,7 @@
-/* Fetch extended kline history until backtest reaches target trade count */
+/* Fetch extended USDT-M futures kline history until backtest reaches target trade count */
 const BacktestLoader = (() => {
   const FUTURES_API = 'https://fapi.binance.com/fapi/v1';
   const PAGE_SIZE = 1000;
-
-  // Hard ceiling on how many 1000-candle pages we will ever pull for a single
-  // backtest, to protect against runaway loops and API hammering. This is a
-  // safety net — normally we stop as soon as the target trade count is reached
-  // or the symbol runs out of history.
   const HARD_MAX_PAGES = 300;
 
   function maxPagesForTarget(targetTrades) {
@@ -25,6 +20,7 @@ const BacktestLoader = (() => {
   }
 
   function mapKlines(raw) {
+    if (window.KlineLoader?.mapKlines) return KlineLoader.mapKlines(raw);
     return raw.map((k) => ({
       time: Math.floor(k[0] / 1000),
       open: parseFloat(k[1]),
@@ -45,6 +41,19 @@ const BacktestLoader = (() => {
   }
 
   async function fetchPage(symbol, interval, endTimeMs = null) {
+    if (window.KlineLoader?.fetchPage) {
+      const prev = KlineLoader.getMarket?.();
+      if (KlineLoader.setMarket) KlineLoader.setMarket('futures');
+      try {
+        return await KlineLoader.fetchPage(symbol, interval, (url) => fetch(url).then((r) => {
+          if (!r.ok) throw new Error(`Klines fetch failed (${r.status})`);
+          return r.json();
+        }), endTimeMs);
+      } finally {
+        if (prev && KlineLoader.setMarket) KlineLoader.setMarket(prev);
+      }
+    }
+
     let url = `${FUTURES_API}/klines?symbol=${symbol}&interval=${interval}&limit=${PAGE_SIZE}`;
     if (endTimeMs != null) url += `&endTime=${endTimeMs}`;
     const res = await fetch(url);
@@ -69,15 +78,9 @@ const BacktestLoader = (() => {
 
   function countTrades(candles, settings, targetTrades) {
     const { stats } = FuturesStrategy.backtest(candles, settings, { maxTrades: targetTrades });
-    // backtest caps `trades` at targetTrades, so prefer the uncapped total.
     return stats.totalTrades ?? stats.trades;
   }
 
-  // Adaptively pulls older history until the backtest actually produces
-  // `targetTrades` trades. Instead of guessing bar counts up front, we measure
-  // the real trade density from each pass and load only as much more as needed,
-  // stopping when the target is met OR the symbol has no more history OR we hit
-  // the hard page ceiling.
   async function loadForTargetTrades(symbol, interval, settings, targetTrades, onProgress, seedCandles = []) {
     const maxPages = maxPagesForTarget(targetTrades);
     let candles = seedCandles.length ? [...seedCandles] : await fetchPage(symbol, interval);
@@ -102,8 +105,6 @@ const BacktestLoader = (() => {
     while (found < targetTrades && pagesUsed < maxPages) {
       const before = candles.length;
       const remaining = targetTrades - found;
-      // Bars needed per trade based on what we've observed so far. Before any
-      // trade is seen, fall back to a conservative multiple of the hint.
       const barsPerTrade = found > 0
         ? candles.length / found
         : barsPerTradeHint(interval) * 3;
@@ -116,7 +117,6 @@ const BacktestLoader = (() => {
       candles = await fetchOlderPages(symbol, interval, candles, pagesToFetch);
       pagesUsed += pagesToFetch;
 
-      // No new candles came back → the symbol has no more history to load.
       if (candles.length === before) break;
 
       found = countTrades(candles, settings, targetTrades);

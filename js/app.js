@@ -1,8 +1,20 @@
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
-const BINANCE_API = 'https://api.binance.com/api/v3';
-const BINANCE_WS = 'wss://stream.binance.com:9443/ws';
-
 const isTradingPage = document.body.classList.contains('trading-page');
+
+function binanceRestBase() {
+  return isTradingPage ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+}
+
+function binanceWsCombinedBase() {
+  return isTradingPage ? 'wss://fstream.binance.com' : 'wss://stream.binance.com:9443';
+}
+
+function binanceWsSingleBase() {
+  return isTradingPage ? 'wss://fstream.binance.com/ws' : 'wss://stream.binance.com:9443/ws';
+}
+
+const BINANCE_API = binanceRestBase();
+const BINANCE_WS = binanceWsCombinedBase();
 
 const INTERVALS = {
   '1m':  { label: '1분',  seconds: 60,    targetBars: 4320 },
@@ -235,7 +247,7 @@ async function fetchKlines(symbol, interval, limit) {
       (url) => fetchWithCache(url, 5_000),
     );
   }
-  const url = `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(limit, 1000)}`;
+  const url = `${binanceRestBase()}/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(limit, 1000)}`;
   const data = await fetchWithCache(url, 5_000);
   return data.map((k) => ({
     time: Math.floor(k[0] / 1000),
@@ -248,7 +260,7 @@ async function fetchKlines(symbol, interval, limit) {
 }
 
 async function fetch24hTicker(symbol) {
-  const url = `${BINANCE_API}/ticker/24hr?symbol=${symbol}`;
+  const url = `${binanceRestBase()}/ticker/24hr?symbol=${symbol}`;
   return fetchWithCache(url, 15_000);
 }
 
@@ -1462,7 +1474,7 @@ function connectWebSocket(symbol, interval) {
 function connectMiniTickerStream() {
   if (miniTickerWs) return;
 
-  miniTickerWs = new WebSocket(`${BINANCE_WS}/!miniTicker@arr`);
+  miniTickerWs = new WebSocket(`${binanceWsSingleBase()}/!miniTicker@arr`);
 
   miniTickerWs.onmessage = (event) => {
     const tickers = JSON.parse(event.data);
@@ -1725,6 +1737,9 @@ async function selectCoin(coinId) {
 
 async function initTradingChart() {
   try {
+    if (window.KlineLoader?.setMarket) {
+      KlineLoader.setMarket('futures');
+    }
     await loadBinanceSymbols();
     const btc = {
       id: 'bitcoin',

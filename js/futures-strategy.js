@@ -222,20 +222,28 @@ const FuturesStrategy = (() => {
 
   // Backtest-only exit check that uses the candle's HIGH/LOW (wick) rather than
   // just the close, so an intrabar touch of the stop/take-profit is detected and
-  // the trade exits at the actual SL/TP price. When a single bar's range spans
-  // both levels we assume the stop is hit first (conservative).
+  // the trade exits at the actual SL/TP price. When both levels are touched on
+  // one bar, use open vs entry to pick the more likely path first.
   function checkExitBar(side, entryPrice, candle, settings, positionExtras = {}) {
     const slPct = positionExtras.stopLossPct ?? getStopLossPct(settings);
     const tpPct = positionExtras.takeProfitPct ?? getTakeProfitPct(settings);
-    const { high, low, close } = candle;
+    const { high, low, open, close } = candle;
 
     if (side === 'LONG') {
       const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 - slPct / 100);
       const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 + tpPct / 100);
-      if (low <= stopPrice) {
+      const hitSl = low <= stopPrice;
+      const hitTp = high >= takeProfitPrice;
+      if (hitSl && hitTp) {
+        if (open >= entryPrice) {
+          return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
+        }
+        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
+      }
+      if (hitSl) {
         return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
       }
-      if (high >= takeProfitPrice) {
+      if (hitTp) {
         return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
       }
       return null;
@@ -244,10 +252,18 @@ const FuturesStrategy = (() => {
     if (side === 'SHORT') {
       const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 + slPct / 100);
       const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 - tpPct / 100);
-      if (high >= stopPrice) {
+      const hitSl = high >= stopPrice;
+      const hitTp = low <= takeProfitPrice;
+      if (hitSl && hitTp) {
+        if (open <= entryPrice) {
+          return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
+        }
+        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
+      }
+      if (hitSl) {
         return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
       }
-      if (low <= takeProfitPrice) {
+      if (hitTp) {
         return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
       }
       return null;
@@ -288,7 +304,9 @@ const FuturesStrategy = (() => {
       };
     }
 
-    const { rules, cache, startIdx } = StrategyEngine.prepareBacktest(candles, settings);
+    const { rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(candles, settings);
+    const minStart = minBars(settings);
+    const startIdx = Math.max(warmupIdx, minStart);
 
     function closePosition(candle, reason, exitPrice = candle.close) {
       const pnlPct = calcPnlPct(position.side, position.entryPrice, exitPrice);
