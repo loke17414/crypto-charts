@@ -1,10 +1,22 @@
 #!/bin/bash
 # Fix "Not Found" / 404 on /api/bot/* — pull latest code, kill stale processes, restart.
 #
-# Run on VPS as root (SSH):
-#   cd ~/crypto-charts   # or wherever you cloned the repo
+# Run on VPS (SSH as root, or a user with sudo):
+#   cd /root/crypto-charts
+#   git pull
+#   bash deploy/update-server.sh
+#
+# If you prefer sudo (non-root user):
+#   cd ~/crypto-charts
+#   git pull
+#   sudo bash deploy/update-server.sh
+#
+# Do NOT use "./deploy/update-server.sh" unless you ran:
 #   chmod +x deploy/update-server.sh
-#   sudo ./deploy/update-server.sh
+# Otherwise you get: Permission denied
+#
+# Quick fallback (no script):
+#   cd /root/crypto-charts && git pull && sudo systemctl restart crypto-web
 #
 # Success: curl shows "apiVersion": 2 and /api/bot/status returns JSON (not 404).
 
@@ -16,7 +28,7 @@ echo "==> CryptoCharts update-server"
 echo "    Root: $ROOT"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "==> Re-run with sudo: sudo $0"
+  echo "==> Need root. Run: sudo bash $0"
   exit 1
 fi
 
