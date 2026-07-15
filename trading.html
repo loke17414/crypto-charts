@@ -110,6 +110,28 @@
           </div>
         </div>
 
+        <div class="form-row">
+          <div class="form-group">
+            <label for="stopLoss">손절 SL (%)</label>
+            <input type="number" id="stopLoss" value="1.5" min="0.1" max="50" step="0.1">
+          </div>
+          <div class="form-group">
+            <label for="takeProfit">익절 TP (%)</label>
+            <input type="number" id="takeProfit" value="3" min="0.1" max="100" step="0.1">
+          </div>
+        </div>
+        <p class="api-hint">진입가 대비 %. 아래 가격($)을 입력하면 % 대신 직접 가격이 적용됩니다.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="stopLossPrice">손절 가격 ($)</label>
+            <input type="number" id="stopLossPrice" placeholder="자동 (%)" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="takeProfitPrice">익절 가격 ($)</label>
+            <input type="number" id="takeProfitPrice" placeholder="자동 (%)" min="0" step="0.01">
+          </div>
+        </div>
+
         <div class="form-group form-group--check hidden">
           <label><input type="checkbox" id="allowShort" checked> 숏 포지션 허용</label>
         </div>
@@ -166,8 +188,6 @@
           <button type="button" id="strategyAiSendBtn" class="btn btn--primary btn--block">전략 적용</button>
         </div>
 
-        <input type="hidden" id="stopLoss" value="1.5">
-        <input type="hidden" id="takeProfit" value="3">
         <input type="hidden" id="macdFast" value="12">
         <input type="hidden" id="macdSlow" value="26">
         <input type="hidden" id="macdSignal" value="9">
@@ -411,14 +431,14 @@
   <script src="js/strategy-engine.js?v=20260715s"></script>
   <script src="js/drawings.js"></script>
   <script src="js/kline-loader.js"></script>
-  <script src="js/app.js?v=20260715v"></script>
+  <script src="js/app.js?v=20260715x"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260715g"></script>
   <script src="js/backtest-loader.js?v=20260715g"></script>
   <script src="js/futures-api-client.js?v=20260715e"></script>
   <script src="js/risk-sizing.js"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260715w"></script>
+  <script src="js/futures-bot-app.js?v=20260715x"></script>
   <script src="js/strategy-ai.js?v=20260715r"></script>
 </body>
 </html>

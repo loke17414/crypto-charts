@@ -418,14 +418,43 @@ const FuturesBotApp = (() => {
     addLog(`${note}${changed}`, 'info');
   }
 
+  function readManualSlTpPrices() {
+    const sl = parseFloat($('#stopLossPrice')?.value);
+    const tp = parseFloat($('#takeProfitPrice')?.value);
+    return {
+      stopPrice: Number.isFinite(sl) && sl > 0 ? sl : null,
+      takeProfitPrice: Number.isFinite(tp) && tp > 0 ? tp : null,
+    };
+  }
+
+  function applyManualSlTpOverride(levels, side, entryPrice) {
+    if (!levels || !side || !entryPrice) return levels;
+    const manual = readManualSlTpPrices();
+    const out = { ...levels };
+    if (manual.stopPrice != null) {
+      out.stopPrice = manual.stopPrice;
+      out.stopLossPct = side === 'LONG'
+        ? ((entryPrice - manual.stopPrice) / entryPrice) * 100
+        : ((manual.stopPrice - entryPrice) / entryPrice) * 100;
+    }
+    if (manual.takeProfitPrice != null) {
+      out.takeProfitPrice = manual.takeProfitPrice;
+      out.takeProfitPct = side === 'LONG'
+        ? ((manual.takeProfitPrice - entryPrice) / entryPrice) * 100
+        : ((entryPrice - manual.takeProfitPrice) / entryPrice) * 100;
+    }
+    return out;
+  }
+
   function calcEntryLevels(side, price = state.lastPrice || lastCandles.at(-1)?.close) {
     readFormSettings();
     if (!price || !side) return null;
     const index = lastCandles.length ? lastCandles.length - 1 : null;
-    return FuturesStrategy.calcEntryLevels(side, price, getSettings(), {
+    const levels = FuturesStrategy.calcEntryLevels(side, price, getSettings(), {
       candles: lastCandles,
       index,
     });
+    return applyManualSlTpOverride(levels, side, price);
   }
 
   function calcEntryStopPrice(side) {
@@ -433,21 +462,80 @@ const FuturesBotApp = (() => {
     return calcEntryLevels(side)?.stopPrice ?? null;
   }
 
-  function updatePositionStopLine() {
-    if (!window.CryptoCharts?.setStopLossLine) return;
+  function updatePositionOverlay() {
+    const setFn = window.CryptoCharts?.setPositionOverlay;
+    const clearFn = window.CryptoCharts?.clearPositionOverlay;
+    if (!setFn) return;
+
+    let side = null;
+    let entryPrice = null;
     let stopPrice = null;
+    let takeProfitPrice = null;
+
     if (isTestnetMode() && testnetStatus?.position) {
+      side = testnetStatus.position.side;
+      entryPrice = testnetStatus.position.entryPrice;
       stopPrice = positionStopPrice;
+      takeProfitPrice = positionTakeProfitPrice;
     } else {
-      stopPrice = FuturesPaper.getPosition()?.stopPrice ?? null;
+      const pos = FuturesPaper.getPosition();
+      if (pos) {
+        side = pos.side;
+        entryPrice = pos.entryPrice;
+        stopPrice = pos.stopPrice ?? positionStopPrice;
+        takeProfitPrice = pos.takeProfitPrice ?? positionTakeProfitPrice;
+      }
     }
-    CryptoCharts.setStopLossLine(stopPrice);
+
+    if (side && entryPrice != null && (stopPrice != null || takeProfitPrice != null)) {
+      window.CryptoCharts?.clearSignalOverlay?.();
+      setFn({ side, entryPrice, stopPrice, takeProfitPrice });
+    } else if (typeof clearFn === 'function') {
+      clearFn();
+    }
+  }
+
+  /** @deprecated use updatePositionOverlay */
+  function updatePositionStopLine() {
+    updatePositionOverlay();
+  }
+
+  function syncOpenPositionSlTp() {
+    if (!hasOpenPosition()) return;
+    readFormSettings();
+    let side;
+    let entryPrice;
+    if (isTestnetMode()) {
+      side = testnetStatus?.position?.side;
+      entryPrice = testnetStatus?.position?.entryPrice;
+    } else {
+      const pos = FuturesPaper.getPosition();
+      side = pos?.side;
+      entryPrice = pos?.entryPrice;
+    }
+    if (!side || !entryPrice) return;
+
+    const levels = calcEntryLevels(side, entryPrice);
+    if (!levels) return;
+
+    positionStopPrice = levels.stopPrice;
+    positionTakeProfitPrice = levels.takeProfitPrice;
+
+    if (!isTestnetMode()) {
+      const pos = FuturesPaper.getPosition();
+      if (pos) {
+        pos.stopPrice = levels.stopPrice;
+        pos.takeProfitPrice = levels.takeProfitPrice;
+      }
+    }
+    updatePositionOverlay();
   }
 
   function clearPositionStop() {
     positionStopPrice = null;
     positionTakeProfitPrice = null;
-    if (window.CryptoCharts?.clearStopLossLine) CryptoCharts.clearStopLossLine();
+    window.CryptoCharts?.clearPositionOverlay?.();
+    window.CryptoCharts?.clearStopLossLine?.();
   }
 
   function formatLevelsNote(levels) {
@@ -1319,6 +1407,13 @@ const FuturesBotApp = (() => {
         $('#positionPnl').textContent = '';
         if (positionStopPrice != null) clearPositionStop();
       } else {
+        if (positionStopPrice == null) {
+          const levels = calcEntryLevels(pos.side, pos.entryPrice);
+          if (levels) {
+            positionStopPrice = levels.stopPrice;
+            positionTakeProfitPrice = levels.takeProfitPrice;
+          }
+        }
         const pnl = pos.unrealizedPnl ?? 0;
         const cls = pnl >= 0 ? 'positive' : 'negative';
         const margin = (pos.quantity * pos.entryPrice) / (pos.leverage || state.leverage);
@@ -1335,6 +1430,18 @@ const FuturesBotApp = (() => {
       $('#positionPnl').textContent = '';
       clearPositionStop();
     } else {
+      if (positionStopPrice == null || pos.takeProfitPrice == null) {
+        const levels = calcEntryLevels(pos.side, pos.entryPrice);
+        if (levels) {
+          positionStopPrice = levels.stopPrice;
+          positionTakeProfitPrice = levels.takeProfitPrice;
+          pos.stopPrice = levels.stopPrice;
+          pos.takeProfitPrice = levels.takeProfitPrice;
+        }
+      } else {
+        positionStopPrice = pos.stopPrice;
+        positionTakeProfitPrice = pos.takeProfitPrice;
+      }
       const pnl = FuturesPaper.unrealizedPnl(price);
       const roe = FuturesPaper.roe(price, pos.leverage);
       const cls = pnl >= 0 ? 'positive' : 'negative';
@@ -1955,13 +2062,30 @@ const FuturesBotApp = (() => {
       });
     }
 
+    ['stopLoss', 'takeProfit', 'stopLossPrice', 'takeProfitPrice'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const onSlTpChange = () => {
+        readFormSettings();
+        if (hasOpenPosition()) {
+          syncOpenPositionSlTp();
+        } else {
+          updateSignalDisplay();
+        }
+        scheduleBacktest(lastCandles);
+        updateUI();
+      };
+      el.addEventListener('change', onSlTpChange);
+      el.addEventListener('input', onSlTpChange);
+    });
+
     ['leverage', 'emaFast', 'emaSlow', 'useMacd', 'macdFast', 'macdSlow', 'macdSignal',
       'useMacdLineFilter', 'macdLongMin', 'macdShortMax',
       'useRsiEntryFilter', 'rsiLongMin', 'rsiShortMax',
       'useSwingLevels', 'showSwingOnChart', 'useSwingStopLoss', 'swingStopBufferPct',
       'swingPivotBars', 'swingLookback', 'showSwingOnChart',
-      'riskPerTrade', 'maxAccountLoss', 'stopLoss',
-      'rsiOversold', 'rsiOverbought', 'rsiPeriod', 'takeProfit', 'allowShort'].forEach((id) => {
+      'riskPerTrade', 'maxAccountLoss',
+      'rsiOversold', 'rsiOverbought', 'rsiPeriod', 'allowShort'].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       const onChange = () => {
@@ -1974,7 +2098,7 @@ const FuturesBotApp = (() => {
           if (!isStrategyUsingMacd()) chartIndicators.macd = false;
           syncChartIndicators();
         }
-        if (['riskPerTrade', 'maxAccountLoss', 'leverage', 'stopLoss',
+        if (['riskPerTrade', 'maxAccountLoss', 'leverage',
           'useMacdLineFilter', 'macdLongMin', 'macdShortMax',
           'useRsiEntryFilter', 'rsiLongMin', 'rsiShortMax',
           'useSwingLevels', 'showSwingOnChart', 'useSwingStopLoss', 'swingStopBufferPct',

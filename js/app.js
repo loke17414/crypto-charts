@@ -56,6 +56,7 @@ let swingStopPriceLine = null;
 let backtestSlSegments = [];
 let backtestTpSegments = [];
 let signalOverlay = null;
+let positionOverlay = null;
 let pendingSwingLevels = null;
 let pendingStopLossPrice = null;
 function isPriceScaleAuto() {
@@ -1893,6 +1894,65 @@ function setSignalOverlay(signal) {
   }
 }
 
+// Open-position overlay: same dashed entry / SL / TP style as the live signal
+// overlay, but labelled for an active trade.
+function clearPositionOverlay() {
+  if (candleSeries && positionOverlay) {
+    for (const pl of [positionOverlay.entry, positionOverlay.stop, positionOverlay.tp]) {
+      if (pl) { try { candleSeries.removePriceLine(pl); } catch { /* ignore */ } }
+    }
+  }
+  positionOverlay = null;
+}
+
+function setPositionOverlay(pos) {
+  if (!candleSeries || !pos) { clearPositionOverlay(); return; }
+  const { side, entryPrice, stopPrice, takeProfitPrice } = pos;
+  if (side !== 'LONG' && side !== 'SHORT') { clearPositionOverlay(); return; }
+  const buy = side === 'LONG';
+
+  if (positionOverlay && positionOverlay.side === side) {
+    if (positionOverlay.entry && Number.isFinite(entryPrice)) positionOverlay.entry.applyOptions({ price: entryPrice });
+    if (positionOverlay.stop && Number.isFinite(stopPrice)) positionOverlay.stop.applyOptions({ price: stopPrice });
+    if (positionOverlay.tp && Number.isFinite(takeProfitPrice)) positionOverlay.tp.applyOptions({ price: takeProfitPrice });
+    return;
+  }
+
+  clearPositionOverlay();
+  positionOverlay = { side, entry: null, stop: null, tp: null };
+
+  if (Number.isFinite(entryPrice)) {
+    positionOverlay.entry = candleSeries.createPriceLine({
+      price: entryPrice,
+      color: buy ? '#2962ff' : '#f7931a',
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: buy ? '롱 진입' : '숏 진입',
+    });
+  }
+  if (Number.isFinite(stopPrice)) {
+    positionOverlay.stop = candleSeries.createPriceLine({
+      price: stopPrice,
+      color: '#ef5350',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: '손절',
+    });
+  }
+  if (Number.isFinite(takeProfitPrice)) {
+    positionOverlay.tp = candleSeries.createPriceLine({
+      price: takeProfitPrice,
+      color: '#26a69a',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: '익절',
+    });
+  }
+}
+
 function getBarIntervalSeconds(candles) {
   if (!candles || candles.length < 2) return 60;
   return Math.max(1, candles[1].time - candles[0].time);
@@ -2026,6 +2086,8 @@ window.CryptoCharts = {
   clearStopLossLine: () => setStopLossLine(null),
   setSignalOverlay,
   clearSignalOverlay,
+  setPositionOverlay,
+  clearPositionOverlay,
   selectCoin: selectCoinByQuery,
   setInterval: setChartInterval,
   setChartType: setChartTypeMode,
@@ -2059,6 +2121,8 @@ window.CryptoCharts.focusChartTimeRange = focusChartTimeRange;
 window.CryptoCharts.loadHistoryUntilTime = loadHistoryUntilTime;
 window.CryptoCharts.setSignalOverlay = setSignalOverlay;
 window.CryptoCharts.clearSignalOverlay = clearSignalOverlay;
+window.CryptoCharts.setPositionOverlay = setPositionOverlay;
+window.CryptoCharts.clearPositionOverlay = clearPositionOverlay;
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
