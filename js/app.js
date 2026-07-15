@@ -464,18 +464,6 @@ function updateLiveOhlcDisplay(candle) {
   ].join('');
 }
 
-function activateBodyPan(priceDrag) {
-  if (!priceDrag || priceDrag.panActivated) return;
-  const range = priceDrag.originPriceRange || captureCurrentPriceRange();
-  if (!range) return;
-  priceDrag.originPriceRange = { ...range };
-  priceDrag.panActivated = true;
-  state.manualPriceRange = null;
-  state.liveScaleRange = null;
-  state.frozenPanPriceRange = { ...range };
-  nudgePriceScaleAutoscale();
-}
-
 function clearFrozenPanPriceRange() {
   state.frozenPanPriceRange = null;
 }
@@ -549,44 +537,20 @@ function getVisibleCandlesPriceRange() {
 }
 
 const CHART_TIME_PAN_SENSITIVITY = 1;
-const CHART_PRICE_PAN_SENSITIVITY = 1;
 const PRICE_AXIS_SCALE_SENSITIVITY = 1.25;
 
-function captureCurrentPriceRange() {
-  if (state.manualPriceRange) return { ...state.manualPriceRange };
-  const captured = captureVisiblePriceRange();
-  if (captured) return captured;
-  if (state.liveScaleRange) return { ...state.liveScaleRange };
-  return getVisibleBarsPriceRange(0.06);
+function lockPriceRangeForBodyPan() {
+  if (state.manualPriceRange || state.frozenPanPriceRange) return;
+  const range = captureVisiblePriceRange()
+    || (state.liveScaleRange ? { ...state.liveScaleRange } : null);
+  if (!range) return;
+  state.frozenPanPriceRange = { ...range };
+  nudgePriceScaleAutoscale();
 }
 
-function applyBodyPricePan(baseRange, startY, currentY) {
-  if (!baseRange) return;
-  const chartHeight = getMainPaneHeight();
-  const span = baseRange.max - baseRange.min;
-  const shift = ((currentY - startY) / chartHeight) * span * CHART_PRICE_PAN_SENSITIVITY;
-
-  state.frozenPanPriceRange = {
-    min: baseRange.min + shift,
-    max: baseRange.max + shift,
-  };
-
-  const last = state.lastCandles.at(-1);
-  if (!last || !candleSeries) return;
-  candleSeries.update({
-    time: last.time,
-    open: last.open,
-    high: last.high,
-    low: last.low,
-    close: last.close,
-  });
-  lineSeries?.update({ time: last.time, value: last.close });
-}
-
-function commitBodyPanPriceRange() {
-  if (!state.frozenPanPriceRange) return;
-  state.manualPriceRange = { ...state.frozenPanPriceRange };
-  state.liveScaleRange = null;
+function preserveLockedPriceRangeAfterPan() {
+  if (!state.frozenPanPriceRange || state.manualPriceRange) return;
+  state.liveScaleRange = { ...state.frozenPanPriceRange };
 }
 
 function applyPriceAxisAdjust(startY, currentY, baseRange) {
@@ -793,7 +757,6 @@ function setupChartPanning() {
     const barCount = state.lastCandles.length;
     if (!barCount) return;
     setFollowingRealtime(range.to >= barCount - 5);
-    if (!state.manualPriceRange) scheduleVisibleAutoscale();
     if (range.from < 40 && state.canLoadMore && !state.loadingMore) {
       scheduleLoadMoreCandles();
     }
@@ -833,13 +796,10 @@ function setupChartPanning() {
     }
 
     const timeRange = chart.timeScale().getVisibleLogicalRange();
-    const originPriceRange = captureCurrentPriceRange();
     priceDrag = {
       anchorX: clientX,
       anchorY: clientY,
       originTimeRange: timeRange ? { from: timeRange.from, to: timeRange.to } : null,
-      originPriceRange: originPriceRange ? { ...originPriceRange } : null,
-      panActivated: false,
       active: false,
     };
     container.classList.add('chart-area--dragging');
@@ -859,23 +819,20 @@ function setupChartPanning() {
     const dy = clientY - priceDrag.anchorY;
 
     if (!priceDrag.active) {
-      if (Math.hypot(dx, dy) < 3) return;
+      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
       priceDrag.active = true;
-      activateBodyPan(priceDrag);
+      lockPriceRangeForBodyPan();
     }
 
     if (priceDrag.originTimeRange) {
       applyTimePan(priceDrag.anchorX, clientX, priceDrag.originTimeRange);
-    }
-    if (priceDrag.originPriceRange) {
-      applyBodyPricePan(priceDrag.originPriceRange, priceDrag.anchorY, clientY);
     }
   };
 
   const finishBodyDrag = () => {
     if (!priceDrag?.active) return;
 
-    commitBodyPanPriceRange();
+    preserveLockedPriceRangeAfterPan();
 
     const range = chart?.timeScale().getVisibleLogicalRange();
     if (range) {
