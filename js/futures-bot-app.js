@@ -125,12 +125,23 @@ const FuturesBotApp = (() => {
   // One-time migration: the old single entryRules becomes slot 1 so existing
   // strategies keep working when the multi-slot UI takes over.
   function migrateLegacyRulesToSlots() {
+    const legacy = loadStrategyStorage();
     const slots = loadStrategySlots();
-    if (slots) {
+    if (slots && slots.length) {
       state.strategySlots = slots;
+      const anySignals = slots.some((s) => entryRulesHaveSignals(s.entryRules));
+      if (!anySignals && legacy.entryRules) {
+        const target = slots.find((s) => s.enabled !== false) || slots[0];
+        if (target) {
+          target.entryRules = legacy.entryRules;
+          target.exitRules = legacy.exitRules ?? target.exitRules;
+          target.enabled = true;
+          saveStrategySlots();
+        }
+      }
+      syncStateEntryRulesFromSlots();
       return;
     }
-    const legacy = loadStrategyStorage();
     if (legacy.entryRules) {
       state.strategySlots = [{
         id: newSlotId(),
@@ -143,6 +154,7 @@ const FuturesBotApp = (() => {
     } else {
       state.strategySlots = [];
     }
+    syncStateEntryRulesFromSlots();
   }
 
   function loadStrategyStorage() {
@@ -191,6 +203,29 @@ const FuturesBotApp = (() => {
 
   const $ = (sel) => document.querySelector(sel);
 
+  function primaryEntryRulesFromState() {
+    const slot = (state.strategySlots || []).find(
+      (s) => s.enabled !== false && s.entryRules,
+    );
+    return slot?.entryRules ?? state.entryRules;
+  }
+
+  function syncStateEntryRulesFromSlots() {
+    const slot = (state.strategySlots || []).find(
+      (s) => s.enabled !== false && entryRulesHaveSignals(s.entryRules),
+    );
+    if (!slot) return;
+    state.entryRules = slot.entryRules
+      ? (StrategyEngine.sanitizeEntryRules?.(slot.entryRules) ?? slot.entryRules)
+      : null;
+    if (slot.exitRules != null) {
+      state.exitRules = StrategyEngine.sanitizeExitRules
+        ? StrategyEngine.sanitizeExitRules(slot.exitRules)
+        : slot.exitRules;
+    }
+    saveStrategyStorage(state.entryRules, state.exitRules);
+  }
+
   function getSettings() {
     return {
       leverage: state.leverage,
@@ -220,7 +255,7 @@ const FuturesBotApp = (() => {
       stopLossPct: state.stopLossPct,
       takeProfitPct: state.takeProfitPct,
       useStopLoss: state.useStopLoss,
-      entryRules: state.entryRules,
+      entryRules: primaryEntryRulesFromState(),
       exitRules: state.exitRules,
       strategySlots: state.strategySlots?.length ? state.strategySlots : undefined,
     };
@@ -306,6 +341,14 @@ const FuturesBotApp = (() => {
       pollSeconds: state.pollSeconds,
       entryRules,
       exitRules,
+      strategySlotTarget: targetSlotId,
+      strategySlots: (state.strategySlots || []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        enabled: s.enabled !== false,
+        entryRules: s.entryRules ?? null,
+        exitRules: s.exitRules ?? null,
+      })),
       indicatorCatalog: window.StrategyEngine?.catalogForAi?.() || '',
     };
   }
@@ -399,6 +442,10 @@ const FuturesBotApp = (() => {
       const lines = [];
       if (slots.length) {
         slots.forEach((slot) => {
+          if (!slot.entryRules) {
+            lines.push(`· <strong>[${slot.enabled ? 'ON' : 'OFF'}] ${escapeHtml(slot.name)}</strong>: 비어 있음 — GPT로 전략을 저장하세요`);
+            return;
+          }
           const rules = StrategyEngine.sanitizeEntryRules(slot.entryRules);
           const badge = slot.enabled ? 'ON' : 'OFF';
           const exitHint = slot.exitRules ? ' · 동적 SL/TP' : '';
@@ -697,6 +744,23 @@ const FuturesBotApp = (() => {
       renderStrategySlotsPanel();
       updateStrategyAiSlotOptions();
     }
+
+    if (touches('strategySlots') && Array.isArray(settings.strategySlots)) {
+      state.strategySlots = settings.strategySlots.map((s, i) => ({
+        id: s.id ?? newSlotId(),
+        name: String(s.name || `조건 ${i + 1}`).slice(0, 30),
+        enabled: s.enabled !== false,
+        entryRules: s.entryRules
+          ? (StrategyEngine.sanitizeEntryRules?.(s.entryRules) ?? s.entryRules)
+          : null,
+        exitRules: s.exitRules ?? null,
+      }));
+      saveStrategySlots();
+      renderStrategySlotsPanel();
+      updateStrategyAiSlotOptions();
+    }
+
+    syncStateEntryRulesFromSlots();
 
     readFormSettings();
     const nextSettings = getSettings();

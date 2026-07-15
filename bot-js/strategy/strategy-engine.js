@@ -499,6 +499,13 @@ const StrategyEngine = (() => {
     return rsiPresetFromLegacy(settings);
   }
 
+  function slotRulesHaveSignals(rules) {
+    if (!rules) return false;
+    const s = sanitizeEntryRules(rules);
+    return (s.long.enabled && s.long.conditions.length > 0)
+      || (s.short.enabled && s.short.conditions.length > 0);
+  }
+
   // Multiple independent entry conditions ("slots"): each enabled slot is a
   // full entryRules set with an optional per-slot exitRules. A signal fires
   // when ANY enabled slot matches (first match wins, its name is reported).
@@ -507,7 +514,7 @@ const StrategyEngine = (() => {
   function normalizeSlots(settings) {
     const raw = Array.isArray(settings?.strategySlots) ? settings.strategySlots : null;
     if (raw && raw.length) {
-      return raw
+      const active = raw
         .filter((s) => s && s.enabled !== false && s.entryRules)
         .map((s, i) => ({
           id: s.id ?? i,
@@ -517,6 +524,21 @@ const StrategyEngine = (() => {
         }))
         .filter((s) => (s.rules.long.enabled && s.rules.long.conditions.length)
           || (s.rules.short.enabled && s.rules.short.conditions.length));
+      if (active.length) return active;
+
+      // Slots carry entryRules but all are off or empty → honor explicit off state.
+      if (raw.some((s) => s?.entryRules)) return [];
+
+      // Slot rows exist without rules (UI placeholder) — fall back to legacy entryRules.
+      if (settings?.entryRules && slotRulesHaveSignals(settings.entryRules)) {
+        return [{
+          id: null,
+          name: null,
+          rules: sanitizeEntryRules(settings.entryRules),
+          exitRules: sanitizeExitRules(settings?.exitRules),
+        }];
+      }
+      return [];
     }
     return [{
       id: null,
@@ -1215,6 +1237,7 @@ const StrategyEngine = (() => {
     catalogForAi,
     normalizeRules,
     normalizeSlots,
+    slotRulesHaveSignals,
     mergedSlotRules,
     matchEntrySlotsAt,
     slotsSummary,

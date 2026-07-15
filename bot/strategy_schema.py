@@ -350,6 +350,30 @@ def _deep_merge_exit_rules(current: Any, patch: Any) -> dict[str, Any] | None:
     return base or None
 
 
+class StrategySlot(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    name: str | None = None
+    enabled: bool = True
+    entryRules: dict[str, Any] | None = None
+    exitRules: dict[str, Any] | None = None
+
+    @field_validator("entryRules")
+    @classmethod
+    def normalize_slot_entry_rules(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return sanitize_entry_rules(value)
+
+    @field_validator("exitRules")
+    @classmethod
+    def normalize_slot_exit_rules(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return sanitize_exit_rules(value)
+
+
 class StrategySettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -366,6 +390,7 @@ class StrategySettings(BaseModel):
     pollSeconds: int = Field(default=60, ge=10, le=600)
     entryRules: dict[str, Any] | None = None
     exitRules: dict[str, Any] | None = None
+    strategySlots: list[StrategySlot] | None = None
 
     @field_validator("rsiOversold", "rsiOverbought")
     @classmethod
@@ -391,6 +416,19 @@ class StrategySettings(BaseModel):
             return None
         return sanitize_exit_rules(value)
 
+    @field_validator("strategySlots")
+    @classmethod
+    def normalize_strategy_slots(cls, value: list[Any] | None) -> list[StrategySlot] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return None
+        out: list[StrategySlot] = []
+        for item in value[:10]:
+            if isinstance(item, dict):
+                out.append(StrategySlot.model_validate(item))
+        return out or None
+
     def merged(self, patch: dict[str, Any]) -> StrategySettings:
         data = self.model_dump()
         for key, value in patch.items():
@@ -402,6 +440,9 @@ class StrategySettings(BaseModel):
                 merged_exit = _deep_merge_exit_rules(data.get("exitRules"), value)
                 data["exitRules"] = sanitize_exit_rules(merged_exit) or merged_exit
                 continue
+            if key == "strategySlots" and value is not None:
+                data["strategySlots"] = value
+                continue
             if key in data and value is not None:
                 data[key] = value
         merged = StrategySettings.model_validate(data)
@@ -410,6 +451,19 @@ class StrategySettings(BaseModel):
         return merged
 
     def rules_text(self) -> str:
+        if self.strategySlots:
+            lines = []
+            for slot in self.strategySlots:
+                badge = "ON" if slot.enabled else "OFF"
+                name = slot.name or "조건"
+                if slot.entryRules:
+                    lines.append(f"· <strong>[{badge}] {name}</strong>: entryRules 기반")
+                else:
+                    lines.append(f"· <strong>[{badge}] {name}</strong>: 비어 있음")
+            lines.append(
+                f"· 손절 -{self.stopLossPct:g}% · 익절 +{self.takeProfitPct:g}% (진입가 기준)"
+            )
+            return "<br>\n".join(lines)
         if self.entryRules:
             return (
                 "· <strong>롱/숏 조건</strong>: 차트 지표 규칙 기반 (entryRules)<br>\n"

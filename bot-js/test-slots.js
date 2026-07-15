@@ -116,4 +116,14 @@ check('backtest completes with slots', Number.isFinite(bt.stats.trades));
 const named = bt.trades.every((t) => t.slotName === 'RSI 딥' || t.slotName === 'EMA 크로스');
 check(`backtest trades carry slot names (${bt.trades.length} trades)`, bt.trades.length === 0 || named);
 
+// 7. Empty slot rows + legacy entryRules still fire (localStorage desync fix).
+const settings7 = {
+  stopLossPct: 1.5,
+  takeProfitPct: 3,
+  entryRules: rsiRules,
+  strategySlots: [{ id: 'empty', name: '조건 1', enabled: true, entryRules: null }],
+};
+const r7 = StrategyEngine.evaluateEntry(candles, settings7, null);
+check('empty slots fall back to legacy entryRules', r7.matched === 'LONG');
+
 process.exit(failures ? 1 : 0);

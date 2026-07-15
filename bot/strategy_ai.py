@@ -51,6 +51,9 @@ MULTI-TURN INCREMENTAL EDITS:
 - Change ONLY what the latest request requires. Omit unchanged fields from settings.
 - For entryRules / exitRules: patch ONLY the side (long or short) being edited when possible.
   Example: change long only → { "entryRules": { "long": { ... } } } — do NOT include short unless changing short.
+- When strategySlots is present, change entryRules for the slot described by strategySlotTarget / current entryRules — do NOT wipe other slots unless the user asks to remove them.
+- To add a new slot, return strategySlots with the new slot appended (enabled true, unique id).
+- Do NOT replace the entire strategySlots array unless the user explicitly asks to reorganize slots.
 - Do NOT disable, clear, or replace unmentioned sides/conditions.
 - To DELETE entry conditions (진입 조건 삭제/제거/비활성화), return the side with
   { "enabled": false, "conditions": [] } — an explicitly empty entryRules means the bot will NOT enter.
@@ -59,9 +62,10 @@ MULTI-TURN INCREMENTAL EDITS:
 - changed_fields must list top-level keys you changed in settings.
 
 Settings keys:
-- entryRules: { long: RuleGroup, short: RuleGroup }  — PRIMARY for entry logic
+- strategySlots: [ { id, name, enabled, entryRules, exitRules }, ... ] — multiple independent entry conditions; ANY enabled slot that matches triggers entry (first match wins). The UI may send strategySlotTarget to show which slot entryRules applies to for editing.
+- entryRules: { long: RuleGroup, short: RuleGroup }  — rules for the TARGET slot being edited (see strategySlotTarget); also legacy single-strategy mode when strategySlots omitted
 - exitRules: { long: ExitRule, short: ExitRule } — dynamic SL/TP (overrides stopLossPct/takeProfitPct when set)
-- rsiPeriod, rsiOversold, rsiOverbought — legacy RSI preset (used only if entryRules omitted)
+- rsiPeriod, rsiOversold, rsiOverbought — legacy RSI preset (used only if entryRules omitted AND no strategySlots)
 - stopLossPct (0.5-15), takeProfitPct (0.5-30), useStopLoss (bool, default true), allowShort (bool)
 - leverage (1-125), riskPerTradePct, maxAccountLossPct, pollSeconds
 
@@ -667,6 +671,7 @@ def interpret_strategy(
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
+    raw_settings.pop("strategySlotTarget", None)
     current = StrategySettings.model_validate(raw_settings)
 
     merged_history = merge_histories(history, load_turns())
