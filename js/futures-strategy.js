@@ -225,56 +225,38 @@ const FuturesStrategy = (() => {
   }
 
   // Backtest-only exit check that uses the candle's HIGH/LOW (wick) rather than
-  // just the close, so an intrabar touch of the stop/take-profit is detected and
-  // the trade exits at the actual SL/TP price. When both levels are touched on
-  // one bar, use open vs entry to pick the more likely path first.
+  // just the close, so an intrabar touch of the stop/take-profit is detected.
+  // Fills are realistic: a stop the bar gaps past fills at the open (worse than
+  // the trigger), a take-profit gapped past also fills at the open (better).
+  // When one bar's wick touches BOTH levels, the level closer to the open is
+  // assumed to have been hit first (ties go to the stop — pessimistic).
   function checkExitBar(side, entryPrice, candle, settings, positionExtras = {}) {
+    if (side !== 'LONG' && side !== 'SHORT') return null;
     const slPct = positionExtras.stopLossPct ?? getStopLossPct(settings);
     const tpPct = positionExtras.takeProfitPct ?? getTakeProfitPct(settings);
-    const { high, low, open, close } = candle;
+    const { high, low, open } = candle;
+    const isLong = side === 'LONG';
 
-    if (side === 'LONG') {
-      const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 - slPct / 100);
-      const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 + tpPct / 100);
-      const hitSl = low <= stopPrice;
-      const hitTp = high >= takeProfitPrice;
-      if (hitSl && hitTp) {
-        if (open >= entryPrice) {
-          return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
-        }
-        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
-      }
-      if (hitSl) {
-        return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
-      }
-      if (hitTp) {
-        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
-      }
-      return null;
+    const stopPrice = positionExtras.stopPrice
+      ?? (isLong ? entryPrice * (1 - slPct / 100) : entryPrice * (1 + slPct / 100));
+    const takeProfitPrice = positionExtras.takeProfitPrice
+      ?? (isLong ? entryPrice * (1 + tpPct / 100) : entryPrice * (1 - tpPct / 100));
+
+    const hitSl = isLong ? low <= stopPrice : high >= stopPrice;
+    const hitTp = isLong ? high >= takeProfitPrice : low <= takeProfitPrice;
+    if (!hitSl && !hitTp) return null;
+
+    const slFill = isLong ? Math.min(stopPrice, open) : Math.max(stopPrice, open);
+    const tpFill = isLong ? Math.max(takeProfitPrice, open) : Math.min(takeProfitPrice, open);
+    const slExit = { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: slFill };
+    const tpExit = { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: tpFill };
+
+    if (hitSl && hitTp) {
+      const distSl = Math.abs(open - stopPrice);
+      const distTp = Math.abs(open - takeProfitPrice);
+      return distSl <= distTp ? slExit : tpExit;
     }
-
-    if (side === 'SHORT') {
-      const stopPrice = positionExtras.stopPrice ?? entryPrice * (1 + slPct / 100);
-      const takeProfitPrice = positionExtras.takeProfitPrice ?? entryPrice * (1 - tpPct / 100);
-      const hitSl = high >= stopPrice;
-      const hitTp = low <= takeProfitPrice;
-      if (hitSl && hitTp) {
-        if (open <= entryPrice) {
-          return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
-        }
-        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
-      }
-      if (hitSl) {
-        return { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: stopPrice };
-      }
-      if (hitTp) {
-        return { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: takeProfitPrice };
-      }
-      return null;
-    }
-
-    void close;
-    return null;
+    return hitSl ? slExit : tpExit;
   }
 
   function calcPnlPct(side, entryPrice, exitPrice) {
@@ -422,6 +404,7 @@ const FuturesStrategy = (() => {
   return {
     analyze,
     checkExit,
+    checkExitBar,
     backtest,
     calcPnlPct,
     calcEntryLevels,

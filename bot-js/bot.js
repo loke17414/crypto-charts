@@ -194,6 +194,7 @@ async function openPosition(side, price, levels, candles, index) {
       stopLossPct: levels.stopLossPct,
       takeProfitPct: levels.takeProfitPct,
       entryTime: new Date().toISOString(),
+      entryBarTime: candles?.[index]?.time ?? null,
     };
     log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL $${levels.stopPrice.toFixed(2)} TP $${levels.takeProfitPrice.toFixed(2)}`);
     saveState();
@@ -218,6 +219,7 @@ async function openPosition(side, price, levels, candles, index) {
     stopLossPct: levels.stopLossPct,
     takeProfitPct: levels.takeProfitPct,
     entryTime: new Date().toISOString(),
+    entryBarTime: candles?.[index]?.time ?? null,
   };
   log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL $${levels.stopPrice.toFixed(2)} TP $${levels.takeProfitPrice.toFixed(2)}`);
   saveState();
@@ -267,14 +269,21 @@ async function tick() {
 
   if (!cfg.dryRun) await syncPositionFromExchange();
 
-  // Exit check first (intrabar wick on the forming candle).
+  // Exit check first (intrabar wick on the forming candle). On the bar the
+  // position was ENTERED, the bar's wick predates the entry — using it would
+  // trigger phantom exits from price action that happened before we were in
+  // the trade, so that bar is checked against the live price only.
   if (position) {
-    const exit = FuturesStrategy.checkExitBar(position.side, position.entryPrice, forming, cfg.settings, {
+    const extras = {
       stopPrice: position.stopPrice ?? undefined,
       takeProfitPrice: position.takeProfitPrice ?? undefined,
       stopLossPct: position.stopLossPct ?? cfg.settings.stopLossPct,
       takeProfitPct: position.takeProfitPct ?? cfg.settings.takeProfitPct,
-    });
+    };
+    const sameBarAsEntry = position.entryBarTime != null && forming.time === position.entryBarTime;
+    const exit = sameBarAsEntry
+      ? FuturesStrategy.checkExit(position.side, position.entryPrice, price, cfg.settings, extras)
+      : FuturesStrategy.checkExitBar(position.side, position.entryPrice, forming, cfg.settings, extras);
     if (exit) {
       await closePosition(exit.exitPrice ?? price, exit.reason);
       return;

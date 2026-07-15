@@ -349,7 +349,8 @@ const FuturesBotApp = (() => {
   function getBacktestSnapshotForAi() {
     readFormSettings();
     syncFromChart();
-    const candles = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    const raw = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    const candles = closedCandlesOnly(raw, state.interval);
     const settings = getSettings();
     const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
 
@@ -1815,9 +1816,35 @@ const FuturesBotApp = (() => {
     return markers.filter((m) => m.time >= minTime && m.time <= maxTime);
   }
 
+  const INTERVAL_SECONDS = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
+    '12h': 43200, '1d': 86400,
+  };
+
+  // Backtests must only see CLOSED bars. Including the forming bar produced
+  // trades on a half-built candle whose wick keeps growing — a wick that hits
+  // SL/TP later in the bar was invisible to the already-rendered result.
+  // With the forming bar excluded, the new-bar refresh evaluates every candle
+  // exactly once, with its final high/low.
+  function closedCandlesOnly(candles, interval) {
+    if (!candles?.length) return candles || [];
+    const sec = INTERVAL_SECONDS[interval];
+    if (!sec) return candles;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return candles.at(-1).time + sec > nowSec ? candles.slice(0, -1) : candles;
+  }
+
+  function mergeCandlesByTime(older, newer) {
+    const byTime = new Map();
+    [...older, ...newer].forEach((c) => byTime.set(c.time, c));
+    return [...byTime.values()].sort((a, b) => a.time - b.time);
+  }
+
   async function resolveBacktestCandles(chartCandles, settings, targetTrades, statsEl, runId) {
     const interval = CryptoCharts.getState().interval || state.interval;
-    const chartSource = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
+    const rawSource = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
+    const chartSource = closedCandlesOnly(rawSource, interval);
     let { stats } = FuturesStrategy.backtest(chartSource, settings, { maxTrades: targetTrades });
 
     if (stats.trades >= targetTrades || !window.BacktestLoader) {
@@ -1826,9 +1853,13 @@ const FuturesBotApp = (() => {
 
     const cacheKey = backtestCacheKey(interval, targetTrades, settings);
     if (backtestHistoryCache?.key === cacheKey) {
-      const cachedStats = FuturesStrategy.backtest(backtestHistoryCache.candles, settings, { maxTrades: targetTrades }).stats;
+      // The cached extended history is frozen at fetch time — merge in the
+      // live chart candles so bars (and wicks) formed since then are tested.
+      const merged = mergeCandlesByTime(backtestHistoryCache.candles, chartSource);
+      backtestHistoryCache = { key: cacheKey, candles: merged };
+      const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
       if (cachedStats.trades >= targetTrades || cachedStats.trades > stats.trades) {
-        return { source: backtestHistoryCache.candles, fromCache: true };
+        return { source: merged, fromCache: true };
       }
     }
 
