@@ -92,7 +92,31 @@ const DrawingManager = (() => {
     points = [];
   }
 
+  // Undo history: a snapshot of the drawings array is pushed before every
+  // mutation (add / clear), so Ctrl+Z restores the previous state — including
+  // bringing everything back after "모두 지우기".
+  let undoStack = [];
+  const UNDO_LIMIT = 50;
+
+  function pushUndo() {
+    undoStack.push(drawings.map((d) => ({ ...d, points: d.points.map((p) => ({ ...p })) })));
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  }
+
+  function undo() {
+    // First Ctrl+Z cancels a shape mid-draw, before touching finished ones.
+    if (draft || points.length) {
+      cancelDraft();
+      redraw();
+      return;
+    }
+    if (!undoStack.length) return;
+    drawings = undoStack.pop();
+    redraw();
+  }
+
   function addDrawing(d) {
+    pushUndo();
     drawings.push({ id: Date.now() + Math.random(), ...d });
     redraw();
   }
@@ -109,6 +133,7 @@ const DrawingManager = (() => {
     bar.querySelectorAll('.drawing-tool').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (btn.dataset.tool === 'clear') {
+          if (drawings.length) pushUndo();
           drawings = [];
           redraw();
           return;
@@ -123,11 +148,24 @@ const DrawingManager = (() => {
     svg.addEventListener('mousedown', onDown);
     svg.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKeyDown);
 
     if (chart) {
       chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
     }
     window.addEventListener('resize', redraw);
+  }
+
+  // Ctrl+Z / Cmd+Z undoes the last chart drawing action. Ignored while typing
+  // in a form field so the browser's native text undo keeps working there.
+  function onKeyDown(e) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+    if ((e.key || '').toLowerCase() !== 'z') return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (!enabled) return;
+    e.preventDefault();
+    undo();
   }
 
   function onDown(e) {
@@ -345,10 +383,11 @@ const DrawingManager = (() => {
   }
 
   function clear() {
+    if (drawings.length) pushUndo();
     drawings = [];
     cancelDraft();
     redraw();
   }
 
-  return { init, redraw, setEnabled, isDrawingMode, clear, setMode };
+  return { init, redraw, setEnabled, isDrawingMode, clear, setMode, undo };
 })();
