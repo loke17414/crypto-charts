@@ -1,4 +1,7 @@
-/* Local API client for Binance Futures Testnet */
+/* [그룹2: API 서버 + 키 저장] — window.FuturesApiClient
+ * 거래소 API 키는 이 모듈을 통해 서버에만 저장된다 (브라우저에 저장 안 함).
+ * 다른 그룹은 이 모듈의 함수만 호출한다. 통신 오류는 의미 있는 정보이므로
+ * 여기서 삼키지 않고 throw 하며, 호출한 쪽 try/catch가 사용자에게 보여준다. */
 const FuturesApiClient = (() => {
   // Same host as the page, port 8000 — works on localhost and on a remote VPS
   // (http://<server-ip>:8765 → API http://<server-ip>:8000).

@@ -1,3 +1,7 @@
+/* [그룹1: 차트 + 백테스팅 표시] — window.CryptoCharts
+ * 다른 그룹은 ModuleBridge.chart 포트로만 이 모듈을 호출한다.
+ * 이 모듈이 바깥으로 정보를 보낼 때는 DOM CustomEvent
+ * ('chart-candles-updated', 'chart-candle-tick')와 드래그 콜백만 사용한다. */
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 const isTradingPage = document.body.classList.contains('trading-page');
 
@@ -109,14 +113,19 @@ function onSlTpDragMove(e) {
     positionOverlayPending.takeProfitPrice,
   ].filter(Number.isFinite);
   updatePositionOverlayLabels();
-  onSlTpDragCallback?.({
-    role,
-    price,
-    side,
-    entryPrice,
-    stopPrice: positionOverlayPending.stopPrice,
-    takeProfitPrice: positionOverlayPending.takeProfitPrice,
-  });
+  // 전략봇 그룹의 콜백 — 그쪽 오류가 차트 드래그를 망가뜨리면 안 된다.
+  try {
+    onSlTpDragCallback?.({
+      role,
+      price,
+      side,
+      entryPrice,
+      stopPrice: positionOverlayPending.stopPrice,
+      takeProfitPrice: positionOverlayPending.takeProfitPrice,
+    });
+  } catch (err) {
+    console.error('[모듈경계:차트] SL/TP 드래그 콜백 오류 (차트는 계속 동작):', err);
+  }
 }
 
 function onSlTpDragEnd() {

@@ -1,5 +1,8 @@
-/* Futures auto-trading — uses CryptoCharts for chart display */
+/* Futures auto-trading — [그룹3: 전략+봇+GPT+리스크+진입조건]
+ * 차트([그룹1])와는 오직 ModuleBridge.chart 포트로만 통신한다.
+ * 차트 코드 오류는 포트에서 격리되어 이 모듈은 절대 중단되지 않는다. */
 const FuturesBotApp = (() => {
+  const Chart = ModuleBridge.chart;
   const BACKTEST_TRADES_MIN = 1;
   const BACKTEST_TRADES_MAX = 100;
   const BACKTEST_TRADES_DEFAULT = 100;
@@ -315,7 +318,7 @@ const FuturesBotApp = (() => {
   function getMarketContextForAi() {
     readFormSettings();
     syncFromChart();
-    const candles = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    const candles = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
     if (!candles.length) {
       return { symbol: state.symbol, interval: state.interval, candleCount: 0 };
     }
@@ -352,7 +355,7 @@ const FuturesBotApp = (() => {
   function getBacktestSnapshotForAi() {
     readFormSettings();
     syncFromChart();
-    const raw = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    const raw = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
     const candles = closedCandlesOnly(raw, state.interval);
     const settings = getSettings();
     const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
@@ -889,22 +892,22 @@ const FuturesBotApp = (() => {
     const settingUp = slTpConfirmed
       || (Date.now() - slTpPreviewTouchedAt < SLTP_PREVIEW_TTL_MS);
     if (!isEntry && !settingUp) {
-      window.CryptoCharts?.clearPositionOverlay?.();
-      window.CryptoCharts?.clearSignalOverlay?.();
+      Chart.clearPositionOverlay();
+      Chart.clearSignalOverlay();
       return;
     }
 
     const side = isEntry ? result.signal : lastPendingSide;
     const entryPrice = lastCandles.at(-1)?.close || state.lastPrice;
     if (!entryPrice || !side) {
-      window.CryptoCharts?.clearPositionOverlay?.();
-      window.CryptoCharts?.clearSignalOverlay?.();
+      Chart.clearPositionOverlay();
+      Chart.clearSignalOverlay();
       return;
     }
 
     let levels = result?.entryLevels || calcTrackedPreviewLevels(side, entryPrice);
     if (!levels) {
-      window.CryptoCharts?.clearPositionOverlay?.();
+      Chart.clearPositionOverlay();
       return;
     }
     // Price mode: SL/TP stay pinned at the user's absolute levels; only the
@@ -920,8 +923,8 @@ const FuturesBotApp = (() => {
       levels = { ...levels, stopPrice: null, stopLossPct: null };
     }
 
-    window.CryptoCharts?.clearSignalOverlay?.();
-    window.CryptoCharts?.setPositionOverlay?.({
+    Chart.clearSignalOverlay();
+    Chart.setPositionOverlay({
       side,
       entryPrice,
       showEntry: chartShowEntry(),
@@ -1159,9 +1162,7 @@ const FuturesBotApp = (() => {
   }
 
   function updatePositionOverlay() {
-    const setFn = window.CryptoCharts?.setPositionOverlay;
-    const clearFn = window.CryptoCharts?.clearPositionOverlay;
-    if (!setFn) return;
+    if (!Chart.available()) return;
 
     let side = null;
     let entryPrice = null;
@@ -1185,8 +1186,8 @@ const FuturesBotApp = (() => {
     }
 
     if (side && entryPrice != null && (stopPrice != null || takeProfitPrice != null)) {
-      window.CryptoCharts?.clearSignalOverlay?.();
-      setFn({
+      Chart.clearSignalOverlay();
+      Chart.setPositionOverlay({
         side,
         entryPrice,
         showEntry: chartShowEntry(),
@@ -1194,8 +1195,8 @@ const FuturesBotApp = (() => {
         takeProfitPrice,
         entryTime: getPositionEntryTimeSec(),
       });
-    } else if (typeof clearFn === 'function') {
-      clearFn();
+    } else {
+      Chart.clearPositionOverlay();
     }
   }
 
@@ -1266,8 +1267,8 @@ const FuturesBotApp = (() => {
       setFieldValue('stopLossPrice', '');
       setFieldValue('takeProfitPrice', '');
     }
-    window.CryptoCharts?.clearPositionOverlay?.();
-    window.CryptoCharts?.clearStopLossLine?.();
+    Chart.clearPositionOverlay();
+    Chart.clearStopLossLine();
   }
 
   function formatLevelsNote(levels) {
@@ -1362,11 +1363,11 @@ const FuturesBotApp = (() => {
   }
 
   function syncFromChart() {
-    if (!window.CryptoCharts) return;
-    const cs = CryptoCharts.getState();
+    if (!Chart.available()) return;
+    const cs = Chart.getState() || {};
     state.interval = cs.interval || state.interval;
-    state.lastPrice = CryptoCharts.getPrice() || state.lastPrice;
-    lastCandles = CryptoCharts.getCandles() || lastCandles;
+    state.lastPrice = Chart.getPrice() || state.lastPrice;
+    lastCandles = Chart.getCandles() || lastCandles;
   }
 
   function readFormSettings() {
@@ -1624,10 +1625,10 @@ const FuturesBotApp = (() => {
   }
 
   function updateSwingChartOverlay(candles) {
-    if (!window.CryptoCharts) return;
+    if (!Chart.available()) return;
     const show = $('#showSwingOnChart')?.checked ?? false;
     if (!show || !candles?.length) {
-      CryptoCharts.clearSwingLevels();
+      Chart.clearSwingLevels();
       return;
     }
     readFormSettings();
@@ -1635,7 +1636,7 @@ const FuturesBotApp = (() => {
       swingPivotBars: state.swingPivotBars,
       swingLookback: state.swingLookback,
     });
-    CryptoCharts.setSwingLevels({
+    Chart.setSwingLevels({
       swingHigh: levels.swingHigh,
       swingLow: levels.swingLow,
     });
@@ -1700,20 +1701,20 @@ const FuturesBotApp = (() => {
   }
 
   function syncChartIndicators() {
-    if (!window.CryptoCharts) return;
+    if (!Chart.available()) return;
     readFormSettings();
 
-    CryptoCharts.toggleIndicator('rsi', chartIndicators.rsi);
-    CryptoCharts.toggleIndicator('macd', chartIndicators.macd);
+    Chart.toggleIndicator('rsi', chartIndicators.rsi);
+    Chart.toggleIndicator('macd', chartIndicators.macd);
 
     if (chartIndicators.ema) {
-      CryptoCharts.setIndicatorParams('ema7', { period: state.emaFast, color: '#ffeb3b' });
-      CryptoCharts.setIndicatorParams('ema25', { period: state.emaSlow, color: '#00bcd4' });
-      CryptoCharts.toggleIndicator('ema7', true);
-      CryptoCharts.toggleIndicator('ema25', true);
+      Chart.setIndicatorParams('ema7', { period: state.emaFast, color: '#ffeb3b' });
+      Chart.setIndicatorParams('ema25', { period: state.emaSlow, color: '#00bcd4' });
+      Chart.toggleIndicator('ema7', true);
+      Chart.toggleIndicator('ema25', true);
     } else {
-      CryptoCharts.toggleIndicator('ema7', false);
-      CryptoCharts.toggleIndicator('ema25', false);
+      Chart.toggleIndicator('ema7', false);
+      Chart.toggleIndicator('ema25', false);
     }
 
     updateChartIndicatorButtons();
@@ -1821,15 +1822,15 @@ const FuturesBotApp = (() => {
   }
 
   function getBacktestCacheKey(settings = getSettings()) {
-    const interval = window.CryptoCharts?.getState()?.interval || state.interval;
+    const interval = Chart.getState()?.interval || state.interval;
     readFormSettings();
     return backtestCacheKey(interval, state.backtestTradeCount, settings);
   }
 
   function clearBacktestChartDisplay(chartCandles) {
-    if (!window.CryptoCharts) return;
-    const candles = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
-    CryptoCharts.setMarkers(getSwingPivotMarkers(candles));
+    if (!Chart.available()) return;
+    const candles = chartCandles?.length ? chartCandles : (Chart.getCandles() || lastCandles);
+    Chart.setMarkers(getSwingPivotMarkers(candles));
     clearBacktestOverlays();
   }
 
@@ -1851,8 +1852,7 @@ const FuturesBotApp = (() => {
   }
 
   function syncBacktestOverlays(trades, chartCandles) {
-    const fn = window.CryptoCharts?.setBacktestTradeOverlays;
-    if (typeof fn === 'function') fn(trades, chartCandles);
+    Chart.setBacktestTradeOverlays(trades, chartCandles);
   }
 
   function focusBacktestTrades(trades, chartCandles) {
@@ -1864,12 +1864,11 @@ const FuturesBotApp = (() => {
     if (!focusPool.length) return;
     const fromT = Math.min(...focusPool.map((t) => t.entryTime));
     const toT = Math.max(...focusPool.map((t) => t.exitTime));
-    window.CryptoCharts?.focusChartTimeRange?.(fromT, toT);
+    Chart.focusChartTimeRange(fromT, toT);
   }
 
   function clearBacktestOverlays() {
-    const fn = window.CryptoCharts?.clearBacktestTradeOverlays;
-    if (typeof fn === 'function') fn();
+    Chart.clearBacktestTradeOverlays();
   }
 
   function filterMarkersToChart(markers, chartCandles) {
@@ -1905,8 +1904,8 @@ const FuturesBotApp = (() => {
   }
 
   async function resolveBacktestCandles(chartCandles, settings, targetTrades, statsEl, runId) {
-    const interval = CryptoCharts.getState().interval || state.interval;
-    const rawSource = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
+    const interval = Chart.getState()?.interval || state.interval;
+    const rawSource = chartCandles?.length ? chartCandles : (Chart.getCandles() || lastCandles);
     const chartSource = closedCandlesOnly(rawSource, interval);
     let { stats } = FuturesStrategy.backtest(chartSource, settings, { maxTrades: targetTrades });
 
@@ -1952,7 +1951,7 @@ const FuturesBotApp = (() => {
 
   async function applyBacktest(chartCandles, { force = false, focusChart = false } = {}) {
     const statsEl = $('#backtestStats');
-    if (!window.CryptoCharts) {
+    if (!Chart.available()) {
       if (statsEl) statsEl.textContent = '백테스트: — (차트 미연동)';
       return;
     }
@@ -1960,12 +1959,12 @@ const FuturesBotApp = (() => {
     updateSwingChartOverlay(chartCandles);
     readFormSettings();
     const settings = getSettings();
-    const interval = CryptoCharts.getState().interval || state.interval;
-    const source = chartCandles?.length ? chartCandles : (CryptoCharts.getCandles() || lastCandles);
+    const interval = Chart.getState()?.interval || state.interval;
+    const source = chartCandles?.length ? chartCandles : (Chart.getCandles() || lastCandles);
     const minRequired = FuturesStrategy.minBars(settings);
 
     if (!source.length || source.length < minRequired) {
-      CryptoCharts.setMarkers(getSwingPivotMarkers(chartCandles));
+      Chart.setMarkers(getSwingPivotMarkers(chartCandles));
       clearBacktestOverlays();
       const reason = !source.length
         ? '차트 데이터 없음 — 잠시 후 다시 시도'
@@ -2002,11 +2001,11 @@ const FuturesBotApp = (() => {
       if ((showBacktest || force) && focusChart && trades.length && displayCandles.length) {
         const focusPool = trades.slice(-8);
         const earliestEntry = Math.min(...focusPool.map((t) => t.entryTime));
-        const chartData = CryptoCharts.getCandles() || displayCandles;
+        const chartData = Chart.getCandles() || displayCandles;
         if (earliestEntry < chartData[0].time) {
-          await CryptoCharts.loadHistoryUntilTime?.(earliestEntry);
+          await Chart.loadHistoryUntilTime(earliestEntry);
         }
-        displayCandles = CryptoCharts.getCandles() || displayCandles;
+        displayCandles = Chart.getCandles() || displayCandles;
       }
 
       if (runId !== backtestRunId) return;
@@ -2018,13 +2017,13 @@ const FuturesBotApp = (() => {
 
       if (showBacktest || force) {
         clearBacktestOverlays();
-        CryptoCharts.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
+        Chart.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
         syncBacktestOverlays(visibleTrades, displayCandles);
         // Only move the chart when the user explicitly runs backtest — not on
         // every live new-bar refresh (was snapping the view to trade history).
         if (focusChart && trades.length) focusBacktestTrades(trades, displayCandles);
       } else {
-        CryptoCharts.setMarkers(getSwingPivotMarkers(displayCandles));
+        Chart.setMarkers(getSwingPivotMarkers(displayCandles));
         clearBacktestOverlays();
       }
 
@@ -2067,19 +2066,19 @@ const FuturesBotApp = (() => {
     if (btn) btn.disabled = true;
 
     try {
-      if (!window.CryptoCharts) {
+      if (!Chart.available()) {
         if (statsEl) statsEl.textContent = '백테스트: — (차트 미연동)';
         return;
       }
 
       syncFromChart();
-      let chartCandles = CryptoCharts.getCandles() || lastCandles;
+      let chartCandles = Chart.getCandles() || lastCandles;
 
       if (!chartCandles.length) {
         if (statsEl) statsEl.textContent = '백테스트: 차트 데이터 로딩 중...';
-        await CryptoCharts.reloadChart();
+        await Chart.reloadChart();
         syncFromChart();
-        chartCandles = CryptoCharts.getCandles() || lastCandles;
+        chartCandles = Chart.getCandles() || lastCandles;
       }
 
       lastCandles = chartCandles;
@@ -2097,9 +2096,9 @@ const FuturesBotApp = (() => {
   }
 
   function onChartCandlesUpdated(e) {
-    lastCandles = e.detail?.candles || CryptoCharts.getCandles() || [];
-    state.interval = e.detail?.interval || CryptoCharts.getState().interval;
-    state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
+    lastCandles = e.detail?.candles || Chart.getCandles() || [];
+    state.interval = e.detail?.interval || Chart.getState()?.interval || state.interval;
+    state.lastPrice = lastCandles.at(-1)?.close || Chart.getPrice() || 0;
     scheduleBacktest(lastCandles);
     updateSignalDisplay();
     ensurePositionSlTpOverlay();
@@ -2642,10 +2641,10 @@ const FuturesBotApp = (() => {
     const sel = getBotIntervalSelection();
     if (sel === 'chart' || !INTERVALS[sel]) return state.interval;
 
-    const chartInterval = window.CryptoCharts?.getState?.()?.interval;
+    const chartInterval = Chart.getState()?.interval;
     if (chartInterval !== sel) {
       addLog(`봇 봉 주기 ${INTERVALS[sel].label} — 차트를 전환하는 중...`, 'info');
-      const ok = await window.CryptoCharts?.setInterval?.(sel);
+      const ok = await Chart.setInterval(sel);
       if (!ok) {
         addLog(
           `${INTERVALS[sel].label} 차트 전환 실패 — 현재 ${INTERVALS[state.interval]?.label || state.interval} 기준으로 시작합니다.`,
@@ -2861,9 +2860,9 @@ const FuturesBotApp = (() => {
   }
 
   function onChartCandleTick(e) {
-    lastCandles = e.detail?.candles || CryptoCharts.getCandles() || [];
-    state.interval = e.detail?.interval || CryptoCharts.getState().interval;
-    state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
+    lastCandles = e.detail?.candles || Chart.getCandles() || [];
+    state.interval = e.detail?.interval || Chart.getState()?.interval || state.interval;
+    state.lastPrice = lastCandles.at(-1)?.close || Chart.getPrice() || 0;
     updateSignalDisplay();
     if (hasOpenPosition()) {
       ensurePositionSlTpOverlay();
@@ -2945,14 +2944,14 @@ const FuturesBotApp = (() => {
     await restoreSessionFromServer();
     setModeBadge();
 
-    if (CryptoCharts.getCandles().length) {
-      onChartCandlesUpdated({ detail: { candles: CryptoCharts.getCandles() } });
+    if ((Chart.getCandles() || []).length) {
+      onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
     }
 
     addLog('CryptoCharts 차트 연동됨', 'info');
-    if (window.CryptoCharts) {
+    if (Chart.available()) {
       syncChartIndicators();
-      window.CryptoCharts.setSlTpDragHandler?.(applySlTpDrag);
+      Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
     }
     updateConfirmSlTpUi();
     syncPreviewFromLastSignal();
