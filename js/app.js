@@ -136,6 +136,7 @@ const state = {
   programmaticScroll: false,
   manualPriceRange: null,
   liveScaleRange: null,
+  frozenPanPriceRange: null,
   lastTickPrice: null,
   lastTickTime: 0,
   loadingMore: false,
@@ -308,6 +309,14 @@ function candleAutoscaleProvider(original) {
       },
     };
   }
+  if (state.frozenPanPriceRange) {
+    return {
+      priceRange: {
+        minValue: state.frozenPanPriceRange.min,
+        maxValue: state.frozenPanPriceRange.max,
+      },
+    };
+  }
   if (state.liveScaleRange) {
     return {
       priceRange: {
@@ -359,7 +368,7 @@ function getVisibleBarsPriceRange(paddingPct = 0.06) {
 
 function nudgePriceScaleAutoscale() {
   if (!chart || !candleSeries) return;
-  if (!state.manualPriceRange && !state.liveScaleRange) return;
+  if (!state.manualPriceRange && !state.frozenPanPriceRange && !state.liveScaleRange) return;
   chart.priceScale('right').applyOptions({ autoScale: true });
   const last = state.lastCandles.at(-1);
   if (!last) return;
@@ -453,6 +462,24 @@ function updateLiveOhlcDisplay(candle) {
     `<span>C <b>${formatPrice(candle.close)}</b></span>`,
     `<span class="chart-live-ohlc__chg">${chg >= 0 ? '+' : ''}${chgPct.toFixed(2)}%</span>`,
   ].join('');
+}
+
+function freezePriceRangeForPan() {
+  if (state.manualPriceRange) return;
+  const captured = captureVisiblePriceRange();
+  if (captured) {
+    state.frozenPanPriceRange = { ...captured };
+  } else if (state.liveScaleRange) {
+    state.frozenPanPriceRange = { ...state.liveScaleRange };
+  } else {
+    const visible = getVisibleBarsPriceRange(0.06);
+    if (visible) state.frozenPanPriceRange = { ...visible };
+  }
+  nudgePriceScaleAutoscale();
+}
+
+function clearFrozenPanPriceRange() {
+  state.frozenPanPriceRange = null;
 }
 
 function captureVisiblePriceRange() {
@@ -565,6 +592,7 @@ function applyTimePan(startX, currentX, baseTimeRange) {
 function resetManualPriceScale() {
   state.manualPriceRange = null;
   state.liveScaleRange = null;
+  state.frozenPanPriceRange = null;
   applyManualPriceRangeToScale();
   scheduleVisibleAutoscale();
 }
@@ -769,6 +797,7 @@ function setupChartPanning() {
     }
 
     const timeRange = chart.timeScale().getVisibleLogicalRange();
+    freezePriceRangeForPan();
     priceDrag = {
       anchorX: clientX,
       anchorY: clientY,
@@ -850,11 +879,15 @@ function setupChartPanning() {
       if (axisDrag.active) refreshPriceScaleNow();
       axisDrag = null;
       container.classList.remove('chart-area--dragging');
+      clearFrozenPanPriceRange();
       scheduleLiveIndicatorUpdate();
       return;
     }
 
-    if (!priceDrag) return;
+    if (!priceDrag) {
+      clearFrozenPanPriceRange();
+      return;
+    }
 
     const wasClickOnly = !priceDrag.active;
     if (wasClickOnly) cancelBodyDrag();
@@ -862,6 +895,7 @@ function setupChartPanning() {
 
     priceDrag = null;
     container.classList.remove('chart-area--dragging');
+    clearFrozenPanPriceRange();
     if (wasClickOnly) syncManualPriceFromAxisIfNeeded();
     else if (!state.manualPriceRange) scheduleVisibleAutoscale();
     scheduleLiveIndicatorUpdate();
