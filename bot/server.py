@@ -99,6 +99,13 @@ class OpenBody(BaseModel):
     margin_usdt: float = Field(gt=0)
     leverage: int = Field(ge=1, le=125)
     price: float = Field(gt=0)
+    stop_price: float | None = Field(default=None, gt=0)
+    take_profit_price: float | None = Field(default=None, gt=0)
+
+
+class SlTpBody(BaseModel):
+    stop_price: float | None = Field(default=None, gt=0)
+    take_profit_price: float | None = Field(default=None, gt=0)
 
 
 class StrategyConfigureBody(BaseModel):
@@ -286,12 +293,15 @@ def status() -> dict[str, Any]:
     }
 
     if pos:
+        sl_tp = client.get_sl_tp_orders()
         result["position"] = {
             "side": pos["side"],
             "quantity": pos["quantity"],
             "entryPrice": pos["entry_price"],
             "unrealizedPnl": pos["unrealized_pnl"],
             "leverage": pos["leverage"],
+            "stopPrice": sl_tp["stop_price"],
+            "takeProfitPrice": sl_tp["take_profit_price"],
         }
 
     return result
@@ -344,12 +354,49 @@ def open_order(body: OpenBody) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Register exchange-side SL/TP so they fill even when the browser is closed.
+    sl_tp: dict[str, Any] = {"stop_price": None, "take_profit_price": None}
+    sl_tp_error: str | None = None
+    if body.stop_price or body.take_profit_price:
+        try:
+            sl_tp = client.set_sl_tp(body.side, body.stop_price, body.take_profit_price)
+        except Exception as exc:  # noqa: BLE001 — entry succeeded; report SL/TP failure
+            sl_tp_error = str(exc)
+            logger.error("SL/TP order failed after open: %s", exc)
+
     pos = client.get_position()
     return {
         "ok": True,
         "side": body.side,
         "quantity": qty,
         "position": pos,
+        "stopPrice": sl_tp["stop_price"],
+        "takeProfitPrice": sl_tp["take_profit_price"],
+        "slTpError": sl_tp_error,
+    }
+
+
+@app.post("/api/order/sltp")
+def set_sl_tp_order(body: SlTpBody) -> dict[str, Any]:
+    session = _require_session()
+    client = session.client
+    pos = client.get_position()
+
+    if not pos:
+        raise HTTPException(status_code=400, detail="No open position")
+    if not body.stop_price and not body.take_profit_price:
+        raise HTTPException(status_code=400, detail="stop_price or take_profit_price required")
+
+    try:
+        sl_tp = client.set_sl_tp(pos["side"], body.stop_price, body.take_profit_price)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "side": pos["side"],
+        "stopPrice": sl_tp["stop_price"],
+        "takeProfitPrice": sl_tp["take_profit_price"],
     }
 
 
@@ -369,6 +416,12 @@ def close_order() -> dict[str, Any]:
             client.close_short(pos["quantity"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Drop leftover SL/TP trigger orders so they can't fire on the next position.
+    try:
+        client.cancel_all_orders()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to cancel open orders after close: %s", exc)
 
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
 

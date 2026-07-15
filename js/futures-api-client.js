@@ -99,7 +99,7 @@ const FuturesApiClient = (() => {
     });
   }
 
-  async function openPosition(side, marginUsdt, leverage, price) {
+  async function openPosition(side, marginUsdt, leverage, price, levels = {}) {
     return request('/api/order/open', {
       method: 'POST',
       body: JSON.stringify({
@@ -107,12 +107,25 @@ const FuturesApiClient = (() => {
         margin_usdt: marginUsdt,
         leverage,
         price,
+        stop_price: levels.stopPrice ?? null,
+        take_profit_price: levels.takeProfitPrice ?? null,
       }),
     });
   }
 
   async function closePosition() {
     return request('/api/order/close', { method: 'POST' });
+  }
+
+  // Replace exchange-side SL/TP trigger orders for the open position.
+  async function setSlTp(stopPrice, takeProfitPrice) {
+    return request('/api/order/sltp', {
+      method: 'POST',
+      body: JSON.stringify({
+        stop_price: stopPrice ?? null,
+        take_profit_price: takeProfitPrice ?? null,
+      }),
+    });
   }
 
   async function getStrategyAiStatus(verify = false) {
@@ -196,6 +209,7 @@ const FuturesApiClient = (() => {
     setup,
     openPosition,
     closePosition,
+    setSlTp,
     getStrategyAiStatus,
     testOpenAiKey,
     interpretStrategy,

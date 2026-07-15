@@ -481,6 +481,28 @@ const FuturesBotApp = (() => {
     }
   }
 
+  // Push dragged/edited SL/TP to the exchange as real trigger orders. Debounced
+  // because drag emits many updates per second; only the final level is sent.
+  let exchangeSlTpTimer = null;
+  function scheduleExchangeSlTpSync() {
+    if (!isTestnetMode() || !testnetStatus?.position) return;
+    clearTimeout(exchangeSlTpTimer);
+    exchangeSlTpTimer = setTimeout(async () => {
+      try {
+        const r = await FuturesApiClient.setSlTp(positionStopPrice, positionTakeProfitPrice);
+        positionStopPrice = r.stopPrice ?? positionStopPrice;
+        positionTakeProfitPrice = r.takeProfitPrice ?? positionTakeProfitPrice;
+        addLog(
+          `거래소 SL/TP 갱신 — SL $${positionStopPrice?.toFixed(2) ?? '—'} · TP $${positionTakeProfitPrice?.toFixed(2) ?? '—'}`,
+          'info',
+        );
+        updatePositionOverlay();
+      } catch (err) {
+        addLog(`거래소 SL/TP 갱신 실패: ${err.message}`, 'loss');
+      }
+    }, 600);
+  }
+
   function applySlTpDrag({ role, price, side, entryPrice, stopPrice, takeProfitPrice }) {
     readFormSettings();
     if (role === 'sl') setFieldValue('stopLossPrice', price.toFixed(2));
@@ -499,6 +521,7 @@ const FuturesBotApp = (() => {
         }
       }
       updatePositionOverlay();
+      scheduleExchangeSlTpSync();
     } else {
       lastPendingSide = side;
       resetSlTpConfirm();
@@ -672,8 +695,9 @@ const FuturesBotApp = (() => {
     if (isTestnetMode() && testnetStatus?.position) {
       side = testnetStatus.position.side;
       entryPrice = testnetStatus.position.entryPrice;
-      stopPrice = positionStopPrice;
-      takeProfitPrice = positionTakeProfitPrice;
+      // Prefer exchange-registered trigger prices (source of truth on Binance).
+      stopPrice = testnetStatus.position.stopPrice ?? positionStopPrice;
+      takeProfitPrice = testnetStatus.position.takeProfitPrice ?? positionTakeProfitPrice;
     } else {
       const pos = FuturesPaper.getPosition();
       if (pos) {
@@ -749,6 +773,7 @@ const FuturesBotApp = (() => {
       takeProfitPrice: levels.takeProfitPrice,
     }, { persistPaper: !isTestnetMode() });
     updatePositionOverlay();
+    scheduleExchangeSlTpSync();
   }
 
   function clearPositionStop() {
@@ -895,6 +920,12 @@ const FuturesBotApp = (() => {
   async function refreshTestnetStatus() {
     if (!isTestnetMode()) return null;
     testnetStatus = await FuturesApiClient.getStatus();
+    // Adopt exchange-registered SL/TP trigger prices as the source of truth.
+    const pos = testnetStatus?.position;
+    if (pos) {
+      if (pos.stopPrice != null) positionStopPrice = pos.stopPrice;
+      if (pos.takeProfitPrice != null) positionTakeProfitPrice = pos.takeProfitPrice;
+    }
     return testnetStatus;
   }
 
@@ -1718,11 +1749,16 @@ const FuturesBotApp = (() => {
             symbol: state.symbol,
             tradeMarginUsdt: tradeMargin,
           });
-          const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
-          positionStopPrice = levels.stopPrice;
-          positionTakeProfitPrice = levels.takeProfitPrice;
-          savePositionSlTpStorage(side, price, levels.stopPrice, levels.takeProfitPrice);
+          const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price, levels);
+          positionStopPrice = r.stopPrice ?? levels.stopPrice;
+          positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
+          savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
           addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+          if (r.slTpError) {
+            addLog(`거래소 SL/TP 주문 실패: ${r.slTpError} — 브라우저 감시로 대체합니다.`, 'loss');
+          } else if (r.stopPrice != null || r.takeProfitPrice != null) {
+            addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
+          }
           updatePositionStopLine();
           await refreshTestnetStatus();
           updateUI();
@@ -2049,11 +2085,16 @@ const FuturesBotApp = (() => {
         symbol: state.symbol,
         tradeMarginUsdt: tradeMargin,
       });
-      const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
-      positionStopPrice = levels.stopPrice;
-      positionTakeProfitPrice = levels.takeProfitPrice;
-      savePositionSlTpStorage(side, price, levels.stopPrice, levels.takeProfitPrice);
+      const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price, levels);
+      positionStopPrice = r.stopPrice ?? levels.stopPrice;
+      positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
+      savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
       addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+      if (r.slTpError) {
+        addLog(`거래소 SL/TP 주문 실패: ${r.slTpError} — 브라우저 감시로 대체합니다.`, 'loss');
+      } else if (r.stopPrice != null || r.takeProfitPrice != null) {
+        addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
+      }
       ensurePositionSlTpOverlay();
       await refreshTestnetStatus();
       updateUI();

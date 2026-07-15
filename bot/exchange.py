@@ -151,6 +151,9 @@ class BinanceFuturesClient:
                     "min_notional": float(
                         filters.get("MIN_NOTIONAL", {"notional": "5"})["notional"]
                     ),
+                    "tick_size": float(
+                        filters.get("PRICE_FILTER", {"tickSize": "0.1"})["tickSize"]
+                    ),
                 }
                 return self._filters
         raise ValueError(f"Symbol {self.config.symbol} not found")
@@ -198,3 +201,90 @@ class BinanceFuturesClient:
 
     def close_short(self, quantity: float) -> dict[str, Any]:
         return self.market_order("BUY", quantity, reduce_only=True)
+
+    def _format_price(self, price: float) -> str:
+        filters = self.get_symbol_filters()
+        rounded = self._round_step(price, filters["tick_size"])
+        return f"{rounded:.8f}".rstrip("0").rstrip(".")
+
+    def place_stop_market(self, position_side: str, stop_price: float) -> dict[str, Any]:
+        """Exchange-side stop loss that closes the whole position when touched."""
+        side = "SELL" if position_side == "LONG" else "BUY"
+        return self._request(
+            "POST",
+            "/fapi/v1/order",
+            {
+                "symbol": self.config.symbol,
+                "side": side,
+                "type": "STOP_MARKET",
+                "stopPrice": self._format_price(stop_price),
+                "closePosition": "true",
+                "workingType": "MARK_PRICE",
+            },
+            signed=True,
+        )
+
+    def place_take_profit_market(self, position_side: str, take_profit_price: float) -> dict[str, Any]:
+        """Exchange-side take profit that closes the whole position when touched."""
+        side = "SELL" if position_side == "LONG" else "BUY"
+        return self._request(
+            "POST",
+            "/fapi/v1/order",
+            {
+                "symbol": self.config.symbol,
+                "side": side,
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": self._format_price(take_profit_price),
+                "closePosition": "true",
+                "workingType": "MARK_PRICE",
+            },
+            signed=True,
+        )
+
+    def get_open_orders(self) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/fapi/v1/openOrders",
+            {"symbol": self.config.symbol},
+            signed=True,
+        )
+
+    def cancel_all_orders(self) -> None:
+        self._request(
+            "DELETE",
+            "/fapi/v1/allOpenOrders",
+            {"symbol": self.config.symbol},
+            signed=True,
+        )
+
+    def get_sl_tp_orders(self) -> dict[str, float | None]:
+        """Return current exchange-side SL/TP trigger prices, if any."""
+        result: dict[str, float | None] = {"stop_price": None, "take_profit_price": None}
+        try:
+            orders = self.get_open_orders()
+        except requests.RequestException:
+            return result
+        for order in orders:
+            otype = order.get("type") or order.get("origType")
+            trigger = float(order.get("stopPrice") or 0)
+            if trigger <= 0:
+                continue
+            if otype == "STOP_MARKET":
+                result["stop_price"] = trigger
+            elif otype == "TAKE_PROFIT_MARKET":
+                result["take_profit_price"] = trigger
+        return result
+
+    def set_sl_tp(
+        self,
+        position_side: str,
+        stop_price: float | None,
+        take_profit_price: float | None,
+    ) -> dict[str, float | None]:
+        """Replace exchange-side SL/TP orders (cancel existing, place new)."""
+        self.cancel_all_orders()
+        if stop_price and stop_price > 0:
+            self.place_stop_market(position_side, stop_price)
+        if take_profit_price and take_profit_price > 0:
+            self.place_take_profit_market(position_side, take_profit_price)
+        return self.get_sl_tp_orders()
