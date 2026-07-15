@@ -490,11 +490,11 @@ const StrategyEngine = (() => {
 
   function normalizeRules(settings) {
     const raw = settings?.entryRules;
-    if (raw && (raw.long?.conditions?.length || raw.short?.conditions?.length)) {
-      const sanitized = sanitizeEntryRules(raw);
-      if (sanitized.long.conditions.length || sanitized.short.conditions.length) {
-        return sanitized;
-      }
+    // An explicit entryRules object is always respected — even with every
+    // condition deleted/disabled (= "do not enter"). Falling back to the RSI
+    // preset here silently revived a strategy the user just deleted.
+    if (raw && typeof raw === 'object' && (raw.long || raw.short)) {
+      return sanitizeEntryRules(raw);
     }
     return rsiPresetFromLegacy(settings);
   }

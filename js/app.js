@@ -936,11 +936,10 @@ function renderCandleImmediate(candle, { newBar = false } = {}) {
     IndicatorManager.updateLive(state.lastCandles, { newBar });
   }
 
-  if (state.isFollowingRealtime && isPriceScaleAuto()) {
-    state.programmaticScroll = true;
-    chart.timeScale().scrollToRealTime();
-    state.programmaticScroll = false;
-  }
+  // No explicit scrollToRealTime here: while following, the time scale's
+  // shiftVisibleRangeOnNewBar keeps the newest bar in view natively. The old
+  // animated scroll on every kline update yanked the view backward whenever
+  // the user had panned or zoomed (TradingView/Binance never do this).
 
   scheduleLiveIndicatorUpdate(newBar);
 }

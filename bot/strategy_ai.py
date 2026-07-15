@@ -52,6 +52,9 @@ MULTI-TURN INCREMENTAL EDITS:
 - For entryRules / exitRules: patch ONLY the side (long or short) being edited when possible.
   Example: change long only → { "entryRules": { "long": { ... } } } — do NOT include short unless changing short.
 - Do NOT disable, clear, or replace unmentioned sides/conditions.
+- To DELETE entry conditions (진입 조건 삭제/제거/비활성화), return the side with
+  { "enabled": false, "conditions": [] } — an explicitly empty entryRules means the bot will NOT enter.
+  Never re-add an RSI preset or any other conditions the user did not ask for.
 - If user adjusts risk only (손절/익절/레버리지), do not resend entryRules or exitRules.
 - changed_fields must list top-level keys you changed in settings.
 

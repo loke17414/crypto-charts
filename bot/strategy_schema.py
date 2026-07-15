@@ -248,13 +248,13 @@ def _sanitize_rule_group(group: Any) -> dict[str, Any]:
 def sanitize_entry_rules(rules: Any) -> dict[str, Any] | None:
     if not isinstance(rules, dict):
         return None
-    sanitized = {
+    # Keep the structure even when every condition was deleted: an explicitly
+    # empty entryRules means "do not enter". Returning None here made the
+    # engine fall back to the legacy RSI preset, reviving a deleted strategy.
+    return {
         "long": _sanitize_rule_group(rules.get("long")),
         "short": _sanitize_rule_group(rules.get("short")),
     }
-    if not sanitized["long"]["conditions"] and not sanitized["short"]["conditions"]:
-        return None
-    return sanitized
 
 
 def _deep_merge_entry_rules(current: Any, patch: Any) -> dict[str, Any] | None:

@@ -31,6 +31,8 @@ const FuturesBotApp = (() => {
   let liveExitBusy = false;
   let autoEntryBusy = false;
   let lastAutoEntryKey = null;
+  let autoEntryPausedUntil = 0;
+  let manualCloseBusy = false;
 
   const state = {
     mode: 'paper',
@@ -1113,7 +1115,7 @@ const FuturesBotApp = (() => {
   async function maybeAutoEnterOnSignal(result) {
     if (!botRunning || serverBotActive) return;
     if (result.signal !== 'LONG' && result.signal !== 'SHORT') return;
-    if (autoEntryBusy || liveExitBusy) return;
+    if (autoEntryBusy || liveExitBusy || isAutoEntryPaused()) return;
     if (hasOpenPosition()) return;
     if (result.signal === 'SHORT' && !state.allowShort) return;
 
@@ -1512,7 +1514,7 @@ const FuturesBotApp = (() => {
       $('#signalInfo').textContent = result.reason;
       updateRsiDisplay(result.snapshot);
 
-      if ((result.signal === 'LONG' || result.signal === 'SHORT') && !posSide) {
+      if ((result.signal === 'LONG' || result.signal === 'SHORT') && !posSide && !isAutoEntryPaused()) {
         await executeSignal(result);
       }
     } catch (err) {
@@ -1634,36 +1636,72 @@ const FuturesBotApp = (() => {
     }
   }
 
-  async function manualClose() {
-    const price = state.lastPrice;
+  // Manual close must not be instantly reversed by the running bot: pause
+  // auto entries until the current bar closes (min 30s) after a manual close.
+  function pauseAutoEntryAfterManualClose() {
+    const secondsMap = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
+    const intervalSec = secondsMap[state.interval] || 60;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const barEndSec = lastCandles.at(-1) ? lastCandles.at(-1).time + intervalSec : nowSec + 60;
+    // Pause until the current bar closes, clamped to 30s..15min so long
+    // timeframes don't block the bot for hours.
+    const pausedUntil = Math.min(barEndSec * 1000, Date.now() + 15 * 60_000);
+    autoEntryPausedUntil = Math.max(Date.now() + 30_000, pausedUntil);
+    addLog('수동 청산 — 같은 신호로 바로 재진입하지 않도록 자동 진입을 잠시 멈춥니다.', 'info');
+  }
 
-    if (isTestnetMode()) {
-      await refreshTestnetStatus();
-      if (!testnetStatus?.position) {
+  function isAutoEntryPaused() {
+    return Date.now() < autoEntryPausedUntil;
+  }
+
+  async function manualClose() {
+    if (manualCloseBusy) return;
+    manualCloseBusy = true;
+    const btn = $('#closeBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+      const price = state.lastPrice;
+
+      if (isTestnetMode()) {
+        try {
+          await refreshTestnetStatus();
+        } catch (err) {
+          addLog(`상태 조회 실패, 청산을 바로 시도합니다: ${err.message}`, 'info');
+        }
+        if (testnetStatus && !testnetStatus.position) {
+          addLog('청산할 포지션이 없습니다.', 'info');
+          return;
+        }
+        try {
+          const side = testnetStatus?.position?.side || '';
+          await FuturesApiClient.closePosition();
+          clearPositionStop();
+          if (botRunning) pauseAutoEntryAfterManualClose();
+          addLog(`${side} 수동 청산 @ $${price.toFixed(2)}`, 'info');
+          await refreshTestnetStatus();
+          updateUI();
+        } catch (err) {
+          addLog(`청산 실패: ${err.message}`, 'loss');
+        }
+        return;
+      }
+
+      if (!FuturesPaper.getPosition()) {
         addLog('청산할 포지션이 없습니다.', 'info');
         return;
       }
-      try {
-        const side = testnetStatus.position.side;
-        await FuturesApiClient.closePosition();
+      const r = FuturesPaper.closePosition(price, '수동 청산');
+      if (r.ok) {
         clearPositionStop();
-        addLog(`${side} 수동 청산 @ $${price.toFixed(2)}`, 'info');
-        await refreshTestnetStatus();
-        updateUI();
-      } catch (err) {
-        addLog(`청산 실패: ${err.message}`, 'loss');
+        if (botRunning) pauseAutoEntryAfterManualClose();
       }
-      return;
+      addLog(r.message, r.ok ? (r.pnl >= 0 ? 'win' : 'loss') : 'info');
+      updateUI();
+    } finally {
+      manualCloseBusy = false;
+      if (btn) btn.disabled = false;
     }
-
-    if (!FuturesPaper.getPosition()) {
-      addLog('청산할 포지션이 없습니다.', 'info');
-      return;
-    }
-    const r = FuturesPaper.closePosition(price, '수동 청산');
-    if (r.ok) clearPositionStop();
-    addLog(r.message, r.ok ? (r.pnl >= 0 ? 'win' : 'loss') : 'info');
-    updateUI();
   }
 
   function resetWallet() {

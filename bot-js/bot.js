@@ -138,10 +138,23 @@ async function syncPositionFromExchange() {
     };
     log(`Synced position from exchange: ${position.side} ${position.quantity} @ $${position.entryPrice}`);
   } else if (!live && position) {
-    log('Exchange has no position; clearing local state');
+    // Position vanished from the exchange = closed externally (manual close in
+    // the UI or liquidation). Pause entries briefly so the same bar's signal
+    // doesn't instantly reopen what the user just closed.
+    log('Exchange has no position; clearing local state (entry paused until bar close)');
     position = null;
+    entryPausedUntil = Date.now() + Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
     saveState();
   }
+}
+
+let entryPausedUntil = 0;
+
+function intervalSeconds(iv) {
+  const m = /^(\d+)([mhdw])$/.exec(String(iv || ''));
+  if (!m) return 60;
+  const n = parseInt(m[1], 10);
+  return { m: 60, h: 3600, d: 86400, w: 604800 }[m[2]] * n;
 }
 
 // ---- Orders -------------------------------------------------------------
@@ -269,6 +282,10 @@ async function tick() {
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
+    if (Date.now() < entryPausedUntil) {
+      logHoldReason(`Signal ${result.signal} skipped — cooldown after external close`);
+      return;
+    }
     if (result.signal === 'SHORT' && !cfg.settings.allowShort) {
       log(`Signal SHORT ignored (allowShort=false) — ${result.reason}`);
       return;
