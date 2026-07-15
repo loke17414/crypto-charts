@@ -241,7 +241,8 @@ const StrategyAI = (() => {
         return;
       }
 
-      const current = FuturesBotApp.getFormStateForAi();
+      const targetSlotId = $('#strategyAiTargetSlot')?.value || null;
+      const current = FuturesBotApp.getFormStateForAi(targetSlotId);
       const marketContext = FuturesBotApp.getMarketContextForAi?.() || null;
       const backtestSnapshot = FuturesBotApp.getBacktestSnapshotForAi?.() || null;
 
@@ -261,6 +262,7 @@ const StrategyAI = (() => {
           rulesHtml: result.rules,
           summary: result.summary,
           changedFields,
+          targetSlotId,
         });
       }
 

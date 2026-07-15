@@ -499,6 +499,51 @@ const StrategyEngine = (() => {
     return rsiPresetFromLegacy(settings);
   }
 
+  // Multiple independent entry conditions ("slots"): each enabled slot is a
+  // full entryRules set with an optional per-slot exitRules. A signal fires
+  // when ANY enabled slot matches (first match wins, its name is reported).
+  // Without settings.strategySlots this collapses to the single legacy rules,
+  // so old strategy.json exports and bot-js keep working unchanged.
+  function normalizeSlots(settings) {
+    const raw = Array.isArray(settings?.strategySlots) ? settings.strategySlots : null;
+    if (raw && raw.length) {
+      return raw
+        .filter((s) => s && s.enabled !== false && s.entryRules)
+        .map((s, i) => ({
+          id: s.id ?? i,
+          name: s.name || `조건 ${i + 1}`,
+          rules: sanitizeEntryRules(s.entryRules),
+          exitRules: sanitizeExitRules(s.exitRules),
+        }))
+        .filter((s) => (s.rules.long.enabled && s.rules.long.conditions.length)
+          || (s.rules.short.enabled && s.rules.short.conditions.length));
+    }
+    return [{
+      id: null,
+      name: null,
+      rules: normalizeRules(settings),
+      exitRules: sanitizeExitRules(settings?.exitRules),
+    }];
+  }
+
+  // Combined view of every slot's conditions — used for snapshots, indicator
+  // detection, and warmup so all referenced indicators are computed.
+  function mergedSlotRules(slots) {
+    const merged = {
+      long: { enabled: false, logic: 'any', conditions: [] },
+      short: { enabled: false, logic: 'any', conditions: [] },
+    };
+    slots.forEach(({ rules }) => {
+      ['long', 'short'].forEach((side) => {
+        if (rules[side]?.conditions?.length) {
+          merged[side].conditions.push(...rules[side].conditions);
+          if (rules[side].enabled) merged[side].enabled = true;
+        }
+      });
+    });
+    return merged;
+  }
+
   function rsiPresetFromLegacy(settings = {}) {
     const period = settings.rsiPeriod || 14;
     const oversold = settings.rsiOversold ?? 25;
@@ -714,10 +759,16 @@ const StrategyEngine = (() => {
   }
 
   function prepareBacktest(candles, settings) {
-    const rules = normalizeRules(settings);
+    const slots = normalizeSlots(settings);
+    const merged = mergedSlotRules(slots);
     const cache = createOperandCache();
-    warmupCache(candles, rules, cache);
-    return { rules, cache, startIdx: estimateMinBars(rules) };
+    slots.forEach((slot) => warmupCache(candles, slot.rules, cache));
+    return {
+      slots,
+      rules: slots[0]?.rules ?? merged,
+      cache,
+      startIdx: Math.max(30, ...slots.map((s) => estimateMinBars(s.rules))),
+    };
   }
 
   function matchEntryAt(candles, index, rules, cache, currentSide = null) {
@@ -725,6 +776,18 @@ const StrategyEngine = (() => {
     if (index < 1) return null;
     if (evaluateGroup(candles, index, rules.long, cache)) return 'LONG';
     if (rules.short?.enabled && evaluateGroup(candles, index, rules.short, cache)) return 'SHORT';
+    return null;
+  }
+
+  // Slot-aware entry matching: first enabled slot that fires wins; returns the
+  // slot so its name/exitRules can be attached to the trade.
+  function matchEntrySlotsAt(candles, index, slots, cache, currentSide = null) {
+    if (currentSide === 'LONG' || currentSide === 'SHORT') return null;
+    if (index < 1) return null;
+    for (const slot of slots) {
+      const side = matchEntryAt(candles, index, slot.rules, cache, currentSide);
+      if (side) return { side, slot };
+    }
     return null;
   }
 
@@ -1087,8 +1150,18 @@ const StrategyEngine = (() => {
     return Object.keys(out).length ? out : null;
   }
 
+  function slotsSummary(slots) {
+    if (!slots.length) return '진입 조건 없음 (모두 꺼짐)';
+    if (slots.length === 1 && !slots[0].name) return rulesSummary(slots[0].rules);
+    return slots
+      .map((s) => `[${s.name}] ${rulesSummary(s.rules)}`)
+      .join(' · ');
+  }
+
   function evaluateEntry(candles, settings, currentSide = null) {
-    const rules = normalizeRules(settings);
+    const slots = normalizeSlots(settings);
+    const merged = mergedSlotRules(slots);
+    const rules = slots[0]?.rules ?? merged;
     const i = candles.length - 1;
     if (i < 1) {
       return { matched: null, rules, reason: '데이터 부족', snapshot: null };
@@ -1099,37 +1172,52 @@ const StrategyEngine = (() => {
         matched: null,
         rules,
         reason: `${currentSide === 'LONG' ? '롱' : '숏'} 보유 중`,
-        snapshot: buildSnapshot(candles, i, rules, new Map()),
+        snapshot: buildSnapshot(candles, i, merged, new Map()),
       };
     }
 
     const cache = new Map();
-    const snapshot = buildSnapshot(candles, i, rules, cache);
+    const snapshot = buildSnapshot(candles, i, merged, cache);
 
-    if (evaluateGroup(candles, i, rules.long, cache)) {
-      return { matched: 'LONG', rules, reason: `롱 진입 — ${rulesSummary({ long: rules.long })}`, snapshot };
-    }
-
-    if (rules.short?.enabled && evaluateGroup(candles, i, rules.short, cache)) {
-      return { matched: 'SHORT', rules, reason: `숏 진입 — ${rulesSummary({ short: rules.short })}`, snapshot };
+    const hit = matchEntrySlotsAt(candles, i, slots, cache, currentSide);
+    if (hit) {
+      const label = hit.slot.name ? `[${hit.slot.name}] ` : '';
+      const sideRules = hit.side === 'LONG'
+        ? { long: hit.slot.rules.long }
+        : { short: hit.slot.rules.short };
+      return {
+        matched: hit.side,
+        rules: hit.slot.rules,
+        reason: `${hit.side === 'LONG' ? '롱' : '숏'} 진입 — ${label}${rulesSummary(sideRules)}`,
+        snapshot,
+        slotName: hit.slot.name,
+        slotId: hit.slot.id,
+        slotExitRules: hit.slot.exitRules,
+      };
     }
 
     return {
       matched: null,
       rules,
-      reason: `대기 — ${rulesSummary(rules)}`,
+      reason: `대기 — ${slotsSummary(slots)}`,
       snapshot,
     };
   }
 
   function minBars(settings) {
-    return estimateMinBars(normalizeRules(settings));
+    const slots = normalizeSlots(settings);
+    if (!slots.length) return 30;
+    return Math.max(...slots.map((s) => estimateMinBars(s.rules)));
   }
 
   return {
     buildCatalog,
     catalogForAi,
     normalizeRules,
+    normalizeSlots,
+    mergedSlotRules,
+    matchEntrySlotsAt,
+    slotsSummary,
     sanitizeEntryRules,
     resolveIndicatorSpec,
     rulesUseIndicator,

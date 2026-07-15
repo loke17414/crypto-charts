@@ -100,6 +100,9 @@ function loadConfig() {
     rsiOverbought: num(s.rsiOverbought ?? process.env.RSI_OVERBOUGHT, 70),
     entryRules: s.entryRules ?? null,
     exitRules: s.exitRules ?? null,
+    strategySlots: Array.isArray(s.strategySlots) && s.strategySlots.length
+      ? s.strategySlots
+      : undefined,
   };
 
   return {

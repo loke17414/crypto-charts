@@ -171,7 +171,11 @@ const FuturesStrategy = (() => {
 
     const price = snapshot?.price ?? candles.at(-1)?.close;
     const barIndex = candles.length - 1;
-    const levels = calcEntryLevels(entry.matched, price, settings, { candles, index: barIndex });
+    // The matched slot's own exitRules (dynamic SL/TP) win over the global ones.
+    const levelSettings = entry.slotExitRules
+      ? { ...settings, exitRules: entry.slotExitRules }
+      : settings;
+    const levels = calcEntryLevels(entry.matched, price, levelSettings, { candles, index: barIndex });
     if (!levels) {
       return { signal: 'HOLD', reason: '손절/익절 계산 불가', snapshot };
     }
@@ -304,7 +308,7 @@ const FuturesStrategy = (() => {
       };
     }
 
-    const { rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(candles, settings);
+    const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(candles, settings);
     const minStart = minBars(settings);
     const startIdx = Math.max(warmupIdx, minStart);
 
@@ -320,11 +324,12 @@ const FuturesStrategy = (() => {
         takeProfitPrice: position.takeProfitPrice,
         pnlPct,
         reason,
+        slotName: position.slotName ?? null,
       });
       position = null;
     }
 
-    function openPosition(candle, side, levels) {
+    function openPosition(candle, side, levels, slotName = null) {
       position = {
         side,
         entryPrice: candle.close,
@@ -333,6 +338,7 @@ const FuturesStrategy = (() => {
         takeProfitPrice: levels.takeProfitPrice,
         stopLossPct: levels.stopLossPct,
         takeProfitPct: levels.takeProfitPct,
+        slotName,
       };
     }
 
@@ -355,10 +361,16 @@ const FuturesStrategy = (() => {
       }
 
       if (!position) {
-        const matched = StrategyEngine.matchEntryAt(candles, i, rules, cache, null);
+        const hit = StrategyEngine.matchEntrySlotsAt
+          ? StrategyEngine.matchEntrySlotsAt(candles, i, slots, cache, null)
+          : null;
+        const matched = hit?.side ?? StrategyEngine.matchEntryAt(candles, i, rules, cache, null);
         if (matched === 'LONG' || matched === 'SHORT') {
-          const levels = calcEntryLevels(matched, candle.close, settings, { candles, index: i });
-          if (levels) openPosition(candle, matched, levels);
+          const levelSettings = hit?.slot?.exitRules
+            ? { ...settings, exitRules: hit.slot.exitRules }
+            : settings;
+          const levels = calcEntryLevels(matched, candle.close, levelSettings, { candles, index: i });
+          if (levels) openPosition(candle, matched, levels, hit?.slot?.name);
         }
       }
     }

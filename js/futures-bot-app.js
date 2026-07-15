@@ -84,9 +84,68 @@ const FuturesBotApp = (() => {
     lastPrice: 0,
     entryRules: null,
     exitRules: null,
+    strategySlots: [],
   };
 
   const ENTRY_RULES_KEY = 'crypto-charts-entry-rules';
+  const STRATEGY_SLOTS_KEY = 'crypto-charts-strategy-slots';
+  const MAX_STRATEGY_SLOTS = 6;
+
+  function loadStrategySlots() {
+    try {
+      const raw = localStorage.getItem(STRATEGY_SLOTS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return parsed
+        .filter((s) => s && typeof s === 'object')
+        .slice(0, MAX_STRATEGY_SLOTS)
+        .map((s, i) => ({
+          id: s.id ?? `slot-${Date.now()}-${i}`,
+          name: String(s.name || `조건 ${i + 1}`).slice(0, 30),
+          enabled: s.enabled !== false,
+          entryRules: s.entryRules
+            ? (window.StrategyEngine?.sanitizeEntryRules?.(s.entryRules) ?? s.entryRules)
+            : null,
+          exitRules: s.exitRules ?? null,
+        }));
+    } catch {
+      return null;
+    }
+  }
+
+  function saveStrategySlots() {
+    try {
+      localStorage.setItem(STRATEGY_SLOTS_KEY, JSON.stringify(state.strategySlots));
+    } catch { /* ignore */ }
+  }
+
+  function newSlotId() {
+    return `slot-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  }
+
+  // One-time migration: the old single entryRules becomes slot 1 so existing
+  // strategies keep working when the multi-slot UI takes over.
+  function migrateLegacyRulesToSlots() {
+    const slots = loadStrategySlots();
+    if (slots) {
+      state.strategySlots = slots;
+      return;
+    }
+    const legacy = loadStrategyStorage();
+    if (legacy.entryRules) {
+      state.strategySlots = [{
+        id: newSlotId(),
+        name: '조건 1',
+        enabled: true,
+        entryRules: legacy.entryRules,
+        exitRules: legacy.exitRules,
+      }];
+      saveStrategySlots();
+    } else {
+      state.strategySlots = [];
+    }
+  }
 
   function loadStrategyStorage() {
     try {
@@ -164,6 +223,7 @@ const FuturesBotApp = (() => {
       takeProfitPct: state.takeProfitPct,
       entryRules: state.entryRules,
       exitRules: state.exitRules,
+      strategySlots: state.strategySlots?.length ? state.strategySlots : undefined,
     };
   }
 
@@ -188,6 +248,7 @@ const FuturesBotApp = (() => {
       rsiOverbought: s.rsiOverbought,
       entryRules: s.entryRules,
       exitRules: s.exitRules,
+      strategySlots: s.strategySlots,
     };
   }
 
@@ -213,8 +274,22 @@ const FuturesBotApp = (() => {
     };
   }
 
-  function getFormStateForAi() {
+  function getFormStateForAi(targetSlotId = null) {
     readFormSettings();
+    // GPT 편집의 기준이 되는 entryRules: 저장 대상 슬롯이 선택돼 있으면 그
+    // 슬롯의 규칙을 현재 전략으로 보여줘 follow-up 수정이 그 슬롯에 적용된다.
+    let entryRules = state.entryRules;
+    let exitRules = state.exitRules;
+    if (targetSlotId && targetSlotId !== '__new__') {
+      const slot = (state.strategySlots || []).find((s) => s.id === targetSlotId);
+      if (slot) {
+        entryRules = slot.entryRules ?? null;
+        exitRules = slot.exitRules ?? null;
+      }
+    } else if (targetSlotId === '__new__') {
+      entryRules = null;
+      exitRules = null;
+    }
     return {
       symbol: state.symbol,
       interval: state.interval,
@@ -228,8 +303,8 @@ const FuturesBotApp = (() => {
       riskPerTradePct: state.riskPerTradePct,
       maxAccountLossPct: state.maxAccountLossPct,
       pollSeconds: state.pollSeconds,
-      entryRules: state.entryRules,
-      exitRules: state.exitRules,
+      entryRules,
+      exitRules,
       indicatorCatalog: window.StrategyEngine?.catalogForAi?.() || '',
     };
   }
@@ -312,6 +387,14 @@ const FuturesBotApp = (() => {
     el.value = String(value);
   }
 
+  function escapeHtml(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function updateStrategyRulesDisplay(settings = null, rulesHtml = null) {
     const el = $('#strategyRules');
     if (!el) return;
@@ -322,15 +405,24 @@ const FuturesBotApp = (() => {
     readFormSettings();
     const s = settings || getSettings();
     if (window.StrategyEngine) {
-      const rules = StrategyEngine.normalizeRules(s);
-      const summary = StrategyEngine.rulesSummary(rules);
-      const exitHint = formatExitRulesSummary(s.exitRules);
-      el.innerHTML = [
-        `· <strong>롱/숏 조건</strong>: ${summary}`,
-        exitHint,
-        `· 손절 -${s.stopLossPct}% · 익절 +${s.takeProfitPct}% (진입가 기준, 동적 SL/TP 우선)`,
-        '· 차트에 지표를 켜지 않아도 자동 계산됩니다',
-      ].filter(Boolean).join('<br>\n');
+      const slots = state.strategySlots || [];
+      const lines = [];
+      if (slots.length) {
+        slots.forEach((slot) => {
+          const rules = StrategyEngine.sanitizeEntryRules(slot.entryRules);
+          const badge = slot.enabled ? 'ON' : 'OFF';
+          const exitHint = slot.exitRules ? ' · 동적 SL/TP' : '';
+          lines.push(`· <strong>[${badge}] ${escapeHtml(slot.name)}</strong>: ${StrategyEngine.rulesSummary(rules)}${exitHint}`);
+        });
+      } else {
+        const rules = StrategyEngine.normalizeRules(s);
+        lines.push(`· <strong>롱/숏 조건</strong>: ${StrategyEngine.rulesSummary(rules)}`);
+        const exitHint = formatExitRulesSummary(s.exitRules);
+        if (exitHint) lines.push(exitHint);
+      }
+      lines.push(`· 손절 -${s.stopLossPct}% · 익절 +${s.takeProfitPct}% (진입가 기준, 동적 SL/TP 우선)`);
+      lines.push('· 차트에 지표를 켜지 않아도 자동 계산됩니다');
+      el.innerHTML = lines.filter(Boolean).join('<br>\n');
       return;
     }
     const shortLine = s.allowShort
@@ -359,7 +451,157 @@ const FuturesBotApp = (() => {
     return parts.length ? `· <strong>청산</strong>: ${parts.join(' · ')}` : '';
   }
 
-  function applyStrategySettings(settings, { rulesHtml = null, summary = null, changedFields = [] } = {}) {
+  // ── 진입 조건 슬롯 패널 ─────────────────────────────────────────────
+
+  function getStrategySlots() {
+    return state.strategySlots || [];
+  }
+
+  function recomputeAfterSlotsChange() {
+    readFormSettings();
+    backtestHistoryCache = null;
+    updateStrategyRulesDisplay();
+    updateChartIndicatorButtons();
+    invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
+    clearTimeout(backtestDebounce);
+    applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
+    updateSignalDisplay();
+    updateUI();
+  }
+
+  function onStrategySlotsChanged({ recompute = true } = {}) {
+    saveStrategySlots();
+    renderStrategySlotsPanel();
+    updateStrategyAiSlotOptions();
+    if (recompute) recomputeAfterSlotsChange();
+    else updateStrategyRulesDisplay();
+  }
+
+  function addStrategySlot({ name = null, entryRules = null, exitRules = null, enabled = true } = {}) {
+    if (state.strategySlots.length >= MAX_STRATEGY_SLOTS) {
+      addLog(`진입 조건은 최대 ${MAX_STRATEGY_SLOTS}개까지 만들 수 있습니다.`, 'warn');
+      return null;
+    }
+    const slot = {
+      id: newSlotId(),
+      name: name || `조건 ${state.strategySlots.length + 1}`,
+      enabled,
+      entryRules,
+      exitRules,
+    };
+    state.strategySlots.push(slot);
+    return slot;
+  }
+
+  function slotRulesSummaryText(slot) {
+    if (!slot.entryRules) return '비어 있음 — GPT로 전략을 저장하세요';
+    try {
+      const rules = StrategyEngine.sanitizeEntryRules(slot.entryRules);
+      return StrategyEngine.rulesSummary(rules);
+    } catch {
+      return '규칙 해석 실패';
+    }
+  }
+
+  function renderStrategySlotsPanel() {
+    const list = $('#strategySlotsList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (!state.strategySlots.length) {
+      const empty = document.createElement('div');
+      empty.className = 'strategy-slot-empty';
+      empty.textContent = '진입 조건이 없습니다. "+ 조건 추가"를 누르거나 GPT에게 전략을 설명하세요. (조건이 없으면 기본 RSI 전략이 사용됩니다)';
+      list.appendChild(empty);
+      return;
+    }
+
+    state.strategySlots.forEach((slot) => {
+      const row = document.createElement('div');
+      row.className = `strategy-slot${slot.enabled ? '' : ' strategy-slot--off'}`;
+      row.dataset.slotId = slot.id;
+
+      const toggle = document.createElement('label');
+      toggle.className = 'strategy-slot__toggle';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = slot.enabled;
+      checkbox.title = '이 진입 조건 사용 on/off';
+      checkbox.addEventListener('change', () => {
+        slot.enabled = checkbox.checked;
+        addLog(`진입 조건 [${slot.name}] ${slot.enabled ? 'ON' : 'OFF'}`, 'info');
+        onStrategySlotsChanged();
+      });
+      toggle.appendChild(checkbox);
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'strategy-slot__name';
+      nameInput.value = slot.name;
+      nameInput.maxLength = 30;
+      nameInput.title = '조건 이름 (클릭해서 수정)';
+      nameInput.addEventListener('change', () => {
+        slot.name = nameInput.value.trim() || slot.name;
+        nameInput.value = slot.name;
+        onStrategySlotsChanged({ recompute: false });
+      });
+
+      const summary = document.createElement('div');
+      summary.className = 'strategy-slot__summary';
+      summary.textContent = slotRulesSummaryText(slot);
+      summary.title = summary.textContent;
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'strategy-slot__delete';
+      delBtn.textContent = '✕';
+      delBtn.title = '이 진입 조건 삭제';
+      delBtn.addEventListener('click', () => {
+        if (!confirm(`진입 조건 [${slot.name}]을(를) 삭제할까요?`)) return;
+        state.strategySlots = state.strategySlots.filter((s) => s.id !== slot.id);
+        addLog(`진입 조건 [${slot.name}] 삭제됨`, 'info');
+        onStrategySlotsChanged();
+      });
+
+      row.appendChild(toggle);
+      row.appendChild(nameInput);
+      row.appendChild(summary);
+      row.appendChild(delBtn);
+      list.appendChild(row);
+    });
+  }
+
+  // GPT 채팅의 "저장할 진입 조건" 드롭다운을 현재 슬롯 목록과 동기화한다.
+  function updateStrategyAiSlotOptions() {
+    const select = $('#strategyAiTargetSlot');
+    if (!select) return;
+    const prev = select.value;
+    select.innerHTML = '';
+
+    state.strategySlots.forEach((slot) => {
+      const opt = document.createElement('option');
+      opt.value = slot.id;
+      opt.textContent = `${slot.name}${slot.enabled ? '' : ' (OFF)'}`;
+      select.appendChild(opt);
+    });
+
+    const optNew = document.createElement('option');
+    optNew.value = '__new__';
+    optNew.textContent = '+ 새 조건으로 저장';
+    select.appendChild(optNew);
+
+    if (prev && [...select.options].some((o) => o.value === prev)) {
+      select.value = prev;
+    } else if (state.strategySlots.length) {
+      select.value = state.strategySlots[0].id;
+    } else {
+      select.value = '__new__';
+    }
+  }
+
+  function applyStrategySettings(settings, {
+    rulesHtml = null, summary = null, changedFields = [], targetSlotId = null,
+  } = {}) {
     if (!settings) return;
 
     readFormSettings();
@@ -383,12 +625,14 @@ const FuturesBotApp = (() => {
       state.allowShort = true;
     }
 
-    if (Object.prototype.hasOwnProperty.call(settings, 'entryRules')) {
+    const hasNewEntryRules = Object.prototype.hasOwnProperty.call(settings, 'entryRules');
+    const hasNewExitRules = Object.prototype.hasOwnProperty.call(settings, 'exitRules');
+    if (hasNewEntryRules) {
       state.entryRules = settings.entryRules
         ? StrategyEngine.sanitizeEntryRules(settings.entryRules)
         : null;
     }
-    if (Object.prototype.hasOwnProperty.call(settings, 'exitRules')) {
+    if (hasNewExitRules) {
       state.exitRules = settings.exitRules
         ? (StrategyEngine.sanitizeExitRules
           ? StrategyEngine.sanitizeExitRules(settings.exitRules)
@@ -401,6 +645,26 @@ const FuturesBotApp = (() => {
       warnings.forEach((w) => addLog(`전략 경고: ${w}`, 'warn'));
     }
     saveStrategyStorage(state.entryRules, state.exitRules);
+
+    // GPT가 만든 entryRules는 선택된 진입 조건 슬롯에 저장된다.
+    if (hasNewEntryRules && settings.entryRules) {
+      let slot = targetSlotId && targetSlotId !== '__new__'
+        ? state.strategySlots.find((s) => s.id === targetSlotId)
+        : null;
+      if (!slot && targetSlotId !== '__new__' && state.strategySlots.length === 1) {
+        slot = state.strategySlots[0];
+      }
+      if (!slot) slot = addStrategySlot();
+      if (slot) {
+        slot.entryRules = state.entryRules;
+        if (hasNewExitRules) slot.exitRules = state.exitRules;
+        slot.enabled = true;
+        addLog(`진입 조건 [${slot.name}]에 전략이 저장되었습니다.`, 'info');
+      }
+      saveStrategySlots();
+      renderStrategySlotsPanel();
+      updateStrategyAiSlotOptions();
+    }
 
     readFormSettings();
     const nextSettings = getSettings();
@@ -1324,7 +1588,13 @@ const FuturesBotApp = (() => {
 
   function getActiveStrategyRules() {
     readFormSettings();
-    return StrategyEngine?.normalizeRules?.(getSettings()) || null;
+    const settings = getSettings();
+    // Merge every enabled slot's conditions so indicator detection (chart
+    // buttons, MACD/RSI filters) covers all active entry conditions.
+    if (StrategyEngine?.normalizeSlots && StrategyEngine?.mergedSlotRules) {
+      return StrategyEngine.mergedSlotRules(StrategyEngine.normalizeSlots(settings));
+    }
+    return StrategyEngine?.normalizeRules?.(settings) || null;
   }
 
   function isStrategyUsingIndicator(names) {
@@ -1452,21 +1722,34 @@ const FuturesBotApp = (() => {
   // history load, and the backtest would never finish — so the key uses the
   // raw user inputs instead of the derived values.
   function backtestSettingsForKey(settings) {
+    let keyed = settings;
+    // Slot names are cosmetic — exclude them so renaming a condition does not
+    // needlessly invalidate the backtest cache.
+    if (Array.isArray(settings.strategySlots)) {
+      keyed = {
+        ...settings,
+        strategySlots: settings.strategySlots.map((s) => ({
+          enabled: s.enabled !== false,
+          entryRules: s.entryRules,
+          exitRules: s.exitRules,
+        })),
+      };
+    }
     if (state.slTpMode === 'pnl') {
       return {
-        ...settings,
+        ...keyed,
         stopLossPct: `pnl:${$('#stopLossPnl')?.value ?? ''}`,
         takeProfitPct: `pnl:${$('#takeProfitPnl')?.value ?? ''}`,
       };
     }
     if (state.slTpMode === 'price') {
       return {
-        ...settings,
+        ...keyed,
         stopLossPct: `price:${$('#stopLossPrice')?.value ?? ''}`,
         takeProfitPct: `price:${$('#takeProfitPrice')?.value ?? ''}`,
       };
     }
-    return settings;
+    return keyed;
   }
 
   function backtestCacheKey(interval, targetTrades, settings) {
@@ -2543,6 +2826,16 @@ const FuturesBotApp = (() => {
     state.entryRules = stored.entryRules;
     state.exitRules = stored.exitRules;
     if (state.entryRules || state.exitRules) saveStrategyStorage(state.entryRules, state.exitRules);
+    migrateLegacyRulesToSlots();
+    renderStrategySlotsPanel();
+    updateStrategyAiSlotOptions();
+    $('#addStrategySlotBtn')?.addEventListener('click', () => {
+      const slot = addStrategySlot();
+      if (slot) {
+        addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
+        onStrategySlotsChanged({ recompute: false });
+      }
+    });
     updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
     updateMacdLineFilterUi();
@@ -2725,6 +3018,7 @@ const FuturesBotApp = (() => {
     applyStrategySettings,
     updateStrategyRulesDisplay,
     exportStrategyForServer,
+    getStrategySlots,
   };
 })();
 

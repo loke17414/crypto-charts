@@ -25,7 +25,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=20260716c">
+  <link rel="stylesheet" href="css/style.css?v=20260716d">
 
   <script type="application/ld+json">
   {
@@ -162,6 +162,16 @@
           · <strong>롱/숏 조건</strong>: 지표 + 캔들 패턴 규칙<br>
           · 손절 -1.5% · 익절 +3% (진입가 기준)
         </p>
+
+        <div class="strategy-slots">
+          <div class="strategy-slots__header">
+            <h3 class="strategy-slots__title">진입 조건 목록</h3>
+            <button type="button" id="addStrategySlotBtn" class="btn btn--ghost btn--sm">+ 조건 추가</button>
+          </div>
+          <p class="api-hint">여러 진입 조건을 만들어 각각 on/off 할 수 있습니다. 켜진 조건 중 하나라도 맞으면 진입 신호가 발생합니다 (봇·백테스트 공통).</p>
+          <div id="strategySlotsList" class="strategy-slots__list"></div>
+        </div>
+
         <button type="button" id="exportStrategyBtn" class="btn btn--ghost btn--block btn--sm" title="현재 전략을 24/7 서버 봇(strategy.json)에서 그대로 쓰도록 내보냅니다">전략 내보내기 (서버용)</button>
 
         <div class="form-row">
@@ -202,6 +212,12 @@
           <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="상승 장악형 캔들과 RSI 30 이하일 때 롱 진입">장악+RSI</button>
           <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="볼린저 밴드 하단 이탈 후 밴드 안으로 재진입하면 롱, 손절은 재진입 직전 캔들 저가, 익절은 손절 대비 1.5배">BB 재진입 롱</button>
           <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="양봉 해머 패턴이면서 종가가 EMA 25 위일 때 롱">해머+EMA</button>
+        </div>
+        <div class="strategy-ai-target">
+          <label for="strategyAiTargetSlot">저장할 진입 조건</label>
+          <select id="strategyAiTargetSlot" title="GPT가 만든 진입 조건을 어느 슬롯에 저장할지 선택">
+            <option value="__new__">+ 새 조건으로 저장</option>
+          </select>
         </div>
         <div class="strategy-ai-input">
           <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="예: RSI 30 이하에서만 롱 진입, 손절 1%, 익절 2.5%"></textarea>
@@ -448,17 +464,17 @@
   <script src="js/indicator-catalog.js?v=20260714e"></script>
   <script src="js/indicators.js?v=20260714e"></script>
   <script src="js/candle-patterns.js"></script>
-  <script src="js/strategy-engine.js?v=20260715s"></script>
+  <script src="js/strategy-engine.js?v=20260716a"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/app.js?v=20260716d"></script>
   <script src="js/futures-paper.js"></script>
-  <script src="js/futures-strategy.js?v=20260715g"></script>
+  <script src="js/futures-strategy.js?v=20260716a"></script>
   <script src="js/backtest-loader.js?v=20260715g"></script>
   <script src="js/futures-api-client.js?v=20260716f"></script>
   <script src="js/risk-sizing.js"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260716m"></script>
-  <script src="js/strategy-ai.js?v=20260715r"></script>
+  <script src="js/futures-bot-app.js?v=20260716n"></script>
+  <script src="js/strategy-ai.js?v=20260716a"></script>
 </body>
 </html>

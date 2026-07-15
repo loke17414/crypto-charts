@@ -1451,6 +1451,123 @@ body.pos-sl-tp-dragging .chart-main {
   margin-bottom: 0.5rem;
 }
 
+/* ── 진입 조건 슬롯 패널 ─────────────────────────────────────── */
+.strategy-slots {
+  margin: 0.6rem 0;
+}
+
+.strategy-slots__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.strategy-slots__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.strategy-slots__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.strategy-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+}
+
+.strategy-slot--off {
+  opacity: 0.55;
+}
+
+.strategy-slot__toggle {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.strategy-slot__name {
+  width: 92px;
+  flex-shrink: 0;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.strategy-slot__name:hover,
+.strategy-slot__name:focus {
+  border-color: var(--border);
+  background: var(--bg-secondary);
+  outline: none;
+}
+
+.strategy-slot__summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strategy-slot__delete {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+}
+
+.strategy-slot__delete:hover {
+  color: var(--red, #ef5350);
+  background: var(--bg-secondary);
+}
+
+.strategy-slot-empty {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  padding: 0.4rem 0.2rem;
+}
+
+.strategy-ai-target {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.strategy-ai-target select {
+  flex: 1;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
 .strategy-ai-input {
   display: flex;
   flex-direction: column;

@@ -335,6 +335,16 @@ async function start() {
 
   if (!cfg.hasStrategyFile) {
     log('No strategy.json found — falling back to the RSI oversold/overbought preset. Export your UI strategy for full parity.', 'WARN');
+  } else if (StrategyEngine.normalizeSlots) {
+    const slots = StrategyEngine.normalizeSlots(cfg.settings);
+    log(`Strategy: ${StrategyEngine.slotsSummary ? StrategyEngine.slotsSummary(slots) : slots.length + ' slot(s)'}`);
+    slots.forEach((slot) => {
+      if (StrategyEngine.validateEntryRules) {
+        StrategyEngine.validateEntryRules(slot.rules).warnings.forEach((w) => {
+          log(`Strategy warning${slot.name ? ` [${slot.name}]` : ''}: ${w}`, 'WARN');
+        });
+      }
+    });
   } else {
     const rules = StrategyEngine.normalizeRules(cfg.settings);
     log(`Strategy: ${StrategyEngine.rulesSummary(rules)}`);
