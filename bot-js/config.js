@@ -87,6 +87,9 @@ function loadConfig() {
   const allowShort = s.allowShort !== undefined
     ? Boolean(s.allowShort)
     : bool(process.env.ALLOW_SHORT, true);
+  // UI가 내보내는 "손절가(SL) 사용" 토글. 예전에는 이 필드를 읽지 않아
+  // 사용자가 손절을 꺼도 서버 봇은 항상 SL을 적용했다.
+  const useStopLoss = s.useStopLoss !== false;
 
   // The settings object handed to FuturesStrategy — identical shape to the
   // browser's getSettings() output.
@@ -95,6 +98,7 @@ function loadConfig() {
     stopLossPct,
     takeProfitPct,
     allowShort,
+    useStopLoss,
     rsiPeriod: int(s.rsiPeriod ?? process.env.RSI_PERIOD, 14),
     rsiOversold: num(s.rsiOversold ?? process.env.RSI_OVERSOLD, 25),
     rsiOverbought: num(s.rsiOverbought ?? process.env.RSI_OVERBOUGHT, 70),

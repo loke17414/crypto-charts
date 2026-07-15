@@ -473,6 +473,7 @@ const FuturesBotApp = (() => {
     clearTimeout(backtestDebounce);
     applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
     updateSignalDisplay();
+    scheduleServerStrategySync();
     updateUI();
   }
 
@@ -619,6 +620,14 @@ const FuturesBotApp = (() => {
     setFieldValue('rsiOverbought', settings.rsiOverbought);
     setFieldValue('stopLoss', settings.stopLossPct);
     setFieldValue('takeProfit', settings.takeProfitPct);
+    // GPT의 SL/TP는 %값이다. 손익($)/가격($) 모드에서는 % 필드가 무시되므로
+    // %비율 모드로 전환해야 적용한 값이 실제 진입에 반영된다.
+    const slTpChanged = (settings.stopLossPct != null && settings.stopLossPct !== prevSettings.stopLossPct)
+      || (settings.takeProfitPct != null && settings.takeProfitPct !== prevSettings.takeProfitPct);
+    if (slTpChanged && state.slTpMode !== 'pct') {
+      setSlTpMode('pct');
+      addLog('AI가 SL/TP를 %기준으로 설정 — SL/TP 입력 방식을 % 비율로 전환했습니다.', 'info');
+    }
     setFieldValue('leverage', settings.leverage);
     setFieldValue('riskPerTrade', settings.riskPerTradePct);
     setFieldValue('maxAccountLoss', settings.maxAccountLossPct);
@@ -697,6 +706,15 @@ const FuturesBotApp = (() => {
       ? ` · 변경: ${changedFields.join(', ')}`
       : '';
     addLog(`${note}${changed}`, 'info');
+
+    // 새 SL/TP로 다음 진입 레벨이 달라졌으니 미리보기·확인 상태를 갱신하고,
+    // 실행 중인 서버 봇에도 변경된 전략을 반영한다.
+    if (slTpChanged && !hasOpenPosition()) {
+      slTpPreviewTouchedAt = Date.now();
+      resetSlTpConfirm();
+      addLog('AI가 SL/TP를 변경했습니다 — 진입하려면 SL/TP 확인 버튼을 다시 눌러주세요.', 'info');
+    }
+    scheduleServerStrategySync();
   }
 
   function resetSlTpConfirm() {
@@ -721,6 +739,7 @@ const FuturesBotApp = (() => {
       ? `SL $${levels.stopPrice.toFixed(2)} · `
       : '손절 없음 · ';
     addLog(`SL/TP 확인 — ${slNote}TP $${levels.takeProfitPrice.toFixed(2)}`, 'info');
+    scheduleServerStrategySync();
   }
 
   function updateConfirmSlTpUi() {
@@ -1486,6 +1505,24 @@ const FuturesBotApp = (() => {
     const strategy = buildServerStrategyExport();
     await FuturesApiClient.syncStrategy(strategy);
     return strategy;
+  }
+
+  // 서버 봇이 이미 돌고 있을 때 SL/TP·진입 조건이 바뀌면 strategy.json을
+  // 다시 올린다 (봇은 파일 변경을 감지해 다음 체크부터 새 설정 적용).
+  // 예전에는 봇 시작 시 한 번만 보내서, 실행 중 GPT/수동 변경이 서버 봇에
+  // 영영 반영되지 않았다.
+  let serverStrategySyncTimer = null;
+  function scheduleServerStrategySync() {
+    if (!isTestnetMode() || !serverBotActive) return;
+    clearTimeout(serverStrategySyncTimer);
+    serverStrategySyncTimer = setTimeout(async () => {
+      try {
+        await syncStrategyToServer();
+        addLog('변경된 전략을 실행 중인 서버 봇에 반영했습니다 (다음 체크부터 적용).', 'info');
+      } catch (err) {
+        addLog(`서버 봇 전략 반영 실패: ${err.message} — 봇을 재시작하면 적용됩니다.`, 'loss');
+      }
+    }, 1200);
   }
 
   async function restoreSessionFromServer() {
@@ -3001,6 +3038,7 @@ const FuturesBotApp = (() => {
           resetSlTpConfirm();
           syncPreviewFromLastSignal();
         }
+        scheduleServerStrategySync();
         scheduleBacktest(lastCandles);
         updateUI();
       };
@@ -3040,6 +3078,7 @@ const FuturesBotApp = (() => {
         localStorage.setItem(USE_STOP_LOSS_KEY, String(state.useStopLoss !== false));
         if (state.useStopLoss === false) positionStopPrice = null;
         resetSlTpConfirm();
+        scheduleServerStrategySync();
         slTpPreviewTouchedAt = Date.now();
         if (hasOpenPosition()) {
           syncOpenPositionSlTp();

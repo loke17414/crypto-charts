@@ -156,6 +156,58 @@ async function syncPositionFromExchange() {
 let entryPausedUntil = 0;
 let blockEntryUntilSignalClears = false;
 
+// ---- Strategy hot reload --------------------------------------------------
+// The UI rewrites strategy.json when GPT or the user changes SL/TP or entry
+// rules while the bot is running. Reload it on mtime change so those edits
+// apply without a bot restart. Symbol/interval/leverage need a client re-init
+// and are intentionally NOT hot-swapped.
+let strategyMtimeMs = (() => {
+  try {
+    return cfg.strategyPath ? fs.statSync(cfg.strategyPath).mtimeMs : 0;
+  } catch { return 0; }
+})();
+
+function maybeReloadStrategy() {
+  if (!cfg.strategyPath) return;
+  let mtimeMs;
+  try {
+    mtimeMs = fs.statSync(cfg.strategyPath).mtimeMs;
+  } catch { return; }
+  if (mtimeMs === strategyMtimeMs) return;
+  strategyMtimeMs = mtimeMs;
+
+  let s;
+  try {
+    s = JSON.parse(fs.readFileSync(cfg.strategyPath, 'utf8'));
+  } catch (err) {
+    log(`strategy.json reload failed (${err.message}) — keeping current settings`, 'WARN');
+    return;
+  }
+
+  const num = (v, d) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d);
+  const st = cfg.settings;
+  st.stopLossPct = num(s.stopLossPct, st.stopLossPct);
+  st.takeProfitPct = num(s.takeProfitPct, st.takeProfitPct);
+  st.useStopLoss = s.useStopLoss !== false;
+  if (s.allowShort !== undefined) st.allowShort = Boolean(s.allowShort);
+  st.rsiPeriod = num(s.rsiPeriod, st.rsiPeriod);
+  st.rsiOversold = num(s.rsiOversold, st.rsiOversold);
+  st.rsiOverbought = num(s.rsiOverbought, st.rsiOverbought);
+  if ('entryRules' in s) st.entryRules = s.entryRules ?? null;
+  if ('exitRules' in s) st.exitRules = s.exitRules ?? null;
+  st.strategySlots = Array.isArray(s.strategySlots) && s.strategySlots.length
+    ? s.strategySlots
+    : undefined;
+  cfg.riskPerTradePct = num(s.riskPerTradePct, cfg.riskPerTradePct);
+  cfg.maxAccountLossPct = num(s.maxAccountLossPct, cfg.maxAccountLossPct);
+
+  const slLabel = st.useStopLoss === false ? '없음' : `-${st.stopLossPct}%`;
+  log(`strategy.json reloaded — SL ${slLabel} · TP +${st.takeProfitPct}% · allowShort ${st.allowShort}`);
+  if ((s.symbol && s.symbol.toUpperCase() !== cfg.symbol) || (s.interval && s.interval !== cfg.interval)) {
+    log(`symbol/interval change (${s.symbol}/${s.interval}) requires a bot restart — still trading ${cfg.symbol}/${cfg.interval}`, 'WARN');
+  }
+}
+
 function intervalSeconds(iv) {
   const m = /^(\d+)([mhdw])$/.exec(String(iv || ''));
   if (!m) return 60;
@@ -252,6 +304,7 @@ async function closePosition(price, reason) {
 
 // ---- Main tick ----------------------------------------------------------
 async function tick() {
+  maybeReloadStrategy();
   const raw = await client.getKlines(200);
   const candles = toCandles(raw);
   if (candles.length < 2) return;
