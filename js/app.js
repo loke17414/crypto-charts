@@ -40,6 +40,8 @@ let ws = null;
 let miniTickerWs = null;
 let binanceSymbolMap = null;
 let candleRolloverTimer = null;
+let catchUpInFlight = false;
+let visibilityCatchUpBound = false;
 const LIVE_INDICATOR_MS = 16;
 let lastLiveIndicatorAt = 0;
 let liveIndicatorTimer = null;
@@ -222,6 +224,136 @@ function fillCandleGaps(candles, intervalSeconds) {
     result.push(curr);
   }
   return result;
+}
+
+/** Insert flat bridge bars so live updates never jump over missing intervals. */
+function ensureContinuousUpTo(targetTime) {
+  if (!candleSeries || !state.lastCandles.length) return;
+  const intervalSec = getIntervalSeconds();
+  if (!intervalSec || !Number.isFinite(targetTime)) return;
+
+  let last = state.lastCandles[state.lastCandles.length - 1];
+  if (!last || last.time >= targetTime) return;
+  if (targetTime - last.time <= intervalSec) return;
+
+  const missingCount = Math.floor((targetTime - last.time) / intervalSec) - 1;
+  if (missingCount <= 0) return;
+
+  // Large holes: rebuild series once (tab sleep / reconnect) instead of N updates.
+  if (missingCount > 8) {
+    const bridges = [];
+    let t = last.time + intervalSec;
+    let close = last.close;
+    while (t < targetTime) {
+      bridges.push({
+        time: t,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: 0,
+      });
+      t += intervalSec;
+    }
+    state.lastCandles = fillCandleGaps(
+      [...state.lastCandles, ...bridges],
+      intervalSec,
+    );
+    const candleData = state.lastCandles.map(({ time, open, high, low, close: c }) => (
+      { time, open, high, low, close: c }
+    ));
+    const lineData = state.lastCandles.map(({ time, close: c }) => ({ time, value: c }));
+    const volData = state.lastCandles.map(({ time, open, close: c, volume }) => ({
+      time,
+      value: volume,
+      color: c >= open ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
+    }));
+    candleSeries.setData(candleData);
+    lineSeries?.setData(lineData);
+    volumeSeries?.setData(volData);
+    if (typeof IndicatorManager !== 'undefined') IndicatorManager.update(state.lastCandles);
+    return;
+  }
+
+  while (last.time + intervalSec < targetTime) {
+    const bridgeTime = last.time + intervalSec;
+    const bridge = createNewFormingCandle(bridgeTime, last.close);
+    state.lastCandles.push(bridge);
+    renderCandleImmediate(bridge, { newBar: true });
+    last = bridge;
+  }
+}
+
+async function catchUpRecentCandles() {
+  if (!state.binanceSymbol || !candleSeries || catchUpInFlight) return;
+  if (!state.lastCandles.length) return;
+
+  catchUpInFlight = true;
+  try {
+    const recent = await fetchKlines(state.binanceSymbol, state.interval, 120);
+    if (!recent?.length) return;
+    if (state.binanceSymbol == null) return;
+
+    const lastLocal = state.lastCandles[state.lastCandles.length - 1];
+    const lastRemote = recent[recent.length - 1];
+    if (!lastRemote) return;
+
+    // Keep a live forming bar that is ahead of REST (REST last bar may still be open).
+    let merged = window.KlineLoader
+      ? KlineLoader.mergeCandles(state.lastCandles, recent)
+      : (() => {
+        const byTime = new Map();
+        [...recent, ...state.lastCandles].forEach((c) => byTime.set(c.time, c));
+        return [...byTime.values()].sort((a, b) => a.time - b.time);
+      })();
+
+    if (
+      lastLocal
+      && lastLocal.time > lastRemote.time
+      && state.lastTickPrice != null
+    ) {
+      const idx = merged.findIndex((c) => c.time === lastLocal.time);
+      const liveBar = {
+        ...lastLocal,
+        close: state.lastTickPrice,
+        high: Math.max(lastLocal.high, state.lastTickPrice),
+        low: Math.min(lastLocal.low, state.lastTickPrice),
+      };
+      if (idx >= 0) merged[idx] = liveBar;
+      else merged.push(liveBar);
+      merged.sort((a, b) => a.time - b.time);
+    } else if (
+      lastLocal
+      && lastLocal.time === lastRemote.time
+      && state.lastTickPrice != null
+      && state.lastTickTime > lastRemote.time * 1000
+    ) {
+      const idx = merged.length - 1;
+      merged[idx] = {
+        ...merged[idx],
+        close: state.lastTickPrice,
+        high: Math.max(merged[idx].high, state.lastTickPrice, lastLocal.high),
+        low: Math.min(merged[idx].low, state.lastTickPrice, lastLocal.low),
+        volume: Math.max(merged[idx].volume, lastLocal.volume),
+      };
+    }
+
+    applyCandleData(merged, false);
+  } catch (err) {
+    console.warn('Candle catch-up failed:', err);
+  } finally {
+    catchUpInFlight = false;
+  }
+}
+
+function bindVisibilityCatchUp() {
+  if (visibilityCatchUpBound) return;
+  visibilityCatchUpBound = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.binanceSymbol) {
+      catchUpRecentCandles();
+    }
+  });
 }
 
 function waitForContainer(container) {
@@ -802,7 +934,13 @@ function createNewFormingCandle(time, openPrice) {
 }
 
 function startNewCandlePeriod(candleTime, openPrice) {
-  const newCandle = createNewFormingCandle(candleTime, openPrice);
+  ensureContinuousUpTo(candleTime);
+  const last = state.lastCandles[state.lastCandles.length - 1];
+  if (last && last.time === candleTime) {
+    state.formingCandleTime = candleTime;
+    return last;
+  }
+  const newCandle = createNewFormingCandle(candleTime, openPrice ?? last?.close ?? 0);
   state.lastCandles.push(newCandle);
   state.formingCandleTime = candleTime;
   renderFormingCandle(newCandle, { newBar: true });
@@ -855,13 +993,43 @@ function mergeKlineIntoFormingCandle(klineCandle, isClosed) {
   const last = state.lastCandles[lastIdx];
 
   if (!last || last.time < klineCandle.time) {
+    ensureContinuousUpTo(klineCandle.time);
+    const afterGap = state.lastCandles[state.lastCandles.length - 1];
+    if (afterGap && afterGap.time === klineCandle.time) {
+      state.lastCandles[state.lastCandles.length - 1] = { ...klineCandle };
+      state.formingCandleTime = isClosed ? null : klineCandle.time;
+      renderFormingCandle(klineCandle, { newBar: true });
+      return;
+    }
     state.lastCandles.push({ ...klineCandle });
-    state.formingCandleTime = klineCandle.time;
+    state.formingCandleTime = isClosed ? null : klineCandle.time;
     renderFormingCandle(klineCandle, { newBar: true });
     return;
   }
 
-  if (last.time > klineCandle.time) return;
+  if (last.time > klineCandle.time) {
+    // Rollover already advanced past this closed bar — patch it in place.
+    const idx = state.lastCandles.findIndex((c) => c.time === klineCandle.time);
+    if (idx < 0) return;
+    state.lastCandles[idx] = { ...klineCandle };
+    if (idx === state.lastCandles.length - 1) {
+      renderFormingCandle(klineCandle, { newBar: isClosed });
+      if (isClosed) state.formingCandleTime = null;
+    } else {
+      // Mid-series OHLC fix requires setData for Lightweight Charts.
+      const candleData = state.lastCandles.map(({ time, open, high, low, close }) => (
+        { time, open, high, low, close }
+      ));
+      candleSeries.setData(candleData);
+      lineSeries?.setData(state.lastCandles.map(({ time, close }) => ({ time, value: close })));
+      volumeSeries?.setData(state.lastCandles.map(({ time, open, close, volume }) => ({
+        time,
+        value: volume,
+        color: close >= open ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
+      })));
+    }
+    return;
+  }
 
   if (isClosed) {
     state.lastCandles[lastIdx] = { ...klineCandle };
@@ -973,11 +1141,17 @@ function flushLiveTick() {
   let newBar = false;
 
   if (!last || last.time < candleTime) {
-    const openPrice = last ? last.close : tick.price;
-    last = createNewFormingCandle(candleTime, openPrice);
-    state.lastCandles.push(last);
+    ensureContinuousUpTo(candleTime);
+    last = state.lastCandles[state.lastCandles.length - 1];
+    if (!last || last.time < candleTime) {
+      const openPrice = last ? last.close : tick.price;
+      last = createNewFormingCandle(candleTime, openPrice);
+      state.lastCandles.push(last);
+      newBar = true;
+    } else if (last.time === candleTime) {
+      newBar = false;
+    }
     state.formingCandleTime = candleTime;
-    newBar = true;
   } else if (last.time !== candleTime) {
     return;
   }
@@ -1056,6 +1230,7 @@ function connectWebSocket(symbol, interval) {
   ws.onopen = () => {
     $('#liveIndicator').classList.remove('hidden');
     startCandleRolloverCheck();
+    catchUpRecentCandles();
   };
 
   ws.onmessage = (event) => {
@@ -1069,8 +1244,10 @@ function connectWebSocket(symbol, interval) {
     } else if (stream.endsWith('@bookTicker')) {
       const bid = parseFloat(data.b);
       const ask = parseFloat(data.a);
-      if (bid > 0 && ask > 0) {
-        updateFormingCandle((bid + ask) / 2, 0, Date.now());
+      const last = state.lastCandles[state.lastCandles.length - 1];
+      if (bid > 0 && ask > 0 && last) {
+        // Never open a new period from bookTicker — trades/kline own the clock.
+        updateFormingCandle((bid + ask) / 2, 0, last.time * 1000 + 1);
       }
     }
 
@@ -1382,6 +1559,7 @@ async function initTradingChart() {
 }
 
 async function init() {
+  bindVisibilityCatchUp();
   if (isTradingPage) {
     await initTradingChart();
     return;
