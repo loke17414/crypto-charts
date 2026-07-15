@@ -700,19 +700,26 @@ def interpret_strategy(
     if not isinstance(patch, dict):
         patch = {}
 
-    # Question/research mode (empty patch + web research) must not fall back to
-    # the Bollinger template — the user asked a question, not for an edit.
-    if patch or not web_research:
-        patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+    changed_fields = raw.get("changed_fields")
+    if not isinstance(changed_fields, list):
+        changed_fields = list(patch.keys())
+    # GPT가 changed_fields만 채우고 settings를 비우면(이해 못함/질문 모드)
+    # 실제 변경 없이 프론트가 설정·백테스트를 건드리지 않게 한다.
+    changed_fields = [f for f in changed_fields if isinstance(f, str) and f in patch]
 
-    merged = current.merged(patch)
+    # 질문·조사 모드(빈 patch)에는 BB 템플릿을 주입하지 않는다 — 키워드만
+    # 맞는 일반 질문에 전략이 바뀌어 백테스트가 깨지는 문제를 막는다.
+    if patch:
+        patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+        merged = current.merged(patch)
+        changed_fields = [f for f in changed_fields if f in patch]
+    else:
+        merged = current
+
     summary = str(raw.get("summary") or "전략 설정을 업데이트했습니다.").strip()
     rules = str(raw.get("rules") or merged.rules_text()).strip()
     market_insight = str(raw.get("market_insight") or "").strip()
     backtest_insight = str(raw.get("backtest_insight") or "").strip()
-    changed_fields = raw.get("changed_fields")
-    if not isinstance(changed_fields, list):
-        changed_fields = list(patch.keys())
 
     sources = raw.get("sources")
     if not isinstance(sources, list):

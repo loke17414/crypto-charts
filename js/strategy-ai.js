@@ -254,15 +254,19 @@ const StrategyAI = (() => {
       });
 
       const changedFields = result.changed_fields || result.changedFields || [];
+      const patch = result.patch && typeof result.patch === 'object' ? result.patch : null;
+      const patchKeys = patch ? Object.keys(patch) : [];
 
       // Question/research mode returns an answer without touching settings —
       // applying would needlessly recompute the backtest and spam logs.
-      if (changedFields.length) {
+      // patch가 비어 있으면 changed_fields만 있어도 적용하지 않는다.
+      if (patchKeys.length) {
         FuturesBotApp.applyStrategySettings(result.settings, {
           rulesHtml: result.rules,
           summary: result.summary,
           changedFields,
           targetSlotId,
+          patch,
         });
       }
 

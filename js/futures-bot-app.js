@@ -607,48 +607,74 @@ const FuturesBotApp = (() => {
     }
   }
 
+  function entryRulesHaveSignals(rules) {
+    if (!rules || !window.StrategyEngine?.sanitizeEntryRules) return false;
+    const s = StrategyEngine.sanitizeEntryRules(rules);
+    return (s.long.enabled && s.long.conditions.length > 0)
+      || (s.short.enabled && s.short.conditions.length > 0);
+  }
+
   function applyStrategySettings(settings, {
-    rulesHtml = null, summary = null, changedFields = [], targetSlotId = null,
+    rulesHtml = null, summary = null, changedFields = [], targetSlotId = null, patch = null,
   } = {}) {
     if (!settings) return;
+
+    const patchObj = patch && typeof patch === 'object' ? patch : null;
+    const patchKeys = patchObj ? Object.keys(patchObj) : [];
+    const changed = new Set(Array.isArray(changedFields) ? changedFields : []);
+    const touches = (key) => changed.has(key)
+      || (patchObj && Object.prototype.hasOwnProperty.call(patchObj, key));
+
+    // GPT가 changed_fields만 채우고 실제 patch가 비어 있으면(이해 못함·질문)
+    // 설정·백테스트 캐시를 건드리지 않는다.
+    if (!patchKeys.length) {
+      if (changed.size > 0) {
+        addLog('AI 응답에 실제 변경 내용이 없어 기존 설정과 백테스트를 유지합니다.', 'info');
+      }
+      return;
+    }
 
     readFormSettings();
     const prevSettings = getSettings();
 
-    setFieldValue('rsiPeriod', settings.rsiPeriod);
-    setFieldValue('rsiOversold', settings.rsiOversold);
-    setFieldValue('rsiOverbought', settings.rsiOverbought);
-    setFieldValue('stopLoss', settings.stopLossPct);
-    setFieldValue('takeProfit', settings.takeProfitPct);
-    // GPT의 SL/TP는 %값이다. 손익($)/가격($) 모드에서는 % 필드가 무시되므로
-    // %비율 모드로 전환해야 적용한 값이 실제 진입에 반영된다.
-    const slTpChanged = (settings.stopLossPct != null && settings.stopLossPct !== prevSettings.stopLossPct)
-      || (settings.takeProfitPct != null && settings.takeProfitPct !== prevSettings.takeProfitPct);
+    if (touches('rsiPeriod')) setFieldValue('rsiPeriod', settings.rsiPeriod);
+    if (touches('rsiOversold')) setFieldValue('rsiOversold', settings.rsiOversold);
+    if (touches('rsiOverbought')) setFieldValue('rsiOverbought', settings.rsiOverbought);
+    if (touches('stopLossPct')) setFieldValue('stopLoss', settings.stopLossPct);
+    if (touches('takeProfitPct')) setFieldValue('takeProfit', settings.takeProfitPct);
+    const slTpChanged = touches('stopLossPct') || touches('takeProfitPct');
     if (slTpChanged && state.slTpMode !== 'pct') {
       setSlTpMode('pct');
       addLog('AI가 SL/TP를 %기준으로 설정 — SL/TP 입력 방식을 % 비율로 전환했습니다.', 'info');
     }
-    setFieldValue('leverage', settings.leverage);
-    setFieldValue('riskPerTrade', settings.riskPerTradePct);
-    setFieldValue('maxAccountLoss', settings.maxAccountLossPct);
-    setFieldValue('pollSeconds', settings.pollSeconds);
-    setFieldValue('allowShort', settings.allowShort);
+    if (touches('leverage')) setFieldValue('leverage', settings.leverage);
+    if (touches('riskPerTradePct')) setFieldValue('riskPerTrade', settings.riskPerTradePct);
+    if (touches('maxAccountLossPct')) setFieldValue('maxAccountLoss', settings.maxAccountLossPct);
+    if (touches('pollSeconds')) setFieldValue('pollSeconds', settings.pollSeconds);
+    if (touches('allowShort')) setFieldValue('allowShort', settings.allowShort);
 
     readFormSettings();
-    if (settings.allowShort === false) {
-      state.allowShort = false;
-    } else if (settings.allowShort === true) {
-      state.allowShort = true;
+    if (touches('allowShort')) {
+      if (settings.allowShort === false) state.allowShort = false;
+      else if (settings.allowShort === true) state.allowShort = true;
     }
 
-    const hasNewEntryRules = Object.prototype.hasOwnProperty.call(settings, 'entryRules');
-    const hasNewExitRules = Object.prototype.hasOwnProperty.call(settings, 'exitRules');
-    if (hasNewEntryRules) {
-      state.entryRules = settings.entryRules
+    let entryRulesRejected = false;
+    if (touches('entryRules')) {
+      const prevHadSignals = entryRulesHaveSignals(prevSettings.entryRules)
+        || (state.strategySlots || []).some((slot) => slot.enabled !== false
+          && entryRulesHaveSignals(slot.entryRules));
+      const nextRules = settings.entryRules
         ? StrategyEngine.sanitizeEntryRules(settings.entryRules)
         : null;
+      if (settings.entryRules && !entryRulesHaveSignals(nextRules) && prevHadSignals) {
+        entryRulesRejected = true;
+        addLog('AI가 보낸 진입 조건이 비어 있거나 잘못되어 기존 조건을 유지합니다.', 'warn');
+      } else {
+        state.entryRules = nextRules;
+      }
     }
-    if (hasNewExitRules) {
+    if (touches('exitRules')) {
       state.exitRules = settings.exitRules
         ? (StrategyEngine.sanitizeExitRules
           ? StrategyEngine.sanitizeExitRules(settings.exitRules)
@@ -662,8 +688,7 @@ const FuturesBotApp = (() => {
     }
     saveStrategyStorage(state.entryRules, state.exitRules);
 
-    // GPT가 만든 entryRules는 선택된 진입 조건 슬롯에 저장된다.
-    if (hasNewEntryRules && settings.entryRules) {
+    if (touches('entryRules') && settings.entryRules && !entryRulesRejected) {
       let slot = targetSlotId && targetSlotId !== '__new__'
         ? state.strategySlots.find((s) => s.id === targetSlotId)
         : null;
@@ -673,7 +698,7 @@ const FuturesBotApp = (() => {
       if (!slot) slot = addStrategySlot();
       if (slot) {
         slot.entryRules = state.entryRules;
-        if (hasNewExitRules) slot.exitRules = state.exitRules;
+        if (touches('exitRules')) slot.exitRules = state.exitRules;
         slot.enabled = true;
         addLog(`진입 조건 [${slot.name}]에 전략이 저장되었습니다.`, 'info');
       }
@@ -686,8 +711,6 @@ const FuturesBotApp = (() => {
     const nextSettings = getSettings();
     const strategyChanged = getBacktestCacheKey(nextSettings) !== getBacktestCacheKey(prevSettings);
 
-    backtestHistoryCache = null;
-
     updateStrategyRulesDisplay(settings, rulesHtml);
     updateChartIndicatorButtons();
 
@@ -695,20 +718,20 @@ const FuturesBotApp = (() => {
       invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
       clearTimeout(backtestDebounce);
       applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
-    } else {
-      scheduleBacktest(lastCandles);
     }
+    // strategyChanged가 false면 backtestHistoryCache·진행 중 로드를 유지한다.
+    // 예전에는 GPT가 SL/TP만 바꿔도(또는 이해 못하고 patch 없이
+    // changed_fields만 보내도) 캐시를 지워 100회 로딩이 처음부터 다시 시작됐다.
+
     updateSignalDisplay();
     updateUI();
 
     const note = summary || 'AI가 전략 설정을 적용했습니다.';
-    const changed = Array.isArray(changedFields) && changedFields.length
+    const changedLabel = Array.isArray(changedFields) && changedFields.length
       ? ` · 변경: ${changedFields.join(', ')}`
       : '';
-    addLog(`${note}${changed}`, 'info');
+    addLog(`${note}${changedLabel}`, 'info');
 
-    // 새 SL/TP로 다음 진입 레벨이 달라졌으니 미리보기·확인 상태를 갱신하고,
-    // 실행 중인 서버 봇에도 변경된 전략을 반영한다.
     if (slTpChanged && !hasOpenPosition()) {
       slTpPreviewTouchedAt = Date.now();
       resetSlTpConfirm();
