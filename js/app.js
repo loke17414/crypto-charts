@@ -464,17 +464,15 @@ function updateLiveOhlcDisplay(candle) {
   ].join('');
 }
 
-function freezePriceRangeForPan() {
-  if (state.manualPriceRange) return;
-  const captured = captureVisiblePriceRange();
-  if (captured) {
-    state.frozenPanPriceRange = { ...captured };
-  } else if (state.liveScaleRange) {
-    state.frozenPanPriceRange = { ...state.liveScaleRange };
-  } else {
-    const visible = getVisibleBarsPriceRange(0.06);
-    if (visible) state.frozenPanPriceRange = { ...visible };
-  }
+function activateBodyPan(priceDrag) {
+  if (!priceDrag || priceDrag.panActivated) return;
+  const range = priceDrag.originPriceRange || captureCurrentPriceRange();
+  if (!range) return;
+  priceDrag.originPriceRange = { ...range };
+  priceDrag.panActivated = true;
+  state.manualPriceRange = null;
+  state.liveScaleRange = null;
+  state.frozenPanPriceRange = { ...range };
   nudgePriceScaleAutoscale();
 }
 
@@ -551,7 +549,45 @@ function getVisibleCandlesPriceRange() {
 }
 
 const CHART_TIME_PAN_SENSITIVITY = 1;
+const CHART_PRICE_PAN_SENSITIVITY = 1;
 const PRICE_AXIS_SCALE_SENSITIVITY = 1.25;
+
+function captureCurrentPriceRange() {
+  if (state.manualPriceRange) return { ...state.manualPriceRange };
+  const captured = captureVisiblePriceRange();
+  if (captured) return captured;
+  if (state.liveScaleRange) return { ...state.liveScaleRange };
+  return getVisibleBarsPriceRange(0.06);
+}
+
+function applyBodyPricePan(baseRange, startY, currentY) {
+  if (!baseRange) return;
+  const chartHeight = getMainPaneHeight();
+  const span = baseRange.max - baseRange.min;
+  const shift = ((currentY - startY) / chartHeight) * span * CHART_PRICE_PAN_SENSITIVITY;
+
+  state.frozenPanPriceRange = {
+    min: baseRange.min + shift,
+    max: baseRange.max + shift,
+  };
+
+  const last = state.lastCandles.at(-1);
+  if (!last || !candleSeries) return;
+  candleSeries.update({
+    time: last.time,
+    open: last.open,
+    high: last.high,
+    low: last.low,
+    close: last.close,
+  });
+  lineSeries?.update({ time: last.time, value: last.close });
+}
+
+function commitBodyPanPriceRange() {
+  if (!state.frozenPanPriceRange) return;
+  state.manualPriceRange = { ...state.frozenPanPriceRange };
+  state.liveScaleRange = null;
+}
 
 function applyPriceAxisAdjust(startY, currentY, baseRange) {
   const height = getMainPaneHeight();
@@ -797,11 +833,13 @@ function setupChartPanning() {
     }
 
     const timeRange = chart.timeScale().getVisibleLogicalRange();
-    freezePriceRangeForPan();
+    const originPriceRange = captureCurrentPriceRange();
     priceDrag = {
       anchorX: clientX,
       anchorY: clientY,
       originTimeRange: timeRange ? { from: timeRange.from, to: timeRange.to } : null,
+      originPriceRange: originPriceRange ? { ...originPriceRange } : null,
+      panActivated: false,
       active: false,
     };
     container.classList.add('chart-area--dragging');
@@ -823,15 +861,21 @@ function setupChartPanning() {
     if (!priceDrag.active) {
       if (Math.hypot(dx, dy) < 3) return;
       priceDrag.active = true;
+      activateBodyPan(priceDrag);
     }
 
     if (priceDrag.originTimeRange) {
       applyTimePan(priceDrag.anchorX, clientX, priceDrag.originTimeRange);
     }
+    if (priceDrag.originPriceRange) {
+      applyBodyPricePan(priceDrag.originPriceRange, priceDrag.anchorY, clientY);
+    }
   };
 
   const finishBodyDrag = () => {
     if (!priceDrag?.active) return;
+
+    commitBodyPanPriceRange();
 
     const range = chart?.timeScale().getVisibleLogicalRange();
     if (range) {
@@ -841,8 +885,6 @@ function setupChartPanning() {
         scheduleLoadMoreCandles();
       }
     }
-
-    if (!state.manualPriceRange) scheduleVisibleAutoscale();
   };
 
   const cancelBodyDrag = () => {};
@@ -897,7 +939,6 @@ function setupChartPanning() {
     container.classList.remove('chart-area--dragging');
     clearFrozenPanPriceRange();
     if (wasClickOnly) syncManualPriceFromAxisIfNeeded();
-    else if (!state.manualPriceRange) scheduleVisibleAutoscale();
     scheduleLiveIndicatorUpdate();
   };
 
