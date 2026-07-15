@@ -226,119 +226,87 @@ function fillCandleGaps(candles, intervalSeconds) {
   return result;
 }
 
-/** Insert flat bridge bars so live updates never jump over missing intervals. */
-function ensureContinuousUpTo(targetTime) {
-  if (!candleSeries || !state.lastCandles.length) return;
-  const intervalSec = getIntervalSeconds();
-  if (!intervalSec || !Number.isFinite(targetTime)) return;
-
-  let last = state.lastCandles[state.lastCandles.length - 1];
-  if (!last || last.time >= targetTime) return;
-  if (targetTime - last.time <= intervalSec) return;
-
-  const missingCount = Math.floor((targetTime - last.time) / intervalSec) - 1;
-  if (missingCount <= 0) return;
-
-  // Large holes: rebuild series once (tab sleep / reconnect) instead of N updates.
-  if (missingCount > 8) {
-    const bridges = [];
-    let t = last.time + intervalSec;
-    let close = last.close;
-    while (t < targetTime) {
-      bridges.push({
-        time: t,
-        open: close,
-        high: close,
-        low: close,
-        close,
-        volume: 0,
-      });
-      t += intervalSec;
-    }
-    state.lastCandles = fillCandleGaps(
-      [...state.lastCandles, ...bridges],
-      intervalSec,
-    );
-    const candleData = state.lastCandles.map(({ time, open, high, low, close: c }) => (
-      { time, open, high, low, close: c }
-    ));
-    const lineData = state.lastCandles.map(({ time, close: c }) => ({ time, value: c }));
-    const volData = state.lastCandles.map(({ time, open, close: c, volume }) => ({
-      time,
-      value: volume,
-      color: c >= open ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
+/** Fetch latest klines bypassing cache (required after reconnect / tab wake). */
+async function fetchRecentKlinesUncached(symbol, interval, limit = 200) {
+  const url = `${binanceRestBase()}/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(limit, 1000)}`;
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`klines ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data)) throw new Error('Invalid klines response');
+  return window.KlineLoader
+    ? KlineLoader.mapKlines(data)
+    : data.map((k) => ({
+      time: Math.floor(k[0] / 1000),
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+      volume: parseFloat(k[5]),
     }));
-    candleSeries.setData(candleData);
-    lineSeries?.setData(lineData);
-    volumeSeries?.setData(volData);
-    if (typeof IndicatorManager !== 'undefined') IndicatorManager.update(state.lastCandles);
-    return;
-  }
+}
 
-  while (last.time + intervalSec < targetTime) {
-    const bridgeTime = last.time + intervalSec;
-    const bridge = createNewFormingCandle(bridgeTime, last.close);
-    state.lastCandles.push(bridge);
-    renderCandleImmediate(bridge, { newBar: true });
-    last = bridge;
-  }
+/**
+ * Binance-style live candles:
+ * - @kline is the source of truth for OHLCV
+ * - @trade only refines the current forming bar (or opens the next adjacent bar)
+ * - Never invent flat bridge bars; on holes, REST catch-up
+ * - bookTicker / miniTicker must NOT write candle OHLC
+ */
+function replaceCandleSeriesData(candles) {
+  if (!candleSeries || !candles.length) return;
+  const intervalSec = getIntervalSeconds();
+  const filled = fillCandleGaps(candles, intervalSec);
+  state.lastCandles = filled;
+  candleSeries.setData(filled.map(({ time, open, high, low, close }) => (
+    { time, open, high, low, close }
+  )));
+  lineSeries?.setData(filled.map(({ time, close }) => ({ time, value: close })));
+  volumeSeries?.setData(filled.map(({ time, open, close, volume }) => ({
+    time,
+    value: volume,
+    color: close >= open ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
+  })));
+  state.formingCandleTime = filled[filled.length - 1]?.time ?? null;
+  if (typeof IndicatorManager !== 'undefined') IndicatorManager.update(filled);
+  const last = filled[filled.length - 1];
+  if (last) updateLiveOhlcDisplay(last);
 }
 
 async function catchUpRecentCandles() {
   if (!state.binanceSymbol || !candleSeries || catchUpInFlight) return;
-  if (!state.lastCandles.length) return;
-
   catchUpInFlight = true;
   try {
-    const recent = await fetchKlines(state.binanceSymbol, state.interval, 120);
-    if (!recent?.length) return;
-    if (state.binanceSymbol == null) return;
+    const recent = await fetchRecentKlinesUncached(state.binanceSymbol, state.interval, 300);
+    if (!recent?.length || !state.binanceSymbol) return;
 
-    const lastLocal = state.lastCandles[state.lastCandles.length - 1];
+    const byTime = new Map();
+    for (const c of state.lastCandles) byTime.set(c.time, c);
+    for (const c of recent) byTime.set(c.time, c);
+
     const lastRemote = recent[recent.length - 1];
-    if (!lastRemote) return;
-
-    // Keep a live forming bar that is ahead of REST (REST last bar may still be open).
-    let merged = window.KlineLoader
-      ? KlineLoader.mergeCandles(state.lastCandles, recent)
-      : (() => {
-        const byTime = new Map();
-        [...recent, ...state.lastCandles].forEach((c) => byTime.set(c.time, c));
-        return [...byTime.values()].sort((a, b) => a.time - b.time);
-      })();
-
     if (
-      lastLocal
-      && lastLocal.time > lastRemote.time
-      && state.lastTickPrice != null
-    ) {
-      const idx = merged.findIndex((c) => c.time === lastLocal.time);
-      const liveBar = {
-        ...lastLocal,
-        close: state.lastTickPrice,
-        high: Math.max(lastLocal.high, state.lastTickPrice),
-        low: Math.min(lastLocal.low, state.lastTickPrice),
-      };
-      if (idx >= 0) merged[idx] = liveBar;
-      else merged.push(liveBar);
-      merged.sort((a, b) => a.time - b.time);
-    } else if (
-      lastLocal
-      && lastLocal.time === lastRemote.time
+      lastRemote
       && state.lastTickPrice != null
       && state.lastTickTime > lastRemote.time * 1000
+      && getCandleOpenTime(state.lastTickTime, getIntervalSeconds()) === lastRemote.time
     ) {
-      const idx = merged.length - 1;
-      merged[idx] = {
-        ...merged[idx],
+      const cur = byTime.get(lastRemote.time) || lastRemote;
+      byTime.set(lastRemote.time, {
+        ...cur,
         close: state.lastTickPrice,
-        high: Math.max(merged[idx].high, state.lastTickPrice, lastLocal.high),
-        low: Math.min(merged[idx].low, state.lastTickPrice, lastLocal.low),
-        volume: Math.max(merged[idx].volume, lastLocal.volume),
-      };
+        high: Math.max(cur.high, state.lastTickPrice),
+        low: Math.min(cur.low, state.lastTickPrice),
+      });
     }
 
-    applyCandleData(merged, false);
+    const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
+    replaceCandleSeriesData(merged);
+
+    if (state.isFollowingRealtime) {
+      state.programmaticScroll = true;
+      chart?.timeScale().scrollToRealTime();
+      state.programmaticScroll = false;
+    }
   } catch (err) {
     console.warn('Candle catch-up failed:', err);
   } finally {
@@ -354,6 +322,24 @@ function bindVisibilityCatchUp() {
       catchUpRecentCandles();
     }
   });
+}
+
+function scheduleCatchUp(reason) {
+  if (catchUpInFlight) return;
+  catchUpRecentCandles().catch(() => {});
+  if (reason) console.debug('candle catch-up:', reason);
+}
+
+function updateHeaderPrice(price) {
+  if (!state.binanceSymbol || !state.selectedCoin || !Number.isFinite(price)) return;
+  const headerPrice = document.querySelector('#currentPrice');
+  if (!headerPrice) return;
+  const prevHeader = parseFloat(headerPrice.dataset?.lastPrice || '0');
+  headerPrice.textContent = formatPrice(price);
+  headerPrice.dataset.lastPrice = String(price);
+  if (prevHeader && price !== prevHeader) {
+    flashPrice(headerPrice, price > prevHeader ? 'up' : 'down');
+  }
 }
 
 function waitForContainer(container) {
@@ -933,144 +919,150 @@ function createNewFormingCandle(time, openPrice) {
   };
 }
 
-function startNewCandlePeriod(candleTime, openPrice) {
-  ensureContinuousUpTo(candleTime);
-  const last = state.lastCandles[state.lastCandles.length - 1];
-  if (last && last.time === candleTime) {
-    state.formingCandleTime = candleTime;
-    return last;
+/** Apply an exchange kline bar (authoritative OHLCV). */
+function applyExchangeKline(candle, isClosed) {
+  if (!candleSeries || !candle) return;
+  const intervalSec = getIntervalSeconds();
+  const lastIdx = state.lastCandles.length - 1;
+  const last = state.lastCandles[lastIdx];
+
+  if (!last) {
+    state.lastCandles.push({ ...candle });
+    state.formingCandleTime = isClosed ? null : candle.time;
+    renderFormingCandle(candle, { newBar: true });
+    return;
   }
-  const newCandle = createNewFormingCandle(candleTime, openPrice ?? last?.close ?? 0);
-  state.lastCandles.push(newCandle);
-  state.formingCandleTime = candleTime;
-  renderFormingCandle(newCandle, { newBar: true });
-  return newCandle;
+
+  if (candle.time === last.time) {
+    let high = candle.high;
+    let low = candle.low;
+    let close = candle.close;
+    if (
+      !isClosed
+      && state.lastTickPrice != null
+      && state.lastTickTime > candle.time * 1000
+      && getCandleOpenTime(state.lastTickTime, intervalSec) === candle.time
+    ) {
+      high = Math.max(high, state.lastTickPrice);
+      low = Math.min(low, state.lastTickPrice);
+      close = state.lastTickPrice;
+    }
+    const updated = {
+      time: candle.time,
+      open: candle.open,
+      high,
+      low,
+      close: isClosed ? candle.close : close,
+      volume: candle.volume,
+    };
+    state.lastCandles[lastIdx] = updated;
+    state.formingCandleTime = isClosed ? null : candle.time;
+    renderFormingCandle(updated, { newBar: isClosed });
+    return;
+  }
+
+  if (candle.time === last.time + intervalSec) {
+    state.lastCandles.push({ ...candle });
+    state.formingCandleTime = isClosed ? null : candle.time;
+    renderFormingCandle(candle, { newBar: true });
+    return;
+  }
+
+  if (candle.time > last.time + intervalSec) {
+    scheduleCatchUp(`kline jump ${last.time} -> ${candle.time}`);
+    return;
+  }
+
+  const idx = state.lastCandles.findIndex((c) => c.time === candle.time);
+  if (idx < 0) {
+    scheduleCatchUp(`kline missing past ${candle.time}`);
+    return;
+  }
+  state.lastCandles[idx] = { ...candle };
+  if (idx === state.lastCandles.length - 1) {
+    state.formingCandleTime = isClosed ? null : candle.time;
+    renderFormingCandle(candle, { newBar: isClosed });
+  } else {
+    replaceCandleSeriesData(state.lastCandles);
+  }
 }
 
-function applyTickToFormingCandle(price, volumeDelta = 0, tradeTimeMs = Date.now()) {
+/**
+ * Apply a real trade. Only touches the current forming bar, or opens the
+ * immediate next bar (first trade = open). Never skips intervals.
+ */
+function applyTradeToCandles(price, volumeDelta, tradeTimeMs) {
   if (!candleSeries || !state.lastCandles.length) return;
+  if (!Number.isFinite(price) || price <= 0) return;
 
   state.lastTickPrice = price;
   state.lastTickTime = tradeTimeMs;
+  updateHeaderPrice(price);
 
   const intervalSec = getIntervalSeconds();
   const candleTime = getCandleOpenTime(tradeTimeMs, intervalSec);
   const lastIdx = state.lastCandles.length - 1;
-  let last = state.lastCandles[lastIdx];
-
-  if (!last || last.time < candleTime) {
-    const openPrice = last ? last.close : price;
-    const newCandle = startNewCandlePeriod(candleTime, openPrice);
-    if (price !== openPrice || volumeDelta > 0) {
-      newCandle.high = Math.max(newCandle.high, price);
-      newCandle.low = Math.min(newCandle.low, price);
-      newCandle.close = price;
-      newCandle.volume += volumeDelta;
-      state.lastCandles[state.lastCandles.length - 1] = newCandle;
-      renderFormingCandle(newCandle);
-    }
-    return newCandle;
-  }
-
-  if (last.time !== candleTime) return last;
-
-  const updated = {
-    ...last,
-    close: price,
-    high: Math.max(last.high, price),
-    low: Math.min(last.low, price),
-    volume: last.volume + volumeDelta,
-  };
-
-  state.lastCandles[lastIdx] = updated;
-  state.formingCandleTime = candleTime;
-  renderFormingCandle(updated);
-  return updated;
-}
-
-function mergeKlineIntoFormingCandle(klineCandle, isClosed) {
-  const lastIdx = state.lastCandles.length - 1;
   const last = state.lastCandles[lastIdx];
 
-  if (!last || last.time < klineCandle.time) {
-    ensureContinuousUpTo(klineCandle.time);
-    const afterGap = state.lastCandles[state.lastCandles.length - 1];
-    if (afterGap && afterGap.time === klineCandle.time) {
-      state.lastCandles[state.lastCandles.length - 1] = { ...klineCandle };
-      state.formingCandleTime = isClosed ? null : klineCandle.time;
-      renderFormingCandle(klineCandle, { newBar: true });
-      return;
-    }
-    state.lastCandles.push({ ...klineCandle });
-    state.formingCandleTime = isClosed ? null : klineCandle.time;
-    renderFormingCandle(klineCandle, { newBar: true });
-    return;
-  }
-
-  if (last.time > klineCandle.time) {
-    // Rollover already advanced past this closed bar — patch it in place.
-    const idx = state.lastCandles.findIndex((c) => c.time === klineCandle.time);
+  if (candleTime < last.time) {
+    const idx = state.lastCandles.findIndex((c) => c.time === candleTime);
     if (idx < 0) return;
-    state.lastCandles[idx] = { ...klineCandle };
-    if (idx === state.lastCandles.length - 1) {
-      renderFormingCandle(klineCandle, { newBar: isClosed });
-      if (isClosed) state.formingCandleTime = null;
-    } else {
-      // Mid-series OHLC fix requires setData for Lightweight Charts.
-      const candleData = state.lastCandles.map(({ time, open, high, low, close }) => (
-        { time, open, high, low, close }
-      ));
-      candleSeries.setData(candleData);
-      lineSeries?.setData(state.lastCandles.map(({ time, close }) => ({ time, value: close })));
-      volumeSeries?.setData(state.lastCandles.map(({ time, open, close, volume }) => ({
-        time,
-        value: volume,
-        color: close >= open ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
-      })));
-    }
+    const bar = state.lastCandles[idx];
+    const updated = {
+      ...bar,
+      high: Math.max(bar.high, price),
+      low: Math.min(bar.low, price),
+      close: idx === lastIdx ? price : bar.close,
+      volume: bar.volume + (volumeDelta || 0),
+    };
+    state.lastCandles[idx] = updated;
+    if (idx === lastIdx) renderFormingCandle(updated);
     return;
   }
 
-  if (isClosed) {
-    state.lastCandles[lastIdx] = { ...klineCandle };
-    renderFormingCandle(klineCandle, { newBar: true });
-    state.formingCandleTime = null;
+  if (candleTime === last.time) {
+    const updated = {
+      ...last,
+      close: price,
+      high: Math.max(last.high, price),
+      low: Math.min(last.low, price),
+      volume: last.volume + (volumeDelta || 0),
+    };
+    state.lastCandles[lastIdx] = updated;
+    state.formingCandleTime = candleTime;
+    renderFormingCandle(updated);
     return;
   }
 
-  const tickIsNewer = state.lastTickTime > klineCandle.time * 1000;
-  const liveClose = tickIsNewer && state.lastTickPrice != null
-    ? state.lastTickPrice
-    : klineCandle.close;
+  if (candleTime === last.time + intervalSec) {
+    const next = {
+      time: candleTime,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume: volumeDelta || 0,
+    };
+    state.lastCandles.push(next);
+    state.formingCandleTime = candleTime;
+    renderFormingCandle(next, { newBar: true });
+    return;
+  }
 
-  const merged = {
-    time: klineCandle.time,
-    open: klineCandle.open,
-    high: Math.max(last.high, klineCandle.high, liveClose),
-    low: Math.min(last.low, klineCandle.low, liveClose),
-    close: liveClose,
-    volume: Math.max(last.volume, klineCandle.volume),
-  };
-
-  state.lastCandles[lastIdx] = merged;
-  state.formingCandleTime = klineCandle.time;
-  renderFormingCandle(merged);
+  scheduleCatchUp(`trade jump ${last.time} -> ${candleTime}`);
 }
 
-function startCandleRolloverCheck() {
+function startCandleStaleWatch() {
   if (candleRolloverTimer) clearInterval(candleRolloverTimer);
-
   candleRolloverTimer = setInterval(() => {
-    if (!state.lastCandles.length) return;
-
+    if (!state.lastCandles.length || !state.binanceSymbol) return;
     const intervalSec = getIntervalSeconds();
-    const candleTime = getCandleOpenTime(Date.now(), intervalSec);
+    const expected = getCandleOpenTime(Date.now(), intervalSec);
     const last = state.lastCandles[state.lastCandles.length - 1];
-
-    if (last.time < candleTime) {
-      startNewCandlePeriod(candleTime, last.close);
+    if (expected - last.time > intervalSec) {
+      scheduleCatchUp('stale watch');
     }
-  }, 100);
+  }, 2000);
 }
 
 function stopCandleRolloverCheck() {
@@ -1094,16 +1086,22 @@ function renderCandle(candle) {
   renderFormingCandle(candle);
 }
 
-// Incoming ticks (trade / bookTicker / miniTicker) are coalesced and painted
-// on the next animation frame. This decouples the (bursty) network message rate
-// from rendering, so the price moves continuously and as finely as the display
-// refresh allows, without dropping fast sub-frame movements.
 function updateFormingCandle(price, volumeDelta = 0, tradeTimeMs = Date.now()) {
   queueLiveTick(price, volumeDelta, tradeTimeMs);
 }
 
 function queueLiveTick(price, volumeDelta = 0, tradeTimeMs = Date.now()) {
   if (!Number.isFinite(price) || price <= 0) return;
+
+  const intervalSec = getIntervalSeconds();
+  const candleTime = getCandleOpenTime(tradeTimeMs, intervalSec);
+
+  if (pendingTick) {
+    const pendingTime = getCandleOpenTime(pendingTick.timeMs, intervalSec);
+    if (pendingTime !== candleTime) {
+      flushLiveTick();
+    }
+  }
 
   if (pendingTick) {
     pendingTick.price = price;
@@ -1131,53 +1129,38 @@ function flushLiveTick() {
 
   if (!candleSeries || !state.lastCandles.length) return;
 
-  state.lastTickPrice = tick.price;
-  state.lastTickTime = tick.timeMs;
-
   const intervalSec = getIntervalSeconds();
   const candleTime = getCandleOpenTime(tick.timeMs, intervalSec);
-  const lastIdx = state.lastCandles.length - 1;
-  let last = state.lastCandles[lastIdx];
-  let newBar = false;
+  const last = state.lastCandles[state.lastCandles.length - 1];
 
-  if (!last || last.time < candleTime) {
-    ensureContinuousUpTo(candleTime);
-    last = state.lastCandles[state.lastCandles.length - 1];
-    if (!last || last.time < candleTime) {
-      const openPrice = last ? last.close : tick.price;
-      last = createNewFormingCandle(candleTime, openPrice);
-      state.lastCandles.push(last);
-      newBar = true;
-    } else if (last.time === candleTime) {
-      newBar = false;
-    }
+  if (last && candleTime === last.time) {
+    state.lastTickPrice = tick.price;
+    state.lastTickTime = tick.timeMs;
+    updateHeaderPrice(tick.price);
+    const updated = {
+      ...last,
+      close: tick.price,
+      high: Math.max(last.high, tick.hi, tick.price),
+      low: Math.min(last.low, tick.lo, tick.price),
+      volume: last.volume + tick.volumeDelta,
+    };
+    state.lastCandles[state.lastCandles.length - 1] = updated;
     state.formingCandleTime = candleTime;
-  } else if (last.time !== candleTime) {
+    renderFormingCandle(updated);
     return;
   }
 
-  const updated = {
-    ...last,
-    close: tick.price,
-    high: Math.max(last.high, tick.hi, tick.price),
-    low: Math.min(last.low, tick.lo, tick.price),
-    volume: last.volume + tick.volumeDelta,
-  };
-
-  state.lastCandles[state.lastCandles.length - 1] = updated;
-  state.formingCandleTime = candleTime;
-  renderFormingCandle(updated, { newBar });
-
-  if (state.binanceSymbol && state.selectedCoin) {
-    const headerPrice = $('#currentPrice');
-    const prevHeader = parseFloat(headerPrice?.dataset?.lastPrice || '0');
-    if (headerPrice) {
-      headerPrice.textContent = formatPrice(tick.price);
-      headerPrice.dataset.lastPrice = tick.price;
-      if (prevHeader && tick.price !== prevHeader) {
-        flashPrice(headerPrice, tick.price > prevHeader ? 'up' : 'down');
-      }
-    }
+  applyTradeToCandles(tick.price, tick.volumeDelta, tick.timeMs);
+  const after = state.lastCandles[state.lastCandles.length - 1];
+  if (after && after.time === candleTime && (tick.hi > after.high || tick.lo < after.low)) {
+    const updated = {
+      ...after,
+      high: Math.max(after.high, tick.hi),
+      low: Math.min(after.low, tick.lo),
+      close: tick.price,
+    };
+    state.lastCandles[state.lastCandles.length - 1] = updated;
+    renderFormingCandle(updated);
   }
 }
 
@@ -1199,13 +1182,8 @@ function handleKlineEvent(k) {
     volume: parseFloat(k.v),
   };
 
-  mergeKlineIntoFormingCandle(candle, k.x);
-
-  if (state.binanceSymbol && state.selectedCoin) {
-    const headerPrice = $('#currentPrice');
-    headerPrice.textContent = formatPrice(candle.close);
-    headerPrice.dataset.lastPrice = candle.close;
-  }
+  applyExchangeKline(candle, Boolean(k.x));
+  updateHeaderPrice(candle.close);
 }
 
 // ── WebSocket real-time ─────────────────────────────────────
@@ -1218,18 +1196,19 @@ function closeWebSocket() {
   }
   stopCandleRolloverCheck();
   stopLiveRenderLoop();
-  $('#liveIndicator').classList.add('hidden');
+  $('#liveIndicator')?.classList.add('hidden');
 }
 
 function connectWebSocket(symbol, interval) {
   closeWebSocket();
   const s = symbol.toLowerCase();
-  const streams = `${s}@kline_${interval}/${s}@trade/${s}@bookTicker`;
+  // kline = OHLC authority, trade = live wick/close. No bookTicker on candles.
+  const streams = `${s}@kline_${interval}/${s}@trade`;
   ws = new WebSocket(`${BINANCE_WS}/stream?streams=${streams}`);
 
   ws.onopen = () => {
-    $('#liveIndicator').classList.remove('hidden');
-    startCandleRolloverCheck();
+    $('#liveIndicator')?.classList.remove('hidden');
+    startCandleStaleWatch();
     catchUpRecentCandles();
   };
 
@@ -1237,25 +1216,21 @@ function connectWebSocket(symbol, interval) {
     const msg = JSON.parse(event.data);
     const { stream, data } = msg;
 
-    if (stream.endsWith('@kline')) {
+    if (stream.includes('@kline')) {
       handleKlineEvent(data.k);
-    } else if (stream.endsWith('@trade')) {
-      updateFormingCandle(parseFloat(data.p), parseFloat(data.q), data.T);
-    } else if (stream.endsWith('@bookTicker')) {
-      const bid = parseFloat(data.b);
-      const ask = parseFloat(data.a);
-      const last = state.lastCandles[state.lastCandles.length - 1];
-      if (bid > 0 && ask > 0 && last) {
-        // Never open a new period from bookTicker — trades/kline own the clock.
-        updateFormingCandle((bid + ask) / 2, 0, last.time * 1000 + 1);
-      }
+    } else if (stream.includes('@trade')) {
+      const price = parseFloat(data.p);
+      const qty = parseFloat(data.q);
+      const timeMs = data.T || data.E || Date.now();
+      updateFormingCandle(price, qty, timeMs);
     }
 
-    $('#lastUpdated') && ($('#lastUpdated').textContent = '실시간 · ' + new Date().toLocaleTimeString('ko-KR'));
+    const el = $('#lastUpdated');
+    if (el) el.textContent = '실시간 · ' + new Date().toLocaleTimeString('ko-KR');
   };
 
   ws.onclose = () => {
-    $('#liveIndicator').classList.add('hidden');
+    $('#liveIndicator')?.classList.add('hidden');
     if (state.binanceSymbol === symbol && state.interval === interval) {
       setTimeout(() => {
         if (state.binanceSymbol === symbol && state.interval === interval) {
@@ -1289,9 +1264,7 @@ function connectMiniTickerStream() {
       const changePct = open ? ((price - open) / open) * 100 : 0;
       updateLivePrice(t.s, price, changePct);
 
-      if (state.binanceSymbol === t.s) {
-        updateFormingCandle(price, 0, t.E || Date.now());
-      }
+      if (state.binanceSymbol === t.s) { updateHeaderPrice(price); }
     }
   };
 
