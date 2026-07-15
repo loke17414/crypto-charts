@@ -924,6 +924,7 @@ const FuturesBotApp = (() => {
     window.CryptoCharts?.setPositionOverlay?.({
       side,
       entryPrice,
+      showEntry: chartShowEntry(),
       stopPrice: chartStopPrice(levels.stopPrice),
       takeProfitPrice: levels.takeProfitPrice,
     });
@@ -1000,6 +1001,10 @@ const FuturesBotApp = (() => {
 
   function chartStopPrice(stopPrice) {
     return state.useStopLoss === false ? null : stopPrice;
+  }
+
+  function chartShowEntry() {
+    return state.useStopLoss !== false;
   }
 
   function readManualSlTpPrices() {
@@ -1184,6 +1189,7 @@ const FuturesBotApp = (() => {
       setFn({
         side,
         entryPrice,
+        showEntry: chartShowEntry(),
         stopPrice,
         takeProfitPrice,
         entryTime: getPositionEntryTimeSec(),

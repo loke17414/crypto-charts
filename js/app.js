@@ -104,7 +104,7 @@ function onSlTpDragMove(e) {
   else if (role === 'tp') positionOverlayPending.takeProfitPrice = price;
 
   positionAutoscalePrices = [
-    positionOverlayPending.entryPrice,
+    positionOverlayPending.showEntry !== false ? positionOverlayPending.entryPrice : null,
     positionOverlayPending.stopPrice,
     positionOverlayPending.takeProfitPrice,
   ].filter(Number.isFinite);
@@ -2102,7 +2102,7 @@ function updatePositionOverlayLabels() {
     return;
   }
 
-  const { side, entryPrice, stopPrice, takeProfitPrice } = positionOverlayPending;
+  const { side, entryPrice, stopPrice, takeProfitPrice, showEntry = true } = positionOverlayPending;
   const ts = chart.timeScale();
   const chartWidth = ts.width() || $('#chartArea')?.clientWidth || 0;
   const paneHeight = chart.paneSize(0)?.height || $('#chartArea')?.clientHeight || 0;
@@ -2145,11 +2145,12 @@ function updatePositionOverlayLabels() {
   }
   if (entryEl) {
     entryEl.classList.toggle('pos-projection-label--short', !buy);
-    entryEl.textContent = Number.isFinite(entryPrice)
+    const displayEntry = showEntry !== false && Number.isFinite(entryPrice);
+    entryEl.textContent = displayEntry
       ? `${buy ? '롱' : '숏'} ${formatPrice(entryPrice)}${rr != null ? ` · R:R ${rr.toFixed(2)}` : ''}`
       : '';
     const entryColor = buy ? '#2962ff' : '#f7931a';
-    layoutPositionLabelRow(entryEl, entryLine, entryPrice, entryColor, chartWidth, paneHeight);
+    layoutPositionLabelRow(entryEl, entryLine, displayEntry ? entryPrice : null, entryColor, chartWidth, paneHeight);
   }
 }
 
@@ -2179,15 +2180,19 @@ function clearPositionOverlay() {
 
 function setPositionOverlay(pos) {
   if (!pos) { clearPositionOverlay(); return; }
-  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = pos;
+  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime, showEntry = true } = pos;
   if (side !== 'LONG' && side !== 'SHORT') { clearPositionOverlay(); return; }
 
   if (positionOverlayPending?.side && positionOverlayPending.side !== side) {
     clearPositionOverlay();
   }
 
-  positionOverlayPending = { side, entryPrice, stopPrice, takeProfitPrice, entryTime };
-  positionAutoscalePrices = [entryPrice, stopPrice, takeProfitPrice].filter(Number.isFinite);
+  positionOverlayPending = { side, entryPrice, stopPrice, takeProfitPrice, entryTime, showEntry };
+  positionAutoscalePrices = [
+    showEntry !== false ? entryPrice : null,
+    stopPrice,
+    takeProfitPrice,
+  ].filter(Number.isFinite);
 
   if (!chart || !candleSeries) return;
   renderPositionOverlaySegments();
