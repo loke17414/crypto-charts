@@ -71,20 +71,21 @@ const BacktestRunner = (() => {
     }
 
     if (stats.trades >= targetTrades || !window.BacktestLoader) {
-      return { source: chartSource, fromCache: false };
+      return { source: chartSource, fromCache: false, historyExhausted: false };
     }
 
     const key = cacheKey(interval, targetTrades, settings);
     let seed = chartSource;
     let seedTrades = stats.trades;
+    let historyExhausted = false;
 
     if (historyCache?.key === key) {
       const merged = mergeCandlesByTime(historyCache.candles, chartSource);
-      const exhausted = historyCache.exhausted === true;
-      historyCache = { key, candles: merged, exhausted };
+      historyExhausted = historyCache.exhausted === true;
+      historyCache = { key, candles: merged, exhausted: historyExhausted };
       const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
-      if (cachedStats.trades >= targetTrades || exhausted) {
-        return { source: merged, fromCache: true };
+      if (cachedStats.trades >= targetTrades || historyExhausted) {
+        return { source: merged, fromCache: true, historyExhausted };
       }
       seed = merged;
       seedTrades = cachedStats.trades;
@@ -107,14 +108,26 @@ const BacktestRunner = (() => {
 
     const cancelled = localRunId !== runId;
     if (extended.length > seed.length || !cancelled) {
+      historyExhausted = !cancelled && extended.length <= seed.length;
       historyCache = {
         key,
         candles: extended,
-        exhausted: !cancelled && extended.length <= seed.length,
+        exhausted: historyExhausted,
       };
     }
     if (cancelled) return null;
-    return { source: extended, fromCache: false };
+    return { source: extended, fromCache: false, historyExhausted };
+  }
+
+  async function ensureChartCoversTrades(trades, interval) {
+    if (!trades?.length || !deps.loadChartHistoryUntil) return;
+    const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
+    const chartData = deps.getChartCandles() || [];
+    if (!chartData.length || earliestEntry >= chartData[0].time) return;
+    const barSec = INTERVAL_SECONDS[interval] || 3600;
+    const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
+    const maxPages = Math.min(70, Math.ceil(needBars / 1000) + 3);
+    await deps.loadChartHistoryUntil(earliestEntry, maxPages, { relaxBarCap: true });
   }
 
   async function compute(chartCandles, { force = false, focusChart = false } = {}) {
@@ -156,19 +169,12 @@ const BacktestRunner = (() => {
         return { ok: false, cancelled: true, interval, settings, targetTrades };
       }
 
-      const { source: btSource } = resolved;
+      const { source: btSource, historyExhausted = false } = resolved;
       const { markers, stats, trades } = FuturesStrategy.backtest(btSource, settings, { maxTrades: targetTrades });
 
       let displayCandles = chartCandles?.length ? chartCandles : btSource;
-      if (focusChart && trades.length && displayCandles.length) {
-        const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
-        const chartData = deps.getChartCandles() || displayCandles;
-        if (earliestEntry < chartData[0].time) {
-          const barSec = INTERVAL_SECONDS[interval] || 900;
-          const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
-          const maxPages = Math.min(60, Math.ceil(needBars / 1000) + 2);
-          await deps.loadChartHistoryUntil?.(earliestEntry, maxPages);
-        }
+      if (trades.length && deps.getShowBacktest?.()) {
+        await ensureChartCoversTrades(trades, interval);
         displayCandles = deps.getChartCandles() || displayCandles;
       }
 
@@ -182,7 +188,11 @@ const BacktestRunner = (() => {
         interval,
         settings,
         targetTrades,
-        stats: { ...stats, chartVisibleTrades: null },
+        stats: {
+          ...stats,
+          chartVisibleTrades: null,
+          historyExhausted: historyExhausted || (historyCache?.exhausted === true),
+        },
         trades,
         markers,
         btSource,

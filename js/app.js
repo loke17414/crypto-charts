@@ -30,6 +30,8 @@ const INTERVALS = {
 };
 
 const MAX_CHART_BARS = 50000;
+// 백테스트 마커 표시용 — BacktestLoader가 받은 전체 히스토리(≈6만봉)까지 차트를 넓힐 수 있게.
+const BACKTEST_CHART_BARS = 65000;
 
 const cache = new Map();
 const CACHE_TTL = 30_000;
@@ -1518,10 +1520,11 @@ function scheduleLoadMoreCandles() {
   loadMoreDebounce = setTimeout(() => { loadMoreHistoricalCandles(); }, 250);
 }
 
-async function loadMoreHistoricalCandles() {
+async function loadMoreHistoricalCandles({ relaxBarCap = false } = {}) {
   if (!window.KlineLoader || !state.binanceSymbol || state.loadingMore || !state.canLoadMore) return;
   if (!state.lastCandles.length) return;
 
+  const barCap = relaxBarCap ? BACKTEST_CHART_BARS : MAX_CHART_BARS;
   state.loadingMore = true;
   try {
     const beforeTime = state.lastCandles[0].time;
@@ -1561,7 +1564,7 @@ async function loadMoreHistoricalCandles() {
       state.programmaticScroll = false;
     }
 
-    if (merged.length >= MAX_CHART_BARS || older.length < KlineLoader.PAGE_SIZE / 2) {
+    if (merged.length >= barCap || older.length < KlineLoader.PAGE_SIZE / 2) {
       state.canLoadMore = false;
     }
   } catch (err) {
@@ -1571,11 +1574,16 @@ async function loadMoreHistoricalCandles() {
   }
 }
 
-async function loadHistoryUntilTime(targetTime, maxPages = 12) {
+async function loadHistoryUntilTime(targetTime, maxPages = 12, { relaxBarCap = false } = {}) {
   if (!Number.isFinite(targetTime) || !state.lastCandles.length) return false;
+  // 이전 일반 스크롤에서 5만봉 한도로 canLoadMore가 꺼졌을 수 있다 — 백테스트
+  // 마커 표시는 BACKTEST_CHART_BARS까지 다시 받아온다.
+  if (relaxBarCap && state.lastCandles.length < BACKTEST_CHART_BARS) {
+    state.canLoadMore = true;
+  }
   let pages = 0;
   while (state.lastCandles[0].time > targetTime && state.canLoadMore && pages < maxPages) {
-    await loadMoreHistoricalCandles();
+    await loadMoreHistoricalCandles({ relaxBarCap });
     pages += 1;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

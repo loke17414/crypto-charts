@@ -1756,10 +1756,14 @@ const FuturesBotApp = (() => {
       ? `${stats.trades}/${stats.targetTrades}회`
       : `${stats.trades}회`;
     if (stats.targetTrades && !stats.targetReached) {
-      countLabel += ` · 전체 히스토리 ${stats.candlesUsed.toLocaleString()}봉`;
+      if (stats.historyExhausted) {
+        countLabel += ` · 선물 히스토리 끝 (${stats.candlesUsed.toLocaleString()}봉)`;
+      } else {
+        countLabel += ` · 전체 히스토리 ${stats.candlesUsed.toLocaleString()}봉`;
+      }
     }
     if (stats.chartVisibleTrades != null && stats.chartVisibleTrades < stats.trades) {
-      countLabel += ` (차트 표시 ${stats.chartVisibleTrades}회 — 왼쪽으로 스크롤하면 더 보입니다)`;
+      countLabel += ` (차트 데이터 ${stats.chartVisibleTrades}/${stats.trades}회 — 왼쪽으로 스크롤)`;
     }
     return (
       `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
@@ -1866,17 +1870,18 @@ const FuturesBotApp = (() => {
   function renderBacktestResult(result, { force = false, focusChart = false } = {}) {
     const statsEl = $('#backtestStats');
     const { interval, stats, trades, markers, displayCandles } = result;
-    const visibleMarkers = filterMarkersToChart(markers, displayCandles);
-    const visibleTrades = filterTradesToChart(trades, displayCandles);
+    const chartCandles = displayCandles?.length ? displayCandles : (Chart.getCandles() || lastCandles);
+    const visibleTrades = filterTradesToChart(trades, chartCandles);
     const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
 
     if (showBacktest || force) {
       clearBacktestOverlays();
-      Chart.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
-      syncBacktestOverlays(visibleTrades, displayCandles);
-      if (focusChart && trades.length) focusBacktestTrades(trades, displayCandles);
+      // 마커는 백테스트 전체 결과를 차트 데이터 범위 안에 모두 올린다 (뷰포트 밖도 스크롤로 확인).
+      Chart.setMarkers(mergeChartMarkers(markers, chartCandles));
+      syncBacktestOverlays(visibleTrades, chartCandles);
+      if (focusChart && trades.length) focusBacktestTrades(trades, chartCandles);
     } else {
-      Chart.setMarkers(getSwingPivotMarkers(displayCandles));
+      Chart.setMarkers(getSwingPivotMarkers(chartCandles));
       clearBacktestOverlays();
     }
     if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);
@@ -1969,7 +1974,7 @@ const FuturesBotApp = (() => {
       getCacheKey: () => getBacktestCacheKey(),
       getChartCandles: () => Chart.getCandles() || lastCandles,
       cacheKey: backtestCacheKey,
-      loadChartHistoryUntil: (time, maxPages) => Chart.loadHistoryUntilTime(time, maxPages),
+      loadChartHistoryUntil: (time, maxPages, opts) => Chart.loadHistoryUntilTime(time, maxPages, opts),
       onProgress: (p) => {
         const statsEl = $('#backtestStats');
         if (!statsEl || p.phase !== 'loading') return;
