@@ -24,6 +24,8 @@ const FuturesBotApp = (() => {
   let backtestRunId = 0;
   let backtestHistoryCache = null;
   let lastRenderedBacktestKey = null;
+  let backtestInFlightKey = null;
+  let backtestInFlightAt = 0;
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -1444,8 +1446,31 @@ const FuturesBotApp = (() => {
     );
   }
 
+  // In PnL/price modes stopLossPct/takeProfitPct are DERIVED from the live
+  // price or equity and drift a little every tick. Keying the cache on them
+  // would treat every tick as a "settings change", cancel the in-flight
+  // history load, and the backtest would never finish — so the key uses the
+  // raw user inputs instead of the derived values.
+  function backtestSettingsForKey(settings) {
+    if (state.slTpMode === 'pnl') {
+      return {
+        ...settings,
+        stopLossPct: `pnl:${$('#stopLossPnl')?.value ?? ''}`,
+        takeProfitPct: `pnl:${$('#takeProfitPnl')?.value ?? ''}`,
+      };
+    }
+    if (state.slTpMode === 'price') {
+      return {
+        ...settings,
+        stopLossPct: `price:${$('#stopLossPrice')?.value ?? ''}`,
+        takeProfitPct: `price:${$('#takeProfitPrice')?.value ?? ''}`,
+      };
+    }
+    return settings;
+  }
+
   function backtestCacheKey(interval, targetTrades, settings) {
-    return `${state.symbol}:${interval}:${targetTrades}:${JSON.stringify(settings)}`;
+    return `${state.symbol}:${interval}:${targetTrades}:${JSON.stringify(backtestSettingsForKey(settings))}`;
   }
 
   function getBacktestCacheKey(settings = getSettings()) {
@@ -1465,6 +1490,7 @@ const FuturesBotApp = (() => {
     backtestRunId += 1;
     backtestHistoryCache = null;
     lastRenderedBacktestKey = null;
+    backtestInFlightKey = null;
     if (showBacktest) clearBacktestChartDisplay(chartCandles);
     const statsEl = $('#backtestStats');
     if (message && statsEl) statsEl.textContent = message;
@@ -1571,9 +1597,24 @@ const FuturesBotApp = (() => {
       return;
     }
 
+    // A long history load must not be cancelled and restarted from page 1 by
+    // every new bar / UI refresh with identical settings — that loop kept the
+    // backtest from ever finishing. Identical-key requests just wait for the
+    // in-flight run; a stale flag (e.g. hung network) expires after 3 minutes.
+    const targetTrades = state.backtestTradeCount;
+    const pendingKey = backtestCacheKey(interval, targetTrades, settings);
+    if (backtestInFlightKey === pendingKey
+      && Date.now() - backtestInFlightAt < 180_000) {
+      if (force && statsEl && !statsEl.innerHTML.includes('로딩 중')) {
+        statsEl.textContent = '백테스트: 계산 진행 중...';
+      }
+      return;
+    }
+
     try {
+      backtestInFlightKey = pendingKey;
+      backtestInFlightAt = Date.now();
       const runId = ++backtestRunId;
-      const targetTrades = state.backtestTradeCount;
       const resolved = await resolveBacktestCandles(chartCandles, settings, targetTrades, statsEl, runId);
       if (!resolved || runId !== backtestRunId) return;
 
@@ -1626,6 +1667,8 @@ const FuturesBotApp = (() => {
     } catch (err) {
       console.error('Backtest failed:', err);
       if (statsEl) statsEl.textContent = `백테스트 실패: ${err.message}`;
+    } finally {
+      if (backtestInFlightKey === pendingKey) backtestInFlightKey = null;
     }
   }
 
@@ -1663,6 +1706,10 @@ const FuturesBotApp = (() => {
       }
 
       lastCandles = chartCandles;
+      // The button is an explicit restart: cancel whatever run is in flight
+      // (it may be hung) and start clean instead of waiting on it.
+      backtestRunId += 1;
+      backtestInFlightKey = null;
       await applyBacktest(chartCandles, { force: true, focusChart: true });
     } catch (err) {
       console.error('Backtest run failed:', err);
