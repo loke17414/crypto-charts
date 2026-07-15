@@ -451,3 +451,4 @@ class StrategyInterpretResponse(BaseModel):
     changed_fields: list[str] = Field(default_factory=list)
     market_insight: str = ""
     backtest_insight: str = ""
+    sources: list[str] = Field(default_factory=list)

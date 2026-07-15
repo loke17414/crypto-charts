@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from bot.config import ROOT
 from bot.strategy_ai_memory import append_turn, clear_memory, load_turns, merge_histories
 from bot.strategy_market import build_market_context
+from bot.strategy_research import looks_like_research_request, research_strategies
 from bot.strategy_schema import StrategySettings
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,16 @@ Respond with JSON only — extended shape:
   "market_insight": "Korean 1 sentence on current market vs strategy fit",
   "backtest_insight": "Korean 1 sentence on backtest result / expected improvement"
 }
+
+WEB RESEARCH / QUESTION MODE:
+- You may receive web_research: a list of {title, url, content} scraped from the internet about trading strategies.
+- Use web_research as your primary knowledge source when it is provided — it reflects what real traders publish about the strategy.
+- If the user is ASKING a question (전략 설명/추천/비교/원리 등) rather than requesting a settings change:
+  - Answer thoroughly in Korean in "summary" (up to ~8 sentences allowed in this mode).
+  - Set "settings" to {} and "changed_fields" to [] — do NOT modify the strategy.
+  - Cite which sources you used by listing their urls in "sources": ["url1", "url2"].
+- If the user asks to APPLY a strategy found on the internet ("그 전략 적용해줘", "볼린저 전략으로 바꿔"),
+  translate the researched strategy into entryRules/exitRules as usual and still fill "sources".
 """
 
 
@@ -512,6 +523,7 @@ def _call_openai(
     history: list[dict[str, str]] | None = None,
     market_context: dict[str, Any] | None = None,
     backtest_snapshot: dict[str, Any] | None = None,
+    web_research: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     api_key, model = _openai_config()
     if not api_key:
@@ -530,6 +542,7 @@ def _call_openai(
             "indicator_catalog": indicator_catalog,
             "market_context": market_context or {},
             "backtest_snapshot": backtest_snapshot or {},
+            "web_research": web_research or [],
             "user_request": prompt,
         },
         ensure_ascii=False,
@@ -663,6 +676,13 @@ def interpret_strategy(
 
     append_turn(role="user", content=prompt.strip())
 
+    web_research: list[dict[str, Any]] = []
+    if looks_like_research_request(prompt):
+        try:
+            web_research = research_strategies(prompt.strip())
+        except Exception:
+            logger.exception("Web strategy research failed — continuing without it")
+
     raw = _call_openai(
         prompt.strip(),
         current,
@@ -670,13 +690,17 @@ def interpret_strategy(
         merged_history,
         market,
         backtest_snapshot,
+        web_research,
     )
 
     patch = raw.get("settings") or {}
     if not isinstance(patch, dict):
         patch = {}
 
-    patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+    # Question/research mode (empty patch + web research) must not fall back to
+    # the Bollinger template — the user asked a question, not for an edit.
+    if patch or not web_research:
+        patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
 
     merged = current.merged(patch)
     summary = str(raw.get("summary") or "전략 설정을 업데이트했습니다.").strip()
@@ -686,6 +710,13 @@ def interpret_strategy(
     changed_fields = raw.get("changed_fields")
     if not isinstance(changed_fields, list):
         changed_fields = list(patch.keys())
+
+    sources = raw.get("sources")
+    if not isinstance(sources, list):
+        sources = []
+    sources = [str(s) for s in sources if isinstance(s, str) and s.startswith("http")][:5]
+    if web_research and not sources:
+        sources = [src["url"] for src in web_research][:5]
 
     bt_meta = None
     if backtest_snapshot and isinstance(backtest_snapshot.get("current"), dict):
@@ -718,6 +749,7 @@ def interpret_strategy(
         "changed_fields": changed_fields,
         "market_insight": market_insight,
         "backtest_insight": backtest_insight,
+        "sources": sources,
     }
 
 

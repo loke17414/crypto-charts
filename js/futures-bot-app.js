@@ -29,6 +29,8 @@ const FuturesBotApp = (() => {
   let positionStopPrice = null;
   let positionTakeProfitPrice = null;
   let liveExitBusy = false;
+  let autoEntryBusy = false;
+  let lastAutoEntryKey = null;
 
   const state = {
     mode: 'paper',
@@ -1100,6 +1102,36 @@ const FuturesBotApp = (() => {
     $('#signalInfo').textContent = result.reason;
     updateRsiDisplay(result.snapshot);
     syncSignalOverlay(result);
+    maybeAutoEnterOnSignal(result);
+  }
+
+  // Enter the moment a fresh entry signal appears on the chart instead of
+  // waiting for the next botTick poll (default 60s). Entry signals are
+  // edge-triggered (e.g. a fresh crossover on the latest bar), so they can
+  // appear and disappear between polls — this hook catches them in real time.
+  // Deduped per (side + bar time) so one bar can't fire the same entry twice.
+  async function maybeAutoEnterOnSignal(result) {
+    if (!botRunning || serverBotActive) return;
+    if (result.signal !== 'LONG' && result.signal !== 'SHORT') return;
+    if (autoEntryBusy || liveExitBusy) return;
+    if (hasOpenPosition()) return;
+    if (result.signal === 'SHORT' && !state.allowShort) return;
+
+    const barTime = lastCandles.at(-1)?.time;
+    const key = `${result.signal}:${barTime}`;
+    if (key === lastAutoEntryKey) return;
+
+    autoEntryBusy = true;
+    lastAutoEntryKey = key;
+    try {
+      addLog(`${result.signal} 신호 감지 — 즉시 진입 시도 (${result.reason})`, 'info');
+      await executeSignal(result);
+      updateUI();
+    } catch (err) {
+      addLog(`자동 진입 실패: ${err.message}`, 'loss');
+    } finally {
+      autoEntryBusy = false;
+    }
   }
 
   // Draw dashed entry/SL/TP lines on the chart whenever the strategy produces a

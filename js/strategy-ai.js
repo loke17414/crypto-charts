@@ -252,17 +252,26 @@ const StrategyAI = (() => {
         backtestSnapshot,
       });
 
-      FuturesBotApp.applyStrategySettings(result.settings, {
-        rulesHtml: result.rules,
-        summary: result.summary,
-        changedFields: result.changed_fields || result.changedFields || [],
-      });
+      const changedFields = result.changed_fields || result.changedFields || [];
 
-      const changed = (result.changed_fields || result.changedFields || []).join(', ');
+      // Question/research mode returns an answer without touching settings —
+      // applying would needlessly recompute the backtest and spam logs.
+      if (changedFields.length) {
+        FuturesBotApp.applyStrategySettings(result.settings, {
+          rulesHtml: result.rules,
+          summary: result.summary,
+          changedFields,
+        });
+      }
+
+      const changed = changedFields.join(', ');
       const parts = [result.summary];
       if (result.market_insight) parts.push(`📊 ${result.market_insight}`);
       if (result.backtest_insight) parts.push(`📈 ${result.backtest_insight}`);
       if (changed) parts.push(`(변경: ${changed})`);
+      if (Array.isArray(result.sources) && result.sources.length) {
+        parts.push(`🔗 출처:\n${result.sources.map((u) => `· ${u}`).join('\n')}`);
+      }
 
       const reply = parts.join('\n');
       addMessage('assistant', reply, {

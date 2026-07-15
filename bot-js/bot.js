@@ -281,8 +281,20 @@ async function tick() {
     log(`SIGNAL ${result.signal} @ $${price.toFixed(2)} — ${result.reason}`);
     await openPosition(result.signal, price, levels, candles, candles.length - 1);
   } else {
-    log(`${result.reason}`, 'DEBUG');
+    logHoldReason(result.reason);
   }
+}
+
+// The fast tick cadence (see start()) would spam identical HOLD lines, so only
+// log the reason when it changes or once per pollSeconds.
+let lastHoldReason = null;
+let lastHoldLogAt = 0;
+function logHoldReason(reason) {
+  const now = Date.now();
+  if (reason === lastHoldReason && now - lastHoldLogAt < cfg.pollSeconds * 1000) return;
+  lastHoldReason = reason;
+  lastHoldLogAt = now;
+  log(`${reason}`, 'DEBUG');
 }
 
 // ---- Runner -------------------------------------------------------------
@@ -314,13 +326,18 @@ async function start() {
   const balance = await getAvailableMargin();
   log(`Equity $${sessionStartEquity.toFixed(2)} | Available $${balance.toFixed(2)} | Position: ${position ? `${position.side} ${position.quantity} @ $${position.entryPrice}` : 'none'}`);
 
+  // Fast tick so edge-triggered entry signals (fresh crossovers that appear
+  // and disappear within one poll window) are caught, and wick SL/TP exits
+  // react quickly. Klines fetch is cheap (weight 2), so 10s is safe.
+  const tickSeconds = Math.min(cfg.pollSeconds, 10);
+  log(`Signal check every ${tickSeconds}s (pollSeconds=${cfg.pollSeconds})`);
   while (running) {
     try {
       await tick();
     } catch (err) {
       log(`Error during tick: ${err.message}`, 'ERROR');
     }
-    await new Promise((r) => setTimeout(r, cfg.pollSeconds * 1000));
+    await new Promise((r) => setTimeout(r, tickSeconds * 1000));
   }
   log('Bot stopped.');
 }

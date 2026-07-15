@@ -201,6 +201,7 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
         changed_fields=result.get("changed_fields") or [],
         market_insight=result.get("market_insight") or "",
         backtest_insight=result.get("backtest_insight") or "",
+        sources=result.get("sources") or [],
     )
 
 
