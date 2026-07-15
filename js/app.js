@@ -59,6 +59,8 @@ let pendingStopLossPrice = null;
 let priceScaleRaf = null;
 let dragMoveRaf = null;
 let pendingDragMove = null;
+let visibleAutoscaleRaf = null;
+let lastLiveScaleSyncAt = 0;
 
 function getMainPaneHeight() {
   if (!chart) return 1;
@@ -97,12 +99,9 @@ function schedulePriceScaleRefresh() {
   });
 }
 
-// Lightweight, synchronous price-range refresh for the drag path. The
-// autoscale providers are already installed at series creation, so we only
-// need to nudge the series data to force LightweightCharts to re-run the
-// provider (which returns state.manualPriceRange). Doing this synchronously —
-// in the same animation frame as the time pan — keeps horizontal and vertical
-// movement in lockstep instead of lagging one frame behind.
+// Synchronous price-range refresh for manual axis zoom. The autoscale
+// providers return state.manualPriceRange; nudging series data forces
+// LightweightCharts to re-run the provider in the same frame.
 function applyManualPriceRangeNow() {
   if (!chart || !candleSeries || !state.manualPriceRange) return;
   const last = state.lastCandles[state.lastCandles.length - 1];
@@ -137,7 +136,6 @@ const state = {
   programmaticScroll: false,
   manualPriceRange: null,
   liveScaleRange: null,
-  dragPriceRange: null,
   lastTickPrice: null,
   lastTickTime: 0,
   loadingMore: false,
@@ -302,14 +300,6 @@ function waitForContainer(container) {
 // ── Chart (TradingView style) ───────────────────────────────
 
 function candleAutoscaleProvider(original) {
-  if (state.dragPriceRange) {
-    return {
-      priceRange: {
-        minValue: state.dragPriceRange.min,
-        maxValue: state.dragPriceRange.max,
-      },
-    };
-  }
   if (state.manualPriceRange) {
     return {
       priceRange: {
@@ -369,23 +359,43 @@ function getVisibleBarsPriceRange(paddingPct = 0.06) {
 
 function nudgePriceScaleAutoscale() {
   if (!chart || !candleSeries) return;
-  if (!state.dragPriceRange && !state.manualPriceRange && !state.liveScaleRange) return;
+  if (!state.manualPriceRange && !state.liveScaleRange) return;
   chart.priceScale('right').applyOptions({ autoScale: true });
   const last = state.lastCandles.at(-1);
   if (!last) return;
-  const bar = {
+  candleSeries.update({
     time: last.time,
     open: last.open,
     high: last.high,
     low: last.low,
     close: last.close,
-  };
-  candleSeries.update(bar);
+  });
   lineSeries?.update({ time: last.time, value: last.close });
+}
+
+function scheduleVisibleAutoscale() {
+  if (state.manualPriceRange || state.dragging) return;
+  if (visibleAutoscaleRaf != null) return;
+  visibleAutoscaleRaf = requestAnimationFrame(() => {
+    visibleAutoscaleRaf = null;
+    refreshVisibleAutoscale();
+  });
+}
+
+function refreshVisibleAutoscale() {
+  if (!chart || !candleSeries || state.manualPriceRange || state.dragging) return;
+  const target = getVisibleBarsPriceRange(state.isFollowingRealtime ? 0.05 : 0.06);
+  if (!target) return;
+  state.liveScaleRange = { ...target };
+  nudgePriceScaleAutoscale();
 }
 
 function syncLivePriceScale() {
   if (!chart || !candleSeries || state.manualPriceRange || state.dragging) return;
+
+  const now = performance.now();
+  if (now - lastLiveScaleSyncAt < 120) return;
+  lastLiveScaleSyncAt = now;
 
   const target = getVisibleBarsPriceRange(state.isFollowingRealtime ? 0.05 : 0.06);
   if (!target) return;
@@ -394,7 +404,7 @@ function syncLivePriceScale() {
     if (!state.liveScaleRange) {
       state.liveScaleRange = { ...target };
     } else {
-      const lerp = 0.45;
+      const lerp = 0.35;
       const s = state.liveScaleRange;
       s.min += (target.min - s.min) * lerp;
       s.max += (target.max - s.max) * lerp;
@@ -417,6 +427,14 @@ function ensureLiveOhlcOverlay() {
     el.setAttribute('aria-live', 'polite');
     main.appendChild(el);
   }
+  let badge = document.getElementById('chartDataSource');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'chartDataSource';
+    badge.className = 'chart-data-source';
+    main.appendChild(badge);
+  }
+  badge.textContent = isTradingPage ? 'Binance Futures' : 'Binance Spot';
   return el;
 }
 
@@ -506,7 +524,6 @@ function getVisibleCandlesPriceRange() {
 }
 
 const CHART_TIME_PAN_SENSITIVITY = 1;
-const CHART_PRICE_PAN_SENSITIVITY = 1;
 const PRICE_AXIS_SCALE_SENSITIVITY = 1.25;
 
 function applyPriceAxisAdjust(startY, currentY, baseRange) {
@@ -523,47 +540,6 @@ function applyPriceAxisAdjust(startY, currentY, baseRange) {
   };
 
   applyManualPriceRangeNow();
-}
-
-function applyManualPriceShift(startY, currentY, baseRange) {
-  const chartHeight = getMainPaneHeight();
-  const span = baseRange.max - baseRange.min;
-  const shift = ((currentY - startY) / chartHeight) * span * CHART_PRICE_PAN_SENSITIVITY;
-
-  state.manualPriceRange = {
-    min: baseRange.min + shift,
-    max: baseRange.max + shift,
-  };
-
-  applyManualPriceRangeNow();
-}
-
-function applyDragPriceRangeNow() {
-  if (!chart || !candleSeries || !state.dragPriceRange) return;
-  const last = state.lastCandles.at(-1);
-  if (!last) return;
-  candleSeries.update({
-    time: last.time,
-    open: last.open,
-    high: last.high,
-    low: last.low,
-    close: last.close,
-  });
-  lineSeries?.update({ time: last.time, value: last.close });
-}
-
-function applyDragPriceShift(baseRange, startY, currentY) {
-  if (!baseRange) return;
-  const chartHeight = getMainPaneHeight();
-  const span = baseRange.max - baseRange.min;
-  const shift = ((currentY - startY) / chartHeight) * span * CHART_PRICE_PAN_SENSITIVITY;
-
-  state.dragPriceRange = {
-    min: baseRange.min + shift,
-    max: baseRange.max + shift,
-  };
-
-  applyDragPriceRangeNow();
 }
 
 function applyTimePan(startX, currentX, baseTimeRange) {
@@ -590,6 +566,7 @@ function resetManualPriceScale() {
   state.manualPriceRange = null;
   state.liveScaleRange = null;
   applyManualPriceRangeToScale();
+  scheduleVisibleAutoscale();
 }
 
 const TV_COLORS = {
@@ -597,12 +574,12 @@ const TV_COLORS = {
   text: '#d1d4dc',
   grid: '#1e222d',
   border: '#2a2e39',
-  up: '#26a69a',
-  down: '#ef5350',
+  up: '#0ecb81',
+  down: '#f6465d',
   crosshair: '#758696',
-  volumeUp: 'rgba(38, 166, 154, 0.5)',
-  volumeDown: 'rgba(239, 83, 80, 0.5)',
-  line: '#2962ff',
+  volumeUp: 'rgba(14, 203, 129, 0.45)',
+  volumeDown: 'rgba(246, 70, 93, 0.45)',
+  line: '#f0b90b',
 };
 
 function initChart(container) {
@@ -752,6 +729,7 @@ function setupChartPanning() {
     const barCount = state.lastCandles.length;
     if (!barCount) return;
     setFollowingRealtime(range.to >= barCount - 5);
+    if (!state.manualPriceRange) scheduleVisibleAutoscale();
     if (range.from < 40 && state.canLoadMore && !state.loadingMore) {
       scheduleLoadMoreCandles();
     }
@@ -780,7 +758,6 @@ function setupChartPanning() {
     if (isOnPriceAxis(clientX)) {
       const captured = captureVisiblePriceRange();
       if (!captured) return;
-      state.dragPriceRange = null;
       axisDrag = {
         startY: clientY,
         range: captured,
@@ -792,29 +769,13 @@ function setupChartPanning() {
     }
 
     const timeRange = chart.timeScale().getVisibleLogicalRange();
-    const captured = state.manualPriceRange
-      ? { ...state.manualPriceRange }
-      : (captureVisiblePriceRange() || getVisibleBarsPriceRange());
     priceDrag = {
       anchorX: clientX,
       anchorY: clientY,
       originTimeRange: timeRange ? { from: timeRange.from, to: timeRange.to } : null,
-      originPriceRange: captured ? { ...captured } : null,
-      hadManualPrice: Boolean(state.manualPriceRange),
       active: false,
-      lastDy: 0,
     };
     container.classList.add('chart-area--dragging');
-  };
-
-  const activateBodyDrag = () => {
-    if (!priceDrag?.originPriceRange) return;
-    if (priceDrag.hadManualPrice) {
-      state.manualPriceRange = null;
-      state.liveScaleRange = null;
-    }
-    state.dragPriceRange = { ...priceDrag.originPriceRange };
-    applyDragPriceRangeNow();
   };
 
   const processDragMove = (clientX, clientY) => {
@@ -833,27 +794,15 @@ function setupChartPanning() {
     if (!priceDrag.active) {
       if (Math.hypot(dx, dy) < 3) return;
       priceDrag.active = true;
-      activateBodyDrag();
     }
-
-    priceDrag.lastDy = dy;
 
     if (priceDrag.originTimeRange) {
       applyTimePan(priceDrag.anchorX, clientX, priceDrag.originTimeRange);
-    }
-    if (priceDrag.originPriceRange) {
-      applyDragPriceShift(priceDrag.originPriceRange, priceDrag.anchorY, clientY);
     }
   };
 
   const finishBodyDrag = () => {
     if (!priceDrag?.active) return;
-
-    if (state.dragPriceRange) {
-      state.manualPriceRange = { ...state.dragPriceRange };
-      state.liveScaleRange = null;
-      state.dragPriceRange = null;
-    }
 
     const range = chart?.timeScale().getVisibleLogicalRange();
     if (range) {
@@ -864,17 +813,10 @@ function setupChartPanning() {
       }
     }
 
-    refreshPriceScaleNow();
+    if (!state.manualPriceRange) scheduleVisibleAutoscale();
   };
 
-  const cancelBodyDrag = () => {
-    state.dragPriceRange = null;
-    if (priceDrag?.hadManualPrice && priceDrag.originPriceRange) {
-      state.manualPriceRange = { ...priceDrag.originPriceRange };
-      state.liveScaleRange = null;
-      refreshPriceScaleNow();
-    }
-  };
+  const cancelBodyDrag = () => {};
 
   const scheduleDragMove = (clientX, clientY) => {
     pendingDragMove = { clientX, clientY };
@@ -921,6 +863,7 @@ function setupChartPanning() {
     priceDrag = null;
     container.classList.remove('chart-area--dragging');
     if (wasClickOnly) syncManualPriceFromAxisIfNeeded();
+    else if (!state.manualPriceRange) scheduleVisibleAutoscale();
     scheduleLiveIndicatorUpdate();
   };
 
@@ -1165,6 +1108,17 @@ function renderCandleImmediate(candle, { newBar = false } = {}) {
   const entry = { time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
   const isUp = candle.close >= candle.open;
 
+  candleSeries.update(entry);
+  lineSeries?.update({ time: candle.time, value: candle.close });
+  volumeSeries.update({
+    time: candle.time,
+    value: candle.volume,
+    color: isUp ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
+  });
+  updateLiveOhlcDisplay(candle);
+
+  if (state.dragging) return;
+
   candleSeries.applyOptions({
     priceLineColor: isUp ? TV_COLORS.up : TV_COLORS.down,
   });
@@ -1173,18 +1127,9 @@ function renderCandleImmediate(candle, { newBar = false } = {}) {
     priceLineColor: isUp ? TV_COLORS.up : TV_COLORS.down,
   });
 
-  candleSeries.update(entry);
-  lineSeries.update({ time: candle.time, value: candle.close });
-  volumeSeries.update({
-    time: candle.time,
-    value: candle.volume,
-    color: isUp ? TV_COLORS.volumeUp : TV_COLORS.volumeDown,
-  });
-
-  updateLiveOhlcDisplay(candle);
   syncLivePriceScale();
 
-  if (!state.dragging && typeof IndicatorManager !== 'undefined' && IndicatorManager.updateLive) {
+  if (typeof IndicatorManager !== 'undefined' && IndicatorManager.updateLive) {
     IndicatorManager.updateLive(state.lastCandles, { newBar });
   }
 
@@ -1368,13 +1313,40 @@ function flushLiveTick() {
   if (!tick) return;
   pendingTick = null;
 
-  // Expand the forming candle's intra-frame extremes before settling on the
-  // latest price so fast wicks between frames aren't lost.
-  if (tick.hi > tick.price) applyTickToFormingCandle(tick.hi, 0, tick.timeMs);
-  if (tick.lo < tick.price) applyTickToFormingCandle(tick.lo, 0, tick.timeMs);
-  const candle = applyTickToFormingCandle(tick.price, tick.volumeDelta, tick.timeMs);
+  if (!candleSeries || !state.lastCandles.length) return;
 
-  if (candle && state.binanceSymbol && state.selectedCoin) {
+  state.lastTickPrice = tick.price;
+  state.lastTickTime = tick.timeMs;
+
+  const intervalSec = getIntervalSeconds();
+  const candleTime = getCandleOpenTime(tick.timeMs, intervalSec);
+  const lastIdx = state.lastCandles.length - 1;
+  let last = state.lastCandles[lastIdx];
+  let newBar = false;
+
+  if (!last || last.time < candleTime) {
+    const openPrice = last ? last.close : tick.price;
+    last = createNewFormingCandle(candleTime, openPrice);
+    state.lastCandles.push(last);
+    state.formingCandleTime = candleTime;
+    newBar = true;
+  } else if (last.time !== candleTime) {
+    return;
+  }
+
+  const updated = {
+    ...last,
+    close: tick.price,
+    high: Math.max(last.high, tick.hi, tick.price),
+    low: Math.min(last.low, tick.lo, tick.price),
+    volume: last.volume + tick.volumeDelta,
+  };
+
+  state.lastCandles[state.lastCandles.length - 1] = updated;
+  state.formingCandleTime = candleTime;
+  renderFormingCandle(updated, { newBar });
+
+  if (state.binanceSymbol && state.selectedCoin) {
     const headerPrice = $('#currentPrice');
     const prevHeader = parseFloat(headerPrice?.dataset?.lastPrice || '0');
     if (headerPrice) {
