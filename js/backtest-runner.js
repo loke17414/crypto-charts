@@ -93,7 +93,7 @@ const BacktestRunner = (() => {
 
     onProgress?.({ phase: 'loading', trades: seedTrades, target: targetTrades, candles: seed.length });
 
-    const extended = await BacktestLoader.loadForTargetTrades(
+    const loadResult = await BacktestLoader.loadForTargetTrades(
       deps.getSymbol(),
       interval,
       settings,
@@ -107,16 +107,21 @@ const BacktestRunner = (() => {
     );
 
     const cancelled = localRunId !== runId;
+    const extended = loadResult?.candles ?? loadResult;
+    const loadExhausted = loadResult?.exhausted === true;
+    const loadTrades = loadResult?.trades;
+
     if (extended.length > seed.length || !cancelled) {
-      historyExhausted = !cancelled && extended.length <= seed.length;
+      historyExhausted = loadExhausted || (!cancelled && extended.length <= seed.length);
       historyCache = {
         key,
         candles: extended,
         exhausted: historyExhausted,
+        trades: loadTrades,
       };
     }
     if (cancelled) return null;
-    return { source: extended, fromCache: false, historyExhausted };
+    return { source: extended, fromCache: false, historyExhausted, loadTrades };
   }
 
   async function ensureChartCoversTrades(trades, interval) {

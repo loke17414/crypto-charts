@@ -1977,11 +1977,17 @@ const FuturesBotApp = (() => {
       loadChartHistoryUntil: (time, maxPages, opts) => Chart.loadHistoryUntilTime(time, maxPages, opts),
       onProgress: (p) => {
         const statsEl = $('#backtestStats');
-        if (!statsEl || p.phase !== 'loading') return;
+        if (!statsEl) return;
+        if (p.phase === 'compute') {
+          statsEl.textContent =
+            `백테스트: 계산 중... (${p.trades}/${p.target}회, ${(p.candles ?? 0).toLocaleString()}봉)`;
+          return;
+        }
         const pageInfo = p.page != null ? ` · ${p.page}/${p.maxPages}페이지` : '';
+        const suffix = p.exhausted ? ' · 히스토리 끝' : '';
         statsEl.textContent =
           `백테스트: 과거 데이터 로딩 중... (${p.trades}/${p.target}회, ` +
-          `${(p.candles ?? 0).toLocaleString()}봉${pageInfo})`;
+          `${(p.candles ?? 0).toLocaleString()}봉${pageInfo})${suffix}`;
       },
       onInvalidate: (message) => {
         const statsEl = $('#backtestStats');

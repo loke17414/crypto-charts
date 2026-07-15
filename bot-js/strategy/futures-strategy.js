@@ -317,7 +317,7 @@ const FuturesStrategy = (() => {
   }
 
   function backtest(candles, settings, options = {}) {
-    const { maxTrades = null } = options;
+    const { maxTrades = null, skipMarkers = false } = options;
     const trades = [];
     const markers = [];
     let position = null;
@@ -396,6 +396,7 @@ const FuturesStrategy = (() => {
     // 각 구간은 독립 시뮬레이션 (시간순, 구간 안에서도 과거 → 최신으로 진행).
     // 구간 앞 warmupBars봉은 지표 계산 컨텍스트로만 쓰고 진입은 평가하지 않는다.
     for (const [from, to] of segments) {
+      if (maxTrades != null && trades.length >= maxTrades) break;
       const ctxStart = Math.max(0, from - warmupBars);
       const ctx = candles.slice(ctxStart, to);
       const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(ctx, settings);
@@ -403,6 +404,7 @@ const FuturesStrategy = (() => {
       position = null;
 
       for (let i = startLocal; i < ctx.length; i++) {
+        if (maxTrades != null && trades.length >= maxTrades) break;
         const candle = ctx[i];
 
         if (position) {
@@ -444,6 +446,7 @@ const FuturesStrategy = (() => {
       : trades;
 
     for (const t of kept) {
+      if (skipMarkers) continue;
       const prefix = t.side === 'LONG' ? 'L' : 'S';
       markers.push({
         time: t.entryTime,
