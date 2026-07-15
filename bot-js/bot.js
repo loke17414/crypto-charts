@@ -139,16 +139,20 @@ async function syncPositionFromExchange() {
     log(`Synced position from exchange: ${position.side} ${position.quantity} @ $${position.entryPrice}`);
   } else if (!live && position) {
     // Position vanished from the exchange = closed externally (manual close in
-    // the UI or liquidation). Pause entries briefly so the same bar's signal
-    // doesn't instantly reopen what the user just closed.
-    log('Exchange has no position; clearing local state (entry paused until bar close)');
+    // the UI or liquidation). A time-based pause is not enough: level signals
+    // (e.g. RSI oversold) persist across bars and would re-open the trade the
+    // user just closed. Block entries until the signal disappears once, so
+    // only a FRESH signal can enter again.
+    log('Exchange has no position; clearing local state (entry blocked until current signal clears)');
     position = null;
     entryPausedUntil = Date.now() + Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
+    blockEntryUntilSignalClears = true;
     saveState();
   }
 }
 
 let entryPausedUntil = 0;
+let blockEntryUntilSignalClears = false;
 
 function intervalSeconds(iv) {
   const m = /^(\d+)([mhdw])$/.exec(String(iv || ''));
@@ -281,7 +285,18 @@ async function tick() {
   const posSide = position ? position.side : null;
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
 
+  // A manual close blocks re-entry until the entry signal goes away at least
+  // once; the flag clears on any non-entry tick so the next fresh signal works.
+  if (blockEntryUntilSignalClears && result.signal !== 'LONG' && result.signal !== 'SHORT') {
+    blockEntryUntilSignalClears = false;
+    log('Entry signal cleared — new signals can enter again');
+  }
+
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
+    if (blockEntryUntilSignalClears) {
+      logHoldReason(`Signal ${result.signal} skipped — waiting for signal to clear after manual close`);
+      return;
+    }
     if (Date.now() < entryPausedUntil) {
       logHoldReason(`Signal ${result.signal} skipped — cooldown after external close`);
       return;

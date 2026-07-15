@@ -1000,12 +1000,26 @@ const FuturesBotApp = (() => {
 
   async function refreshTestnetStatus() {
     if (!isTestnetMode()) return null;
+    const hadPosition = Boolean(testnetStatus?.position);
     testnetStatus = await FuturesApiClient.getStatus();
     // Adopt exchange-registered SL/TP trigger prices as the source of truth.
     const pos = testnetStatus?.position;
     if (pos) {
       if (pos.stopPrice != null) positionStopPrice = pos.stopPrice;
       if (pos.takeProfitPrice != null) positionTakeProfitPrice = pos.takeProfitPrice;
+    } else if (hadPosition) {
+      // Position disappeared — closed by SL/TP, liquidation, or a manual close
+      // outside this browser (e.g. exchange website). Whatever the cause, a
+      // still-active entry signal must not silently reopen the trade: drop the
+      // SL/TP confirmation and pause auto entry until the current bar closes.
+      if (slTpConfirmed) {
+        addLog('포지션 종료 감지 — 재진입하려면 SL/TP 확인 버튼을 다시 눌러주세요.', 'info');
+      }
+      resetSlTpConfirm();
+      slTpPreviewTouchedAt = 0;
+      if (botRunning && !serverBotActive && !isAutoEntryPaused()) {
+        pauseAutoEntryAfterManualClose('포지션 종료');
+      }
     }
     return testnetStatus;
   }
@@ -2182,9 +2196,9 @@ const FuturesBotApp = (() => {
     }
   }
 
-  // Manual close must not be instantly reversed by the running bot: pause
-  // auto entries until the current bar closes (min 30s) after a manual close.
-  function pauseAutoEntryAfterManualClose() {
+  // A close (manual or exchange-side) must not be instantly reversed by the
+  // running bot: pause auto entries until the current bar closes (min 30s).
+  function pauseAutoEntryAfterManualClose(reason = '수동 청산') {
     const secondsMap = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
     const intervalSec = secondsMap[state.interval] || 60;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2193,7 +2207,7 @@ const FuturesBotApp = (() => {
     // timeframes don't block the bot for hours.
     const pausedUntil = Math.min(barEndSec * 1000, Date.now() + 15 * 60_000);
     autoEntryPausedUntil = Math.max(Date.now() + 30_000, pausedUntil);
-    addLog('수동 청산 — 같은 신호로 바로 재진입하지 않도록 자동 진입을 잠시 멈춥니다.', 'info');
+    addLog(`${reason} — 같은 신호로 바로 재진입하지 않도록 자동 진입을 잠시 멈춥니다.`, 'info');
   }
 
   function isAutoEntryPaused() {
