@@ -154,6 +154,12 @@ class BinanceFuturesClient:
                     "tick_size": float(
                         filters.get("PRICE_FILTER", {"tickSize": "0.1"})["tickSize"]
                     ),
+                    "min_price": float(
+                        filters.get("PRICE_FILTER", {}).get("minPrice", 0) or 0
+                    ),
+                    "max_price": float(
+                        filters.get("PRICE_FILTER", {}).get("maxPrice", 0) or 0
+                    ),
                 }
                 return self._filters
         raise ValueError(f"Symbol {self.config.symbol} not found")
@@ -210,7 +216,21 @@ class BinanceFuturesClient:
     # Conditional orders (STOP_MARKET / TAKE_PROFIT_MARKET) moved to the Algo
     # Order API on 2025-12-09; /fapi/v1/order now rejects them with error -4120.
     def _place_conditional(self, position_side: str, order_type: str, trigger_price: float) -> dict[str, Any]:
+        filters = self.get_symbol_filters()
+        formatted = self._format_price(trigger_price)
+        min_price = filters.get("min_price") or 0
+        max_price = filters.get("max_price") or 0
+        if float(formatted) <= 0 or (min_price and float(formatted) < min_price):
+            raise ValueError(
+                f"{order_type} 트리거 가격 ${formatted}이(가) 최소가격 ${min_price} 미만입니다 — SL/TP 설정을 확인하세요"
+            )
+        if max_price and float(formatted) > max_price:
+            raise ValueError(
+                f"{order_type} 트리거 가격 ${formatted}이(가) 최대가격 ${max_price} 초과입니다 — SL/TP 설정을 확인하세요"
+            )
+
         side = "SELL" if position_side == "LONG" else "BUY"
+        logger.info("Placing %s %s @ trigger $%s (%s)", order_type, self.config.symbol, formatted, side)
         return self._request(
             "POST",
             "/fapi/v1/algoOrder",
@@ -219,7 +239,7 @@ class BinanceFuturesClient:
                 "symbol": self.config.symbol,
                 "side": side,
                 "type": order_type,
-                "triggerPrice": self._format_price(trigger_price),
+                "triggerPrice": formatted,
                 "closePosition": "true",
                 "workingType": "MARK_PRICE",
             },
@@ -290,10 +310,24 @@ class BinanceFuturesClient:
         stop_price: float | None,
         take_profit_price: float | None,
     ) -> dict[str, float | None]:
-        """Replace exchange-side SL/TP orders (cancel existing, place new)."""
+        """Replace exchange-side SL/TP orders (cancel existing, place new).
+
+        Places each leg independently so a bad SL doesn't block the TP (and
+        vice versa); raises with the collected errors after trying both.
+        """
         self.cancel_all_orders()
+        errors: list[str] = []
         if stop_price and stop_price > 0:
-            self.place_stop_market(position_side, stop_price)
+            try:
+                self.place_stop_market(position_side, stop_price)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"SL: {exc}")
         if take_profit_price and take_profit_price > 0:
-            self.place_take_profit_market(position_side, take_profit_price)
-        return self.get_sl_tp_orders()
+            try:
+                self.place_take_profit_market(position_side, take_profit_price)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"TP: {exc}")
+        result = self.get_sl_tp_orders()
+        if errors:
+            raise ValueError(" · ".join(errors))
+        return result

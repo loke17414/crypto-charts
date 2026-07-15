@@ -598,21 +598,45 @@ const FuturesBotApp = (() => {
     };
   }
 
+  // Manual $ price is only applied when it is plausible for this entry:
+  // within 20%..500% of the entry price AND on the correct side of it
+  // (LONG: SL below / TP above; SHORT: reversed). This rejects stale values
+  // from a previous position and %-values typed into the $ field, which the
+  // exchange would refuse ("Price less than min price" / immediate trigger).
+  function isPlausibleManualPrice(price, entryPrice) {
+    return Number.isFinite(price)
+      && price >= entryPrice * 0.2
+      && price <= entryPrice * 5;
+  }
+
   function applyManualSlTpOverride(levels, side, entryPrice) {
     if (!levels || !side || !entryPrice) return levels;
     const manual = readManualSlTpPrices();
     const out = { ...levels };
-    if (manual.stopPrice != null) {
+    const buy = side === 'LONG';
+
+    const slValid = manual.stopPrice != null
+      && isPlausibleManualPrice(manual.stopPrice, entryPrice)
+      && (buy ? manual.stopPrice < entryPrice : manual.stopPrice > entryPrice);
+    if (slValid) {
       out.stopPrice = manual.stopPrice;
-      out.stopLossPct = side === 'LONG'
+      out.stopLossPct = buy
         ? ((entryPrice - manual.stopPrice) / entryPrice) * 100
         : ((manual.stopPrice - entryPrice) / entryPrice) * 100;
+    } else if (manual.stopPrice != null) {
+      logEntrySkipOnce(`badsl:${manual.stopPrice}`, `손절 가격 $${manual.stopPrice} 무시 — 진입가 $${entryPrice.toFixed(2)} 기준으로 유효하지 않아 %설정을 사용합니다.`);
     }
-    if (manual.takeProfitPrice != null) {
+
+    const tpValid = manual.takeProfitPrice != null
+      && isPlausibleManualPrice(manual.takeProfitPrice, entryPrice)
+      && (buy ? manual.takeProfitPrice > entryPrice : manual.takeProfitPrice < entryPrice);
+    if (tpValid) {
       out.takeProfitPrice = manual.takeProfitPrice;
-      out.takeProfitPct = side === 'LONG'
+      out.takeProfitPct = buy
         ? ((manual.takeProfitPrice - entryPrice) / entryPrice) * 100
         : ((entryPrice - manual.takeProfitPrice) / entryPrice) * 100;
+    } else if (manual.takeProfitPrice != null) {
+      logEntrySkipOnce(`badtp:${manual.takeProfitPrice}`, `익절 가격 $${manual.takeProfitPrice} 무시 — 진입가 $${entryPrice.toFixed(2)} 기준으로 유효하지 않아 %설정을 사용합니다.`);
     }
     return out;
   }
@@ -798,6 +822,10 @@ const FuturesBotApp = (() => {
     clearPositionSlTpStorage();
     resetSlTpConfirm();
     slTpPreviewTouchedAt = 0;
+    // Drag writes absolute $ prices into these fields; they are stale for the
+    // next trade (wrong side/level) so drop them back to %-based auto mode.
+    setFieldValue('stopLossPrice', '');
+    setFieldValue('takeProfitPrice', '');
     window.CryptoCharts?.clearPositionOverlay?.();
     window.CryptoCharts?.clearStopLossLine?.();
   }
