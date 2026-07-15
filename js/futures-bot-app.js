@@ -31,6 +31,8 @@ const FuturesBotApp = (() => {
   let liveExitBusy = false;
   let autoEntryBusy = false;
   let lastAutoEntryKey = null;
+  let autoEntryRetryAt = 0;
+  let lastSkipLogKey = null;
   let autoEntryPausedUntil = 0;
   let manualCloseBusy = false;
 
@@ -1110,29 +1112,56 @@ const FuturesBotApp = (() => {
   }
 
   // Enter the moment a fresh entry signal appears on the chart instead of
-  // waiting for the next botTick poll (default 60s). Entry signals are
-  // edge-triggered (e.g. a fresh crossover on the latest bar), so they can
-  // appear and disappear between polls — this hook catches them in real time.
-  // Deduped per (side + bar time) so one bar can't fire the same entry twice.
+  // waiting for the next botTick poll (default 60s). Works for ANY indicator:
+  // level signals (RSI/Stoch/CCI...) persist through the bar and are retried
+  // if an attempt fails; edge signals (MACD/EMA cross) are caught in real time.
+  // The dedupe key is only consumed on a SUCCESSFUL entry — a failed attempt
+  // (API error, margin fetch, stale status) retries after a short backoff.
+  function logEntrySkipOnce(key, msg) {
+    if (lastSkipLogKey === key) return;
+    lastSkipLogKey = key;
+    addLog(msg, 'info');
+  }
+
   async function maybeAutoEnterOnSignal(result) {
-    if (!botRunning || serverBotActive) return;
     if (result.signal !== 'LONG' && result.signal !== 'SHORT') return;
-    if (autoEntryBusy || liveExitBusy || isAutoEntryPaused()) return;
-    if (hasOpenPosition()) return;
-    if (result.signal === 'SHORT' && !state.allowShort) return;
+    if (!botRunning) return;
 
     const barTime = lastCandles.at(-1)?.time;
     const key = `${result.signal}:${barTime}`;
+
+    if (serverBotActive) {
+      logEntrySkipOnce(`server:${key}`, `${result.signal} 신호 감지 — 서버 봇이 진입을 처리합니다.`);
+      return;
+    }
+    if (autoEntryBusy || liveExitBusy) return;
+    if (Date.now() < autoEntryRetryAt) return;
+    if (isAutoEntryPaused()) {
+      logEntrySkipOnce(`pause:${key}`, `${result.signal} 신호 — 수동 청산 직후 대기 중이라 진입을 보류합니다.`);
+      return;
+    }
+    if (hasOpenPosition()) return;
+    if (result.signal === 'SHORT' && !state.allowShort) {
+      logEntrySkipOnce(`short:${key}`, 'SHORT(매도) 신호 — 숏 허용이 꺼져 있어 진입하지 않습니다. (설정에서 숏 허용을 켜세요)');
+      return;
+    }
     if (key === lastAutoEntryKey) return;
 
     autoEntryBusy = true;
-    lastAutoEntryKey = key;
     try {
       addLog(`${result.signal} 신호 감지 — 즉시 진입 시도 (${result.reason})`, 'info');
       await executeSignal(result);
+      if (hasOpenPosition()) {
+        lastAutoEntryKey = key;
+      } else {
+        // Entry did not go through (logged inside executeSignal) — retry while
+        // the signal is still valid instead of blacklisting this bar.
+        autoEntryRetryAt = Date.now() + 15_000;
+      }
       updateUI();
     } catch (err) {
-      addLog(`자동 진입 실패: ${err.message}`, 'loss');
+      autoEntryRetryAt = Date.now() + 15_000;
+      addLog(`자동 진입 실패: ${err.message} — 15초 후 재시도`, 'loss');
     } finally {
       autoEntryBusy = false;
     }
@@ -1345,31 +1374,33 @@ const FuturesBotApp = (() => {
       if (result.signal === 'LONG' || result.signal === 'SHORT') {
         if (hasOpenPosition()) return;
         await refreshTestnetStatus();
-        if (!testnetStatus?.position) {
-          try {
-            readFormSettings();
-            const side = result.signal;
-            const levels = result.entryLevels || calcEntryLevels(side);
-            if (!levels) {
-              addLog('진입 실패: 손절/익절 계산 불가', 'loss');
-              return;
-            }
-            await FuturesApiClient.setup({
-              leverage: state.leverage,
-              marginType: 'ISOLATED',
-              symbol: state.symbol,
-              tradeMarginUsdt: tradeMargin,
-            });
-            const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
-            positionStopPrice = levels.stopPrice;
-            positionTakeProfitPrice = levels.takeProfitPrice;
-            addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
-            updatePositionStopLine();
-            await refreshTestnetStatus();
-            updateUI();
-          } catch (err) {
-            addLog(`${result.signal} 진입 실패: ${err.message}`, 'loss');
+        if (testnetStatus?.position) {
+          addLog(`${result.signal} 신호 — 이미 ${testnetStatus.position.side} 포지션 보유 중이라 진입 생략`, 'info');
+          return;
+        }
+        try {
+          readFormSettings();
+          const side = result.signal;
+          const levels = result.entryLevels || calcEntryLevels(side);
+          if (!levels) {
+            addLog('진입 실패: 손절/익절 계산 불가', 'loss');
+            return;
           }
+          await FuturesApiClient.setup({
+            leverage: state.leverage,
+            marginType: 'ISOLATED',
+            symbol: state.symbol,
+            tradeMarginUsdt: tradeMargin,
+          });
+          const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
+          positionStopPrice = levels.stopPrice;
+          positionTakeProfitPrice = levels.takeProfitPrice;
+          addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+          updatePositionStopLine();
+          await refreshTestnetStatus();
+          updateUI();
+        } catch (err) {
+          addLog(`${result.signal} 진입 실패: ${err.message}`, 'loss');
         }
       }
       return;
@@ -1516,8 +1547,15 @@ const FuturesBotApp = (() => {
       $('#signalInfo').textContent = result.reason;
       updateRsiDisplay(result.snapshot);
 
-      if ((result.signal === 'LONG' || result.signal === 'SHORT') && !posSide && !isAutoEntryPaused()) {
-        await executeSignal(result);
+      if ((result.signal === 'LONG' || result.signal === 'SHORT') && !posSide) {
+        if (isAutoEntryPaused()) {
+          logEntrySkipOnce(
+            `pause:${result.signal}:${candles.at(-1)?.time}`,
+            `${result.signal} 신호 — 수동 청산 직후 대기 중이라 진입을 보류합니다.`,
+          );
+        } else {
+          await executeSignal(result);
+        }
       }
     } catch (err) {
       addLog(`오류: ${err.message}`, 'loss');
