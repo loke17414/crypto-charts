@@ -64,6 +64,85 @@ let positionTpSeries = null;
 let positionEntrySeries = null;
 let pendingSwingLevels = null;
 let pendingStopLossPrice = null;
+let slTpDragState = null;
+let onSlTpDragCallback = null;
+
+function setSlTpDragHandler(fn) {
+  onSlTpDragCallback = typeof fn === 'function' ? fn : null;
+}
+
+function validateSlTpPrice(side, entryPrice, role, price) {
+  if (!Number.isFinite(price) || !Number.isFinite(entryPrice)) return false;
+  if (side === 'LONG') {
+    if (role === 'sl') return price < entryPrice;
+    if (role === 'tp') return price > entryPrice;
+  }
+  if (side === 'SHORT') {
+    if (role === 'sl') return price > entryPrice;
+    if (role === 'tp') return price < entryPrice;
+  }
+  return false;
+}
+
+function priceFromClientY(clientY) {
+  const main = document.querySelector('.chart-main');
+  if (!main || !candleSeries) return null;
+  const rect = main.getBoundingClientRect();
+  const y = clientY - rect.top;
+  const price = candleSeries.coordinateToPrice(y);
+  return Number.isFinite(price) ? price : null;
+}
+
+function onSlTpDragMove(e) {
+  if (!slTpDragState || !positionOverlayPending) return;
+  const { role } = slTpDragState;
+  const { side, entryPrice } = positionOverlayPending;
+  const price = priceFromClientY(e.clientY);
+  if (price == null || !validateSlTpPrice(side, entryPrice, role, price)) return;
+
+  if (role === 'sl') positionOverlayPending.stopPrice = price;
+  else if (role === 'tp') positionOverlayPending.takeProfitPrice = price;
+
+  positionAutoscalePrices = [
+    positionOverlayPending.entryPrice,
+    positionOverlayPending.stopPrice,
+    positionOverlayPending.takeProfitPrice,
+  ].filter(Number.isFinite);
+  updatePositionOverlayLabels();
+  onSlTpDragCallback?.({
+    role,
+    price,
+    side,
+    entryPrice,
+    stopPrice: positionOverlayPending.stopPrice,
+    takeProfitPrice: positionOverlayPending.takeProfitPrice,
+  });
+}
+
+function onSlTpDragEnd() {
+  slTpDragState = null;
+  document.removeEventListener('mousemove', onSlTpDragMove);
+  document.removeEventListener('mouseup', onSlTpDragEnd);
+  document.body.classList.remove('pos-sl-tp-dragging');
+}
+
+function startSlTpDrag(role, e) {
+  if (!positionOverlayPending || (role !== 'sl' && role !== 'tp')) return;
+  e.preventDefault();
+  slTpDragState = { role };
+  document.body.classList.add('pos-sl-tp-dragging');
+  document.addEventListener('mousemove', onSlTpDragMove);
+  document.addEventListener('mouseup', onSlTpDragEnd);
+}
+
+function bindPositionLabelDrag(wrap) {
+  if (!wrap || wrap.dataset.dragBound) return;
+  wrap.dataset.dragBound = '1';
+  wrap.addEventListener('mousedown', (e) => {
+    const role = e.target.closest('[data-drag-role]')?.dataset.dragRole;
+    if (role) startSlTpDrag(role, e);
+  });
+}
 function isPriceScaleAuto() {
   if (!chart) return true;
   try {
@@ -1961,11 +2040,33 @@ function ensurePositionLabelWrap() {
       const el = document.createElement('div');
       el.className = `pos-projection-label pos-projection-label--${role}`;
       el.dataset.role = role;
+      if (role === 'sl' || role === 'tp') el.dataset.dragRole = role;
       wrap.appendChild(el);
     }
+    for (const role of ['sl', 'tp']) {
+      const hit = document.createElement('div');
+      hit.className = `pos-projection-hit pos-projection-hit--${role}`;
+      hit.dataset.dragRole = role;
+      hit.title = '드래그하여 가격 조정';
+      wrap.appendChild(hit);
+    }
+    bindPositionLabelDrag(wrap);
     main.appendChild(wrap);
   }
   return wrap;
+}
+
+function layoutPositionHitStrip(wrap, role, price, chartWidth, paneHeight) {
+  const hit = wrap?.querySelector(`.pos-projection-hit--${role}`);
+  if (!hit) return;
+  const y = candleSeries?.priceToCoordinate(price);
+  if (!Number.isFinite(price) || y == null || y < -24 || y > paneHeight + 24) {
+    hit.style.display = 'none';
+    return;
+  }
+  hit.style.display = 'block';
+  hit.style.top = `${y}px`;
+  hit.style.width = `${chartWidth}px`;
 }
 
 function layoutPositionLabelRow(el, lineEl, price, strokeColor, chartWidth, paneHeight) {
@@ -2033,12 +2134,14 @@ function updatePositionOverlayLabels() {
       ? `목표 ${formatPrice(takeProfitPrice)}${tpPct != null ? ` (+${tpPct.toFixed(2)}%)` : ''}`
       : '';
     layoutPositionLabelRow(tpEl, tpLine, takeProfitPrice, '#26a69a', chartWidth, paneHeight);
+    layoutPositionHitStrip(wrap, 'tp', takeProfitPrice, chartWidth, paneHeight);
   }
   if (slEl) {
     slEl.textContent = Number.isFinite(stopPrice)
       ? `손절 ${formatPrice(stopPrice)}${slPct != null ? ` (-${slPct.toFixed(2)}%)` : ''}`
       : '';
     layoutPositionLabelRow(slEl, slLine, stopPrice, '#ef5350', chartWidth, paneHeight);
+    layoutPositionHitStrip(wrap, 'sl', stopPrice, chartWidth, paneHeight);
   }
   if (entryEl) {
     entryEl.classList.toggle('pos-projection-label--short', !buy);
@@ -2175,6 +2278,7 @@ window.CryptoCharts = {
   clearSignalOverlay,
   setPositionOverlay,
   clearPositionOverlay,
+  setSlTpDragHandler,
   selectCoin: selectCoinByQuery,
   setInterval: setChartInterval,
   setChartType: setChartTypeMode,
@@ -2210,6 +2314,7 @@ window.CryptoCharts.setSignalOverlay = setSignalOverlay;
 window.CryptoCharts.clearSignalOverlay = clearSignalOverlay;
 window.CryptoCharts.setPositionOverlay = setPositionOverlay;
 window.CryptoCharts.clearPositionOverlay = clearPositionOverlay;
+window.CryptoCharts.setSlTpDragHandler = setSlTpDragHandler;
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

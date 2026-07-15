@@ -890,6 +890,30 @@ a:hover { text-decoration: underline; }
   border-color: #f7931a;
 }
 
+.pos-projection-hit {
+  position: absolute;
+  left: 0;
+  height: 16px;
+  transform: translateY(-50%);
+  cursor: ns-resize;
+  pointer-events: auto;
+  z-index: 1;
+  background: transparent;
+}
+
+.pos-projection-label[data-drag-role] {
+  cursor: ns-resize;
+}
+
+body.pos-sl-tp-dragging {
+  cursor: ns-resize !important;
+  user-select: none;
+}
+
+body.pos-sl-tp-dragging .chart-main {
+  cursor: ns-resize !important;
+}
+
 .footer {
   padding: 0.75rem 1.5rem;
   border-top: 1px solid var(--border);

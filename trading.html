@@ -25,7 +25,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=20260716b">
+  <link rel="stylesheet" href="css/style.css?v=20260716c">
 
   <script type="application/ld+json">
   {
@@ -131,6 +131,8 @@
             <input type="number" id="takeProfitPrice" placeholder="자동 (%)" min="0" step="0.01">
           </div>
         </div>
+        <button type="button" id="confirmSlTpBtn" class="btn btn--primary btn--block btn--sm">SL/TP 확인</button>
+        <p class="api-hint" id="slTpConfirmHint">SL/TP를 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.</p>
 
         <div class="form-group form-group--check hidden">
           <label><input type="checkbox" id="allowShort" checked> 숏 포지션 허용</label>
@@ -431,14 +433,14 @@
   <script src="js/strategy-engine.js?v=20260715s"></script>
   <script src="js/drawings.js"></script>
   <script src="js/kline-loader.js"></script>
-  <script src="js/app.js?v=20260716c"></script>
+  <script src="js/app.js?v=20260716d"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260715g"></script>
   <script src="js/backtest-loader.js?v=20260715g"></script>
   <script src="js/futures-api-client.js?v=20260715e"></script>
   <script src="js/risk-sizing.js"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260715z"></script>
+  <script src="js/futures-bot-app.js?v=20260716d"></script>
   <script src="js/strategy-ai.js?v=20260715r"></script>
 </body>
 </html>

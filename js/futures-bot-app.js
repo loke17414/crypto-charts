@@ -36,6 +36,8 @@ const FuturesBotApp = (() => {
   let lastSkipLogKey = null;
   let autoEntryPausedUntil = 0;
   let manualCloseBusy = false;
+  let slTpConfirmed = false;
+  let lastPendingSide = 'LONG';
 
   const state = {
     mode: 'paper',
@@ -419,6 +421,135 @@ const FuturesBotApp = (() => {
     addLog(`${note}${changed}`, 'info');
   }
 
+  function resetSlTpConfirm() {
+    slTpConfirmed = false;
+    updateConfirmSlTpUi();
+  }
+
+  function confirmSlTp() {
+    if (hasOpenPosition()) return;
+    readFormSettings();
+    const side = lastPendingSide;
+    const entryPrice = state.lastPrice || lastCandles.at(-1)?.close;
+    const levels = calcEntryLevels(side, entryPrice);
+    if (!levels) {
+      addLog('SL/TP 확인 실패: 가격 계산 불가', 'loss');
+      return;
+    }
+    slTpConfirmed = true;
+    updateConfirmSlTpUi();
+    syncPreviewSlTpOverlay({ signal: side, entryLevels: levels });
+    addLog(`SL/TP 확인 — SL $${levels.stopPrice.toFixed(2)} · TP $${levels.takeProfitPrice.toFixed(2)}`, 'info');
+  }
+
+  function updateConfirmSlTpUi() {
+    const btn = $('#confirmSlTpBtn');
+    const hint = $('#slTpConfirmHint');
+    if (!btn) return;
+    if (hasOpenPosition()) {
+      btn.disabled = true;
+      btn.textContent = '포지션 보유 중';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      if (hint) hint.textContent = '청산 후 다음 진입 전 SL/TP를 다시 확인하세요.';
+      return;
+    }
+    btn.disabled = false;
+    if (slTpConfirmed) {
+      btn.textContent = 'SL/TP 확인됨 ✓';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      if (hint) hint.textContent = '확인 완료 — 봇/수동 진입 시 이 SL/TP가 적용됩니다.';
+    } else {
+      btn.textContent = 'SL/TP 확인';
+      btn.className = 'btn btn--primary btn--block btn--sm';
+      if (hint) hint.textContent = 'SL/TP를 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.';
+    }
+  }
+
+  function syncPctFieldsFromPrices(side, entryPrice, stopPrice, takeProfitPrice) {
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) return;
+    if (Number.isFinite(stopPrice)) {
+      const pct = side === 'LONG'
+        ? ((entryPrice - stopPrice) / entryPrice) * 100
+        : ((stopPrice - entryPrice) / entryPrice) * 100;
+      setFieldValue('stopLoss', Math.max(0.1, pct).toFixed(2));
+    }
+    if (Number.isFinite(takeProfitPrice)) {
+      const pct = side === 'LONG'
+        ? ((takeProfitPrice - entryPrice) / entryPrice) * 100
+        : ((entryPrice - takeProfitPrice) / entryPrice) * 100;
+      setFieldValue('takeProfit', Math.max(0.1, pct).toFixed(2));
+    }
+  }
+
+  function applySlTpDrag({ role, price, side, entryPrice, stopPrice, takeProfitPrice }) {
+    readFormSettings();
+    if (role === 'sl') setFieldValue('stopLossPrice', price.toFixed(2));
+    if (role === 'tp') setFieldValue('takeProfitPrice', price.toFixed(2));
+    syncPctFieldsFromPrices(side, entryPrice, stopPrice, takeProfitPrice);
+
+    if (hasOpenPosition()) {
+      positionStopPrice = stopPrice;
+      positionTakeProfitPrice = takeProfitPrice;
+      savePositionSlTpStorage(side, entryPrice, stopPrice, takeProfitPrice);
+      if (!isTestnetMode()) {
+        const pos = FuturesPaper.getPosition();
+        if (pos) {
+          pos.stopPrice = stopPrice;
+          pos.takeProfitPrice = takeProfitPrice;
+        }
+      }
+      updatePositionOverlay();
+    } else {
+      lastPendingSide = side;
+      resetSlTpConfirm();
+      syncPreviewSlTpOverlay({ signal: side, entryLevels: { stopPrice, takeProfitPrice } });
+    }
+  }
+
+  function syncPreviewSlTpOverlay(result) {
+    if (hasOpenPosition()) return;
+
+    const isEntry = result?.signal === 'LONG' || result?.signal === 'SHORT';
+    if (isEntry) lastPendingSide = result.signal;
+
+    const side = isEntry ? result.signal : lastPendingSide;
+    const entryPrice = lastCandles.at(-1)?.close || state.lastPrice;
+    if (!entryPrice || !side) {
+      window.CryptoCharts?.clearPositionOverlay?.();
+      window.CryptoCharts?.clearSignalOverlay?.();
+      return;
+    }
+
+    const levels = result?.entryLevels || calcEntryLevels(side, entryPrice);
+    if (!levels) {
+      window.CryptoCharts?.clearPositionOverlay?.();
+      return;
+    }
+
+    window.CryptoCharts?.clearSignalOverlay?.();
+    window.CryptoCharts?.setPositionOverlay?.({
+      side,
+      entryPrice,
+      stopPrice: levels.stopPrice,
+      takeProfitPrice: levels.takeProfitPrice,
+    });
+  }
+
+  function syncPreviewFromLastSignal() {
+    if (!lastCandles.length || hasOpenPosition()) return;
+    readFormSettings();
+    const settings = getSettings();
+    const pos = isTestnetMode() ? testnetStatus?.position?.side : FuturesPaper.getPosition()?.side;
+    const result = FuturesStrategy.analyze(lastCandles, settings, pos || null);
+    syncPreviewSlTpOverlay(result);
+  }
+
+  function requireSlTpConfirmedForEntry() {
+    if (hasOpenPosition() || slTpConfirmed) return true;
+    addLog('진입 보류: SL/TP 확인 버튼을 먼저 눌러주세요.', 'info');
+    return false;
+  }
+
   function readManualSlTpPrices() {
     const sl = parseFloat($('#stopLossPrice')?.value);
     const tp = parseFloat($('#takeProfitPrice')?.value);
@@ -624,6 +755,7 @@ const FuturesBotApp = (() => {
     positionStopPrice = null;
     positionTakeProfitPrice = null;
     clearPositionSlTpStorage();
+    resetSlTpConfirm();
     window.CryptoCharts?.clearPositionOverlay?.();
     window.CryptoCharts?.clearStopLossLine?.();
   }
@@ -1286,7 +1418,7 @@ const FuturesBotApp = (() => {
     const result = FuturesStrategy.analyze(lastCandles, settings, pos || null);
     $('#signalInfo').textContent = result.reason;
     updateRsiDisplay(result.snapshot);
-    syncSignalOverlay(result);
+    syncPreviewSlTpOverlay(result);
     if (hasOpenPosition()) ensurePositionSlTpOverlay();
     maybeAutoEnterOnSignal(result);
   }
@@ -1321,6 +1453,10 @@ const FuturesBotApp = (() => {
       return;
     }
     if (hasOpenPosition()) return;
+    if (!slTpConfirmed) {
+      logEntrySkipOnce(`sltp:${key}`, `${result.signal} 신호 — SL/TP 확인 버튼을 눌러야 진입합니다.`);
+      return;
+    }
     if (result.signal === 'SHORT' && !state.allowShort) {
       logEntrySkipOnce(`short:${key}`, 'SHORT(매도) 신호 — 숏 허용이 꺼져 있어 진입하지 않습니다. (설정에서 숏 허용을 켜세요)');
       return;
@@ -1347,24 +1483,9 @@ const FuturesBotApp = (() => {
     }
   }
 
-  // Draw dashed entry/SL/TP lines on the chart whenever the strategy produces a
-  // fresh entry (buy/sell) signal, and clear them otherwise. Uses the same
-  // dashed convention as the backtest overlays (red = 손절, green = 익절).
+  // Preview entry/SL/TP on chart (left labels + dashed lines). Cleared when no preview.
   function syncSignalOverlay(result) {
-    const setFn = window.CryptoCharts?.setSignalOverlay;
-    const clearFn = window.CryptoCharts?.clearSignalOverlay;
-    const isEntry = (result.signal === 'LONG' || result.signal === 'SHORT') && result.entryLevels;
-
-    if (isEntry && typeof setFn === 'function') {
-      setFn({
-        side: result.signal,
-        entryPrice: lastCandles.at(-1)?.close,
-        stopPrice: result.entryLevels.stopPrice,
-        takeProfitPrice: result.entryLevels.takeProfitPrice,
-      });
-    } else if (typeof clearFn === 'function') {
-      clearFn();
-    }
+    syncPreviewSlTpOverlay(result);
   }
 
   async function connectApi() {
@@ -1513,6 +1634,7 @@ const FuturesBotApp = (() => {
         $('#positionPnl').innerHTML = `<span class="${cls}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>`;
       }
       updatePositionStopLine();
+      updateConfirmSlTpUi();
       return;
     }
 
@@ -1546,6 +1668,7 @@ const FuturesBotApp = (() => {
     $('#totalPnl').textContent = `${wallet.totalPnl >= 0 ? '+' : ''}$${wallet.totalPnl.toFixed(2)}`;
     $('#totalPnl').className = wallet.totalPnl >= 0 ? 'positive' : 'negative';
     updatePositionStopLine();
+    updateConfirmSlTpUi();
   }
 
   async function executeSignal(result) {
@@ -1572,6 +1695,7 @@ const FuturesBotApp = (() => {
 
       if (result.signal === 'LONG' || result.signal === 'SHORT') {
         if (hasOpenPosition()) return;
+        if (!requireSlTpConfirmedForEntry()) return;
         await refreshTestnetStatus();
         if (testnetStatus?.position) {
           addLog(`${result.signal} 신호 — 이미 ${testnetStatus.position.side} 포지션 보유 중이라 진입 생략`, 'info');
@@ -1618,6 +1742,7 @@ const FuturesBotApp = (() => {
     }
 
     if ((result.signal === 'LONG' || result.signal === 'SHORT') && !pos) {
+      if (!requireSlTpConfirmedForEntry()) return;
       const side = result.signal;
       const levels = result.entryLevels || calcEntryLevels(side);
       if (!levels) {
@@ -1903,6 +2028,8 @@ const FuturesBotApp = (() => {
       return;
     }
 
+    if (!requireSlTpConfirmedForEntry()) return;
+
     readFormSettings();
     const tradeMargin = await calcTradeMarginForTrade();
     const levels = calcEntryLevels(side);
@@ -2091,7 +2218,10 @@ const FuturesBotApp = (() => {
     addLog('CryptoCharts 차트 연동됨', 'info');
     if (window.CryptoCharts) {
       syncChartIndicators();
+      window.CryptoCharts.setSlTpDragHandler?.(applySlTpDrag);
     }
+    updateConfirmSlTpUi();
+    syncPreviewFromLastSignal();
     if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 테스트넷 키 연결 가능', 'info');
 
     document.querySelectorAll('[data-chart-ind]').forEach((btn) => {
@@ -2170,7 +2300,8 @@ const FuturesBotApp = (() => {
         if (hasOpenPosition()) {
           syncOpenPositionSlTp();
         } else {
-          updateSignalDisplay();
+          resetSlTpConfirm();
+          syncPreviewFromLastSignal();
         }
         scheduleBacktest(lastCandles);
         updateUI();
@@ -2178,6 +2309,8 @@ const FuturesBotApp = (() => {
       el.addEventListener('change', onSlTpChange);
       el.addEventListener('input', onSlTpChange);
     });
+
+    $('#confirmSlTpBtn')?.addEventListener('click', () => confirmSlTp());
 
     ['leverage', 'emaFast', 'emaSlow', 'useMacd', 'macdFast', 'macdSlow', 'macdSignal',
       'useMacdLineFilter', 'macdLongMin', 'macdShortMax',
