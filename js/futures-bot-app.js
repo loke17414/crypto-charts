@@ -1524,11 +1524,33 @@ const FuturesBotApp = (() => {
 
   const BOT_INTERVAL_KEY = 'crypto-charts-bot-interval';
 
+  function getBotIntervalSelection() {
+    const active = document.querySelector('#botIntervalPicker [data-bot-interval].active');
+    const val = active?.dataset.botInterval
+      || localStorage.getItem(BOT_INTERVAL_KEY)
+      || 'chart';
+    return val;
+  }
+
+  function setBotIntervalSelection(val, { persist = true } = {}) {
+    const picker = $('#botIntervalPicker');
+    if (!picker) return;
+    picker.querySelectorAll('[data-bot-interval]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.botInterval === val);
+    });
+    if (persist) localStorage.setItem(BOT_INTERVAL_KEY, val);
+  }
+
+  function botIntervalLabel(val) {
+    if (val === 'chart') return '차트와 동일';
+    return INTERVALS[val]?.label || val;
+  }
+
   // Resolve which timeframe the bot should trade on when it starts. "chart"
   // keeps whatever the chart shows; an explicit interval switches the chart
   // (the whole pipeline — candles, signals, backtest — follows the chart).
   async function applyBotIntervalOnStart() {
-    const sel = $('#botInterval')?.value || 'chart';
+    const sel = getBotIntervalSelection();
     if (sel === 'chart' || !INTERVALS[sel]) return state.interval;
 
     const chartInterval = window.CryptoCharts?.getState?.()?.interval;
@@ -1759,14 +1781,21 @@ const FuturesBotApp = (() => {
     document.addEventListener('chart-candles-updated', onChartCandlesUpdated);
     document.addEventListener('chart-candle-tick', onChartCandleTick);
 
-    const botIntervalEl = $('#botInterval');
-    if (botIntervalEl) {
+    const picker = $('#botIntervalPicker');
+    if (picker) {
       const saved = localStorage.getItem(BOT_INTERVAL_KEY);
-      if (saved && (saved === 'chart' || INTERVALS[saved])) botIntervalEl.value = saved;
-      botIntervalEl.addEventListener('change', () => {
-        localStorage.setItem(BOT_INTERVAL_KEY, botIntervalEl.value);
+      if (saved && (saved === 'chart' || INTERVALS[saved])) {
+        setBotIntervalSelection(saved, { persist: false });
+      }
+      picker.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-bot-interval]');
+        if (!btn) return;
+        setBotIntervalSelection(btn.dataset.botInterval);
         if (botRunning) {
-          addLog('봉 주기 변경은 다음 봇 시작부터 적용됩니다. (봇 정지 후 다시 시작)', 'info');
+          addLog(
+            `봉 주기 ${botIntervalLabel(btn.dataset.botInterval)} — 다음 봇 시작부터 적용됩니다.`,
+            'info',
+          );
         }
       });
     }

@@ -1145,6 +1145,28 @@ a:hover { text-decoration: underline; }
 }
 
 .trading-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem; }
+.bot-interval-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+.bot-interval-picker__label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.bot-interval-picker__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.bot-interval-picker__buttons .btn--tab {
+  flex: 1 1 calc(25% - 0.35rem);
+  min-width: 2.6rem;
+  padding: 0.38rem 0.2rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
 .trading-actions--manual { flex-direction: row; }
 .trading-actions--manual .btn { flex: 1; }
 .btn--short { background: var(--red); color: #fff; }
