@@ -38,6 +38,10 @@ const FuturesBotApp = (() => {
   let manualCloseBusy = false;
   let slTpConfirmed = false;
   let lastPendingSide = 'LONG';
+  // Preview lines stay visible while the user is actively setting SL/TP
+  // (recent drag/edit/confirm); otherwise they are cleared when flat.
+  let slTpPreviewTouchedAt = 0;
+  const SLTP_PREVIEW_TTL_MS = 2 * 60_000;
 
   const state = {
     mode: 'paper',
@@ -437,6 +441,7 @@ const FuturesBotApp = (() => {
       return;
     }
     slTpConfirmed = true;
+    slTpPreviewTouchedAt = Date.now();
     updateConfirmSlTpUi();
     syncPreviewSlTpOverlay({ signal: side, entryLevels: levels });
     addLog(`SL/TP 확인 — SL $${levels.stopPrice.toFixed(2)} · TP $${levels.takeProfitPrice.toFixed(2)}`, 'info');
@@ -524,6 +529,7 @@ const FuturesBotApp = (() => {
       scheduleExchangeSlTpSync();
     } else {
       lastPendingSide = side;
+      slTpPreviewTouchedAt = Date.now();
       resetSlTpConfirm();
       syncPreviewSlTpOverlay({ signal: side, entryLevels: { stopPrice, takeProfitPrice } });
     }
@@ -534,6 +540,16 @@ const FuturesBotApp = (() => {
 
     const isEntry = result?.signal === 'LONG' || result?.signal === 'SHORT';
     if (isEntry) lastPendingSide = result.signal;
+
+    // Flat + no live entry signal + not in an active SL/TP setup session →
+    // nothing to preview; clear leftovers (e.g. right after SL/TP close).
+    const settingUp = slTpConfirmed
+      || (Date.now() - slTpPreviewTouchedAt < SLTP_PREVIEW_TTL_MS);
+    if (!isEntry && !settingUp) {
+      window.CryptoCharts?.clearPositionOverlay?.();
+      window.CryptoCharts?.clearSignalOverlay?.();
+      return;
+    }
 
     const side = isEntry ? result.signal : lastPendingSide;
     const entryPrice = lastCandles.at(-1)?.close || state.lastPrice;
@@ -781,6 +797,7 @@ const FuturesBotApp = (() => {
     positionTakeProfitPrice = null;
     clearPositionSlTpStorage();
     resetSlTpConfirm();
+    slTpPreviewTouchedAt = 0;
     window.CryptoCharts?.clearPositionOverlay?.();
     window.CryptoCharts?.clearStopLossLine?.();
   }
@@ -1649,7 +1666,7 @@ const FuturesBotApp = (() => {
       if (!pos) {
         posEl.innerHTML = '<span class="text-muted">포지션 없음</span>';
         $('#positionPnl').textContent = '';
-        if (positionStopPrice != null) clearPositionStop();
+        if (positionStopPrice != null || positionTakeProfitPrice != null) clearPositionStop();
       } else {
         if (positionStopPrice == null) {
           const levels = calcEntryLevels(pos.side, pos.entryPrice);
@@ -1673,7 +1690,9 @@ const FuturesBotApp = (() => {
     if (!pos) {
       posEl.innerHTML = '<span class="text-muted">포지션 없음</span>';
       $('#positionPnl').textContent = '';
-      clearPositionStop();
+      // Clear once on the open→closed transition only; calling this every
+      // refresh while flat would wipe the SL/TP confirm + preview state.
+      if (positionStopPrice != null || positionTakeProfitPrice != null) clearPositionStop();
     } else {
       if (positionStopPrice == null || pos.takeProfitPrice == null) {
         const levels = calcEntryLevels(pos.side, pos.entryPrice);
@@ -2347,6 +2366,7 @@ const FuturesBotApp = (() => {
         if (hasOpenPosition()) {
           syncOpenPositionSlTp();
         } else {
+          slTpPreviewTouchedAt = Date.now();
           resetSlTpConfirm();
           syncPreviewFromLastSignal();
         }
