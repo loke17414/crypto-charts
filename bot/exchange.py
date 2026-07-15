@@ -207,66 +207,75 @@ class BinanceFuturesClient:
         rounded = self._round_step(price, filters["tick_size"])
         return f"{rounded:.8f}".rstrip("0").rstrip(".")
 
-    def place_stop_market(self, position_side: str, stop_price: float) -> dict[str, Any]:
-        """Exchange-side stop loss that closes the whole position when touched."""
+    # Conditional orders (STOP_MARKET / TAKE_PROFIT_MARKET) moved to the Algo
+    # Order API on 2025-12-09; /fapi/v1/order now rejects them with error -4120.
+    def _place_conditional(self, position_side: str, order_type: str, trigger_price: float) -> dict[str, Any]:
         side = "SELL" if position_side == "LONG" else "BUY"
         return self._request(
             "POST",
-            "/fapi/v1/order",
+            "/fapi/v1/algoOrder",
             {
+                "algoType": "CONDITIONAL",
                 "symbol": self.config.symbol,
                 "side": side,
-                "type": "STOP_MARKET",
-                "stopPrice": self._format_price(stop_price),
+                "type": order_type,
+                "triggerPrice": self._format_price(trigger_price),
                 "closePosition": "true",
                 "workingType": "MARK_PRICE",
             },
             signed=True,
         )
+
+    def place_stop_market(self, position_side: str, stop_price: float) -> dict[str, Any]:
+        """Exchange-side stop loss that closes the whole position when touched."""
+        return self._place_conditional(position_side, "STOP_MARKET", stop_price)
 
     def place_take_profit_market(self, position_side: str, take_profit_price: float) -> dict[str, Any]:
         """Exchange-side take profit that closes the whole position when touched."""
-        side = "SELL" if position_side == "LONG" else "BUY"
-        return self._request(
-            "POST",
-            "/fapi/v1/order",
-            {
-                "symbol": self.config.symbol,
-                "side": side,
-                "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": self._format_price(take_profit_price),
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            },
-            signed=True,
-        )
+        return self._place_conditional(position_side, "TAKE_PROFIT_MARKET", take_profit_price)
 
-    def get_open_orders(self) -> list[dict[str, Any]]:
-        return self._request(
+    def get_open_algo_orders(self) -> list[dict[str, Any]]:
+        data = self._request(
             "GET",
-            "/fapi/v1/openOrders",
+            "/fapi/v1/openAlgoOrders",
             {"symbol": self.config.symbol},
             signed=True,
         )
+        if isinstance(data, dict):
+            return data.get("orders") or data.get("algoOrders") or []
+        return data or []
 
     def cancel_all_orders(self) -> None:
-        self._request(
-            "DELETE",
-            "/fapi/v1/allOpenOrders",
-            {"symbol": self.config.symbol},
-            signed=True,
-        )
+        """Cancel open algo (conditional) orders; also clear legacy open orders."""
+        try:
+            self._request(
+                "DELETE",
+                "/fapi/v1/algoOpenOrders",
+                {"symbol": self.config.symbol},
+                signed=True,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Cancel algo open orders failed: %s", exc)
+        try:
+            self._request(
+                "DELETE",
+                "/fapi/v1/allOpenOrders",
+                {"symbol": self.config.symbol},
+                signed=True,
+            )
+        except requests.RequestException as exc:
+            logger.debug("Cancel legacy open orders failed: %s", exc)
 
     def get_sl_tp_orders(self) -> dict[str, float | None]:
         """Return current exchange-side SL/TP trigger prices, if any."""
         result: dict[str, float | None] = {"stop_price": None, "take_profit_price": None}
         try:
-            orders = self.get_open_orders()
+            orders = self.get_open_algo_orders()
         except requests.RequestException:
             return result
         for order in orders:
-            otype = order.get("type") or order.get("origType")
-            trigger = float(order.get("stopPrice") or 0)
+            otype = order.get("type") or order.get("origType") or order.get("orderType")
+            trigger = float(order.get("triggerPrice") or order.get("stopPrice") or 0)
             if trigger <= 0:
                 continue
             if otype == "STOP_MARKET":
