@@ -78,4 +78,14 @@ check('maxTrades caps result', btFull.stats.trades <= 100);
 check('targetReached is boolean', typeof btFull.stats.targetReached === 'boolean');
 check('rangeFromTime set when trades exist', btFull.stats.trades === 0 || btFull.stats.rangeFromTime != null);
 
+// 5. maxTrades keeps the NEWEST trades (markers must reach the latest bar region).
+const btAll = FuturesStrategy.backtest(full, settings, { maxTrades: null });
+const btCapped = FuturesStrategy.backtest(full, settings, { maxTrades: 10 });
+const newestExitAll = btAll.trades.at(-1)?.exitTime ?? null;
+const newestExitKept = btCapped.trades.at(-1)?.exitTime ?? null;
+check(
+  `kept trades include newest (${newestExitKept} vs ${newestExitAll})`,
+  btAll.trades.length === 0 || newestExitKept === newestExitAll,
+);
+
 process.exit(failures ? 1 : 0);

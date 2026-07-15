@@ -395,8 +395,9 @@ const FuturesStrategy = (() => {
 
     // 각 구간은 독립 시뮬레이션 (시간순, 구간 안에서도 과거 → 최신으로 진행).
     // 구간 앞 warmupBars봉은 지표 계산 컨텍스트로만 쓰고 진입은 평가하지 않는다.
+    // maxTrades는 루프 중간에 끊지 않는다 — 오래된 구간에서 N건을 채우고 멈추면
+    // kept = slice(-N)이 최신 거래가 아닌 과거 거래만 남아 차트 오른쪽에 마커가 없다.
     for (const [from, to] of segments) {
-      if (maxTrades != null && trades.length >= maxTrades) break;
       const ctxStart = Math.max(0, from - warmupBars);
       const ctx = candles.slice(ctxStart, to);
       const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(ctx, settings);
@@ -404,7 +405,6 @@ const FuturesStrategy = (() => {
       position = null;
 
       for (let i = startLocal; i < ctx.length; i++) {
-        if (maxTrades != null && trades.length >= maxTrades) break;
         const candle = ctx[i];
 
         if (position) {
