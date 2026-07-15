@@ -110,7 +110,15 @@
           </div>
         </div>
 
-        <div class="form-row">
+        <div class="bot-interval-picker">
+          <span class="bot-interval-picker__label">SL/TP 설정 방식</span>
+          <div class="bot-interval-picker__buttons" id="slTpModePicker" role="group" aria-label="SL/TP 설정 방식">
+            <button type="button" class="btn btn--tab active" data-sltp-mode="pct">% 비율</button>
+            <button type="button" class="btn btn--tab" data-sltp-mode="pnl">손익 ($)</button>
+            <button type="button" class="btn btn--tab" data-sltp-mode="price">가격 ($)</button>
+          </div>
+        </div>
+        <div class="form-row" id="slTpPctRow">
           <div class="form-group">
             <label for="stopLoss">손절 SL (%)</label>
             <input type="number" id="stopLoss" value="1.5" min="0.1" max="50" step="0.1">
@@ -120,17 +128,27 @@
             <input type="number" id="takeProfit" value="3" min="0.1" max="100" step="0.1">
           </div>
         </div>
-        <p class="api-hint">진입가 대비 %. 아래 가격($)을 입력하면 % 대신 직접 가격이 적용됩니다.</p>
-        <div class="form-row">
+        <div class="form-row hidden" id="slTpPnlRow">
+          <div class="form-group">
+            <label for="stopLossPnl">손절 손실액 ($)</label>
+            <input type="number" id="stopLossPnl" placeholder="예: 50" min="0" step="1">
+          </div>
+          <div class="form-group">
+            <label for="takeProfitPnl">익절 이익액 ($)</label>
+            <input type="number" id="takeProfitPnl" placeholder="예: 100" min="0" step="1">
+          </div>
+        </div>
+        <div class="form-row hidden" id="slTpPriceRow">
           <div class="form-group">
             <label for="stopLossPrice">손절 가격 ($)</label>
-            <input type="number" id="stopLossPrice" placeholder="자동 (%)" min="0" step="0.01">
+            <input type="number" id="stopLossPrice" placeholder="예: 118000" min="0" step="0.01">
           </div>
           <div class="form-group">
             <label for="takeProfitPrice">익절 가격 ($)</label>
-            <input type="number" id="takeProfitPrice" placeholder="자동 (%)" min="0" step="0.01">
+            <input type="number" id="takeProfitPrice" placeholder="예: 124000" min="0" step="0.01">
           </div>
         </div>
+        <p class="api-hint" id="slTpModeHint">진입가 대비 % 거리 — 진입 전 미리보기가 현재가를 따라갑니다.</p>
         <button type="button" id="confirmSlTpBtn" class="btn btn--primary btn--block btn--sm">SL/TP 확인</button>
         <p class="api-hint" id="slTpConfirmHint">SL/TP를 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.</p>
 
@@ -440,7 +458,7 @@
   <script src="js/futures-api-client.js?v=20260716f"></script>
   <script src="js/risk-sizing.js"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260716k"></script>
+  <script src="js/futures-bot-app.js?v=20260716l"></script>
   <script src="js/strategy-ai.js?v=20260715r"></script>
 </body>
 </html>

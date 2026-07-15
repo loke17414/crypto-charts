@@ -76,6 +76,7 @@ const FuturesBotApp = (() => {
     rsiOverbought: 70,
     stopLossPct: 1.5,
     takeProfitPct: 3,
+    slTpMode: 'pct',
     pollSeconds: 60,
     backtestTradeCount: BACKTEST_TRADES_DEFAULT,
     lastPrice: 0,
@@ -526,11 +527,35 @@ const FuturesBotApp = (() => {
     }, 600);
   }
 
+  // Reflect dragged prices back into the input fields of the ACTIVE mode so
+  // the drag and the form always agree on the next entry's levels.
+  function syncModeFieldsFromDrag(side, entryPrice, stopPrice, takeProfitPrice) {
+    if (state.slTpMode === 'price') {
+      if (Number.isFinite(stopPrice)) setFieldValue('stopLossPrice', stopPrice.toFixed(2));
+      if (Number.isFinite(takeProfitPrice)) setFieldValue('takeProfitPrice', takeProfitPrice.toFixed(2));
+      return;
+    }
+    if (state.slTpMode === 'pnl') {
+      const notional = estimatePlannedNotional();
+      if (notional > 0 && Number.isFinite(entryPrice) && entryPrice > 0) {
+        if (Number.isFinite(stopPrice)) {
+          const pct = Math.abs(entryPrice - stopPrice) / entryPrice;
+          setFieldValue('stopLossPnl', (notional * pct).toFixed(2));
+        }
+        if (Number.isFinite(takeProfitPrice)) {
+          const pct = Math.abs(takeProfitPrice - entryPrice) / entryPrice;
+          setFieldValue('takeProfitPnl', (notional * pct).toFixed(2));
+        }
+      }
+      return;
+    }
+    syncPctFieldsFromPrices(side, entryPrice, stopPrice, takeProfitPrice);
+  }
+
   function applySlTpDrag({ role, price, side, entryPrice, stopPrice, takeProfitPrice }) {
     readFormSettings();
-    if (role === 'sl') setFieldValue('stopLossPrice', price.toFixed(2));
-    if (role === 'tp') setFieldValue('takeProfitPrice', price.toFixed(2));
-    syncPctFieldsFromPrices(side, entryPrice, stopPrice, takeProfitPrice);
+    syncModeFieldsFromDrag(side, entryPrice, stopPrice, takeProfitPrice);
+    readFormSettings();
 
     if (hasOpenPosition()) {
       positionStopPrice = stopPrice;
@@ -566,20 +591,6 @@ const FuturesBotApp = (() => {
     });
   }
 
-  // Mirror tracked preview levels into the $ fields so a later entry (which
-  // reads them as manual override) uses exactly what the chart shows. A field
-  // the user is typing in is left alone.
-  function syncManualPriceFieldsFromLevels(levels) {
-    const slEl = document.getElementById('stopLossPrice');
-    const tpEl = document.getElementById('takeProfitPrice');
-    if (slEl && document.activeElement !== slEl && Number.isFinite(levels.stopPrice)) {
-      slEl.value = levels.stopPrice.toFixed(2);
-    }
-    if (tpEl && document.activeElement !== tpEl && Number.isFinite(levels.takeProfitPrice)) {
-      tpEl.value = levels.takeProfitPrice.toFixed(2);
-    }
-  }
-
   function syncPreviewSlTpOverlay(result) {
     if (hasOpenPosition()) return;
 
@@ -604,12 +615,21 @@ const FuturesBotApp = (() => {
       return;
     }
 
-    const levels = result?.entryLevels || calcTrackedPreviewLevels(side, entryPrice);
+    let levels = result?.entryLevels || calcTrackedPreviewLevels(side, entryPrice);
     if (!levels) {
       window.CryptoCharts?.clearPositionOverlay?.();
       return;
     }
-    syncManualPriceFieldsFromLevels(levels);
+    // Price mode: SL/TP stay pinned at the user's absolute levels; only the
+    // entry line follows the current price.
+    if (state.slTpMode === 'price') {
+      const manual = readManualSlTpPrices();
+      levels = {
+        ...levels,
+        stopPrice: manual.stopPrice ?? levels.stopPrice,
+        takeProfitPrice: manual.takeProfitPrice ?? levels.takeProfitPrice,
+      };
+    }
 
     window.CryptoCharts?.clearSignalOverlay?.();
     window.CryptoCharts?.setPositionOverlay?.({
@@ -653,6 +673,34 @@ const FuturesBotApp = (() => {
     updateUI();
   }
 
+  const SLTP_MODE_KEY = 'crypto-charts-sltp-mode';
+  const SLTP_MODE_HINTS = {
+    pct: '진입가 대비 % 거리 — 진입 전 미리보기가 현재가를 따라갑니다.',
+    pnl: '손익 금액(USDT) 기준 — 예상 포지션 규모로 %를 환산하며 현재가를 따라갑니다.',
+    price: '지정한 가격에 고정 — SL/TP 선이 현재가를 따라가지 않습니다.',
+  };
+
+  function getSlTpMode() {
+    const active = document.querySelector('#slTpModePicker [data-sltp-mode].active');
+    return active?.dataset.sltpMode || 'pct';
+  }
+
+  function setSlTpMode(mode, { persist = true } = {}) {
+    if (!SLTP_MODE_HINTS[mode]) mode = 'pct';
+    const picker = $('#slTpModePicker');
+    if (!picker) return;
+    picker.querySelectorAll('[data-sltp-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sltpMode === mode);
+    });
+    $('#slTpPctRow')?.classList.toggle('hidden', mode !== 'pct');
+    $('#slTpPnlRow')?.classList.toggle('hidden', mode !== 'pnl');
+    $('#slTpPriceRow')?.classList.toggle('hidden', mode !== 'price');
+    const hint = $('#slTpModeHint');
+    if (hint) hint.textContent = SLTP_MODE_HINTS[mode];
+    if (persist) localStorage.setItem(SLTP_MODE_KEY, mode);
+    state.slTpMode = mode;
+  }
+
   function readManualSlTpPrices() {
     const sl = parseFloat($('#stopLossPrice')?.value);
     const tp = parseFloat($('#takeProfitPrice')?.value);
@@ -675,6 +723,9 @@ const FuturesBotApp = (() => {
 
   function applyManualSlTpOverride(levels, side, entryPrice) {
     if (!levels || !side || !entryPrice) return levels;
+    // Absolute $ levels only apply in price mode; % and PnL modes are fully
+    // handled by the normalized stopLossPct/takeProfitPct.
+    if (state.slTpMode !== 'price') return levels;
     const manual = readManualSlTpPrices();
     const out = { ...levels };
     const buy = side === 'LONG';
@@ -886,10 +937,13 @@ const FuturesBotApp = (() => {
     clearPositionSlTpStorage();
     resetSlTpConfirm();
     slTpPreviewTouchedAt = 0;
-    // Drag writes absolute $ prices into these fields; they are stale for the
-    // next trade (wrong side/level) so drop them back to %-based auto mode.
-    setFieldValue('stopLossPrice', '');
-    setFieldValue('takeProfitPrice', '');
+    // Outside price mode the $ fields only mirror drag positions and are stale
+    // for the next trade; in price mode they are the user's explicit setting
+    // and must survive the close (entry-side validation still guards them).
+    if (state.slTpMode !== 'price') {
+      setFieldValue('stopLossPrice', '');
+      setFieldValue('takeProfitPrice', '');
+    }
     window.CryptoCharts?.clearPositionOverlay?.();
     window.CryptoCharts?.clearStopLossLine?.();
   }
@@ -917,6 +971,12 @@ const FuturesBotApp = (() => {
   async function calcTradeMarginForTrade() {
     readFormSettings();
     const equity = await getEquity();
+    // PnL mode sizes with a fixed margin (riskPerTrade% of equity) — the SL
+    // PnL amount itself caps the loss, and the % conversion in
+    // readSlTpSettings assumes exactly this margin.
+    if (state.slTpMode === 'pnl') {
+      return Math.max(5, Math.round(((equity * state.riskPerTradePct) / 100) * 100) / 100);
+    }
     return RiskSizing.calcTradeMargin(equity, getRiskSettings());
   }
 
@@ -1013,11 +1073,76 @@ const FuturesBotApp = (() => {
     state.rsiOversold = parseFloat($('#rsiOversold')?.value) || 25;
     state.rsiOverbought = parseFloat($('#rsiOverbought')?.value) || 70;
     state.rsiPeriod = parseInt($('#rsiPeriod')?.value, 10) || 14;
-    state.stopLossPct = parseFloat($('#stopLoss')?.value) || 1.5;
-    state.takeProfitPct = parseFloat($('#takeProfit')?.value) || 3;
+    readSlTpSettings();
     state.pollSeconds = parseInt($('#pollSeconds').value, 10) || 60;
     state.backtestTradeCount = clampBacktestTradeCount($('#backtestTradeCount')?.value);
     syncFromChart();
+  }
+
+  // SL/TP can be entered three ways; everything downstream (strategy, preview,
+  // backtest, risk sizing, server bot export) consumes stopLossPct/takeProfitPct,
+  // so each mode is normalized to a % distance from the entry price here.
+  //  - pct:   direct % fields
+  //  - pnl:   USDT amounts converted via the planned position notional
+  //  - price: absolute $ levels converted via the current price (the actual
+  //           trigger prices stay pinned through applyManualSlTpOverride)
+  function readSlTpSettings() {
+    state.slTpMode = getSlTpMode();
+    const pctSl = parseFloat($('#stopLoss')?.value) || 1.5;
+    const pctTp = parseFloat($('#takeProfit')?.value) || 3;
+    state.stopLossPct = pctSl;
+    state.takeProfitPct = pctTp;
+
+    if (state.slTpMode === 'pnl') {
+      const slPnl = parseFloat($('#stopLossPnl')?.value);
+      const tpPnl = parseFloat($('#takeProfitPnl')?.value);
+      const notional = estimatePlannedNotional();
+      if (notional > 0) {
+        if (Number.isFinite(slPnl) && slPnl > 0) {
+          state.stopLossPct = Math.min(50, Math.max(0.05, (slPnl / notional) * 100));
+        }
+        if (Number.isFinite(tpPnl) && tpPnl > 0) {
+          state.takeProfitPct = Math.min(100, Math.max(0.05, (tpPnl / notional) * 100));
+        }
+      }
+    } else if (state.slTpMode === 'price') {
+      const price = state.lastPrice || lastCandles.at(-1)?.close;
+      const slPrice = parseFloat($('#stopLossPrice')?.value);
+      const tpPrice = parseFloat($('#takeProfitPrice')?.value);
+      if (price > 0) {
+        if (Number.isFinite(slPrice) && slPrice > 0) {
+          state.stopLossPct = Math.min(50, Math.max(0.05, (Math.abs(price - slPrice) / price) * 100));
+        }
+        if (Number.isFinite(tpPrice) && tpPrice > 0) {
+          state.takeProfitPct = Math.min(100, Math.max(0.05, (Math.abs(tpPrice - price) / price) * 100));
+        }
+      }
+    }
+  }
+
+  // Equity from cached status (no network) — good enough for previews.
+  function estimateEquitySync() {
+    if (isTestnetMode()) {
+      const bal = testnetStatus?.balance ?? 0;
+      const pos = testnetStatus?.position;
+      if (pos) {
+        const margin = (pos.quantity * pos.entryPrice) / (pos.leverage || state.leverage);
+        return bal + margin + (pos.unrealizedPnl ?? 0);
+      }
+      return bal;
+    }
+    return FuturesPaper.getEquity(state.lastPrice);
+  }
+
+  // Position value the next trade will open with. In PnL mode the risk-based
+  // margin formula would be circular (margin depends on SL% which depends on
+  // margin), so the margin is fixed at riskPerTrade% of equity — the actual
+  // loss cap is the SL PnL amount itself.
+  function estimatePlannedNotional() {
+    const equity = estimateEquitySync();
+    if (!(equity > 0)) return 0;
+    const margin = Math.max(5, (equity * state.riskPerTradePct) / 100);
+    return margin * state.leverage;
   }
 
   function clampBacktestTradeCount(raw) {
@@ -1863,7 +1988,9 @@ const FuturesBotApp = (() => {
         try {
           readFormSettings();
           const side = result.signal;
-          const levels = result.entryLevels || calcEntryLevels(side);
+          // calcEntryLevels applies the price-mode pinned $ levels; the raw
+          // signal levels are only a fallback.
+          const levels = calcEntryLevels(side) || result.entryLevels;
           if (!levels) {
             addLog('진입 실패: 손절/익절 계산 불가', 'loss');
             return;
@@ -1906,7 +2033,7 @@ const FuturesBotApp = (() => {
     if ((result.signal === 'LONG' || result.signal === 'SHORT') && !pos) {
       if (!requireSlTpConfirmedForEntry()) return;
       const side = result.signal;
-      const levels = result.entryLevels || calcEntryLevels(side);
+      const levels = calcEntryLevels(side) || result.entryLevels;
       if (!levels) {
         addLog('진입 실패: 손절/익절 계산 불가', 'loss');
         return;
@@ -2460,7 +2587,7 @@ const FuturesBotApp = (() => {
       });
     }
 
-    ['stopLoss', 'takeProfit', 'stopLossPrice', 'takeProfitPrice'].forEach((id) => {
+    ['stopLoss', 'takeProfit', 'stopLossPnl', 'takeProfitPnl', 'stopLossPrice', 'takeProfitPrice'].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       const onSlTpChange = () => {
@@ -2468,17 +2595,6 @@ const FuturesBotApp = (() => {
         if (hasOpenPosition()) {
           syncOpenPositionSlTp();
         } else {
-          // A typed $ price is converted to a % distance from the current
-          // price once, so the tracked preview keeps that distance while it
-          // follows the live price.
-          if (id === 'stopLossPrice' || id === 'takeProfitPrice') {
-            const entryPrice = state.lastPrice || lastCandles.at(-1)?.close;
-            const manual = readManualSlTpPrices();
-            if (entryPrice) {
-              syncPctFieldsFromPrices(lastPendingSide, entryPrice, manual.stopPrice, manual.takeProfitPrice);
-              readFormSettings();
-            }
-          }
           slTpPreviewTouchedAt = Date.now();
           resetSlTpConfirm();
           syncPreviewFromLastSignal();
@@ -2489,6 +2605,27 @@ const FuturesBotApp = (() => {
       el.addEventListener('change', onSlTpChange);
       el.addEventListener('input', onSlTpChange);
     });
+
+    const slTpModePicker = $('#slTpModePicker');
+    if (slTpModePicker) {
+      const savedMode = localStorage.getItem(SLTP_MODE_KEY);
+      if (savedMode) setSlTpMode(savedMode, { persist: false });
+      slTpModePicker.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-sltp-mode]');
+        if (!btn) return;
+        setSlTpMode(btn.dataset.sltpMode);
+        readFormSettings();
+        if (!hasOpenPosition()) {
+          slTpPreviewTouchedAt = Date.now();
+          resetSlTpConfirm();
+          syncPreviewFromLastSignal();
+        } else {
+          syncOpenPositionSlTp();
+        }
+        scheduleBacktest(lastCandles);
+        updateUI();
+      });
+    }
 
     $('#confirmSlTpBtn')?.addEventListener('click', () => confirmSlTp());
 
