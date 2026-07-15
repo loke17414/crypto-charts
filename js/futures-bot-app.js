@@ -1901,17 +1901,25 @@ const FuturesBotApp = (() => {
           `${progress.candles.toLocaleString()}봉 · ${progress.page}/${progress.maxPages}페이지)`;
       },
       seed,
+      // 새 실행이 시작되면(runId 변경) 이 로더는 다음 페이지에서 멈춘다 —
+      // 예전에는 취소된 로더가 백그라운드에서 계속 받아 요청이 중복됐다.
+      () => runId !== backtestRunId,
     );
 
-    if (runId !== backtestRunId) return null;
+    const cancelled = runId !== backtestRunId;
 
-    // 새 봉이 하나도 안 늘었다면 거래소 히스토리가 소진된 것 — 표시해 두고
-    // 매 갱신마다 헛된 재요청이 반복되지 않게 한다.
-    backtestHistoryCache = {
-      key: cacheKey,
-      candles: extended,
-      exhausted: extended.length <= seed.length,
-    };
+    // 취소되었더라도 받은 과거 데이터는 캐시에 보존한다 — 다음 실행이 여기서
+    // 이어서 로드한다. 예전에는 취소 시 전부 버려서, 로딩이 오래 걸리는 전략은
+    // 3분 가드 만료 → 재시작 → 처음부터 다시 로드가 무한 반복됐다.
+    if (extended.length > seed.length || !cancelled) {
+      backtestHistoryCache = {
+        key: cacheKey,
+        candles: extended,
+        // 소진 판정은 정상 완료된 실행에서만 — 취소로 봉이 안 는 것과 구분.
+        exhausted: !cancelled && extended.length <= seed.length,
+      };
+    }
+    if (cancelled) return null;
     return { source: extended, fromCache: false };
   }
 

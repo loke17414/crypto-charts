@@ -65,9 +65,10 @@ const BacktestLoader = (() => {
     return mapKlines(data);
   }
 
-  async function fetchOlderPages(symbol, interval, candles, pageCount) {
+  async function fetchOlderPages(symbol, interval, candles, pageCount, shouldStop) {
     let merged = candles;
     for (let n = 0; n < pageCount; n++) {
+      if (shouldStop?.()) break;
       if (n > 0) await new Promise((r) => setTimeout(r, PAGE_FETCH_DELAY_MS));
       const oldestMs = merged[0].time * 1000 - 1;
       const older = await fetchPage(symbol, interval, oldestMs);
@@ -87,7 +88,10 @@ const BacktestLoader = (() => {
     return stats.totalTrades ?? stats.trades;
   }
 
-  async function loadForTargetTrades(symbol, interval, settings, targetTrades, onProgress, seedCandles = []) {
+  // 데이터는 항상 "최신(시드의 최신 봉) → 과거" 방향으로만 확장한다.
+  // shouldStop이 true를 반환하면 즉시 멈추고 지금까지 받은 캔들을 반환한다
+  // (호출한 쪽이 캐시에 보존해 다음 실행이 이어서 로드).
+  async function loadForTargetTrades(symbol, interval, settings, targetTrades, onProgress, seedCandles = [], shouldStop = null) {
     let candles = seedCandles.length ? [...seedCandles] : await fetchPage(symbol, interval);
     if (!candles.length) return candles;
 
@@ -115,6 +119,7 @@ const BacktestLoader = (() => {
     report(true);
 
     while (found < targetTrades && pagesUsed < budget) {
+      if (shouldStop?.()) break;
       const before = candles.length;
       const remaining = targetTrades - found;
       const barsPerTrade = found > 0
@@ -128,7 +133,7 @@ const BacktestLoader = (() => {
         Math.min(estPagesNeeded, budget - pagesUsed, 10),
       );
 
-      candles = await fetchOlderPages(symbol, interval, candles, pagesToFetch);
+      candles = await fetchOlderPages(symbol, interval, candles, pagesToFetch, shouldStop);
       pagesUsed += pagesToFetch;
 
       if (candles.length === before) break;
