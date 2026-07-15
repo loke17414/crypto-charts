@@ -717,7 +717,6 @@ const FuturesBotApp = (() => {
     slTpConfirmed = true;
     slTpPreviewTouchedAt = Date.now();
     updateConfirmSlTpUi();
-    syncPreviewSlTpOverlay({ signal: side, entryLevels: levels });
     const slNote = state.useStopLoss && levels.stopPrice != null
       ? `SL $${levels.stopPrice.toFixed(2)} · `
       : '손절 없음 · ';
@@ -864,7 +863,6 @@ const FuturesBotApp = (() => {
       lastPendingSide = side;
       slTpPreviewTouchedAt = Date.now();
       resetSlTpConfirm();
-      syncPreviewSlTpOverlay({ signal: side, entryLevels: { stopPrice, takeProfitPrice } });
     }
   }
 
@@ -881,50 +879,11 @@ const FuturesBotApp = (() => {
     });
   }
 
-  function syncPreviewSlTpOverlay(result) {
+  function syncPreviewSlTpOverlay(_result) {
     if (hasOpenPosition()) return;
-
-    const isEntry = result?.signal === 'LONG' || result?.signal === 'SHORT';
-    // 진입 신호가 있을 때만 미리보기 — 신호 없으면 즉시 지워서 목표가가 남지 않게.
-    if (!isEntry) {
-      Chart.clearPositionOverlay();
-      Chart.clearSignalOverlay();
-      return;
-    }
-
-    lastPendingSide = result.signal;
-    const side = result.signal;
-    const entryPrice = lastCandles.at(-1)?.close || state.lastPrice;
-    if (!entryPrice || !side) {
-      Chart.clearPositionOverlay();
-      Chart.clearSignalOverlay();
-      return;
-    }
-
-    let levels = result?.entryLevels || calcTrackedPreviewLevels(side, entryPrice);
-    if (!levels) {
-      Chart.clearPositionOverlay();
-      return;
-    }
-    if (state.slTpMode === 'price') {
-      const manual = readManualSlTpPrices();
-      levels = {
-        ...levels,
-        stopPrice: state.useStopLoss === false ? null : (manual.stopPrice ?? levels.stopPrice),
-        takeProfitPrice: manual.takeProfitPrice ?? levels.takeProfitPrice,
-      };
-    } else if (state.useStopLoss === false) {
-      levels = { ...levels, stopPrice: null, stopLossPct: null };
-    }
-
+    // 진입 전 차트 미리보기 없음 — 포지션 진입 후 updatePositionOverlay만 사용.
+    Chart.clearPositionOverlay();
     Chart.clearSignalOverlay();
-    Chart.setPositionOverlay({
-      side,
-      entryPrice,
-      showEntry: true,
-      stopPrice: chartStopPrice(levels.stopPrice),
-      takeProfitPrice: levels.takeProfitPrice,
-    });
   }
 
   function syncPreviewFromLastSignal() {
