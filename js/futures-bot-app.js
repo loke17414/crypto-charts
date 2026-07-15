@@ -1673,7 +1673,10 @@ const FuturesBotApp = (() => {
 
   async function executeSignal(result) {
     const price = state.lastPrice;
-    if (await checkAccountLossLimit()) return;
+    // Loss-limit gate applies to NEW entries only — CLOSE must always go
+    // through, otherwise a position could never exit once the limit is hit.
+    if ((result.signal === 'LONG' || result.signal === 'SHORT')
+      && await checkAccountLossLimit()) return;
 
     const tradeMargin = await calcTradeMarginForTrade();
 
@@ -1768,12 +1771,13 @@ const FuturesBotApp = (() => {
   }
 
   // Live SL/TP check that runs on every price tick (not just the poll
-  // interval). The bot otherwise only polls every `pollSeconds` (default 60s),
-  // so a fast wick that touches the stop/take-profit between polls would be
-  // missed. Ticks stream through the wick prices, so checking here catches them.
+  // interval). Runs whenever a position is open — even with the bot stopped —
+  // so manual entries and post-stop positions still get their SL/TP filled.
+  // Only skipped when the 24/7 server bot owns the position.
   async function evaluateLiveExit() {
-    if (liveExitBusy || !botRunning) return;
+    if (liveExitBusy) return;
     if (isTestnetMode() && serverBotActive) return;
+    if (!hasOpenPosition()) return;
     const price = state.lastPrice;
     if (!price) return;
 
@@ -2143,8 +2147,10 @@ const FuturesBotApp = (() => {
     state.interval = e.detail?.interval || CryptoCharts.getState().interval;
     state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
     updateSignalDisplay();
-    if (hasOpenPosition()) ensurePositionSlTpOverlay();
-    if (botRunning && !(isTestnetMode() && serverBotActive)) evaluateLiveExit();
+    if (hasOpenPosition()) {
+      ensurePositionSlTpOverlay();
+      evaluateLiveExit();
+    }
     if (e.detail?.newBar) {
       scheduleBacktest(lastCandles);
       updateUI();
