@@ -493,6 +493,11 @@ const FuturesBotApp = (() => {
     if (!isTestnetMode() || !testnetStatus?.position) return;
     clearTimeout(exchangeSlTpTimer);
     exchangeSlTpTimer = setTimeout(async () => {
+      // Exchange values from the last status refresh = state before this edit.
+      // The server cancels old orders before placing new ones, so on failure
+      // we must re-register these to restore protection.
+      const prevSl = testnetStatus?.position?.stopPrice ?? null;
+      const prevTp = testnetStatus?.position?.takeProfitPrice ?? null;
       try {
         const r = await FuturesApiClient.setSlTp(positionStopPrice, positionTakeProfitPrice);
         positionStopPrice = r.stopPrice ?? positionStopPrice;
@@ -503,7 +508,20 @@ const FuturesBotApp = (() => {
         );
         updatePositionOverlay();
       } catch (err) {
-        addLog(`거래소 SL/TP 갱신 실패: ${err.message}`, 'loss');
+        addLog(`거래소 SL/TP 갱신 실패: ${err.message} — 이전 값으로 되돌립니다.`, 'loss');
+        positionStopPrice = prevSl;
+        positionTakeProfitPrice = prevTp;
+        if (prevSl != null || prevTp != null) {
+          try {
+            await FuturesApiClient.setSlTp(prevSl, prevTp);
+            addLog(`이전 SL/TP 복원 완료 — SL $${prevSl?.toFixed(2) ?? '—'} · TP $${prevTp?.toFixed(2) ?? '—'}`, 'info');
+          } catch (restoreErr) {
+            addLog(`이전 SL/TP 복원 실패: ${restoreErr.message} — 포지션을 직접 확인하세요.`, 'loss');
+          }
+        }
+        await refreshTestnetStatus();
+        updatePositionOverlay();
+        updateUI();
       }
     }, 600);
   }
@@ -587,6 +605,24 @@ const FuturesBotApp = (() => {
     if (hasOpenPosition() || slTpConfirmed) return true;
     addLog('진입 보류: SL/TP 확인 버튼을 먼저 눌러주세요.', 'info');
     return false;
+  }
+
+  // The server rolls an entry back (auto-closes the position) when exchange
+  // SL/TP registration fails. When that happens, block all further trading:
+  // stop the bot and drop the SL/TP confirmation so nothing can re-enter
+  // until the user fixes the settings and presses the confirm button again.
+  async function handleEntryError(err, label) {
+    addLog(`${label} 진입 실패: ${err.message}`, 'loss');
+    if (!String(err.message).includes('진입을 자동 취소')) return;
+    resetSlTpConfirm();
+    clearPositionStop();
+    if (botRunning) {
+      await stopBot();
+      addLog('안전을 위해 봇을 정지했습니다.', 'loss');
+    }
+    addLog('거래가 차단되었습니다 — SL/TP 설정을 확인한 뒤 확인 버튼을 다시 눌러주세요.', 'loss');
+    await refreshTestnetStatus();
+    updateUI();
   }
 
   function readManualSlTpPrices() {
@@ -1801,16 +1837,14 @@ const FuturesBotApp = (() => {
           positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
           savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
           addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
-          if (r.slTpError) {
-            addLog(`거래소 SL/TP 주문 실패: ${r.slTpError} — 브라우저 감시로 대체합니다.`, 'loss');
-          } else if (r.stopPrice != null || r.takeProfitPrice != null) {
+          if (r.stopPrice != null || r.takeProfitPrice != null) {
             addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
           }
           updatePositionStopLine();
           await refreshTestnetStatus();
           updateUI();
         } catch (err) {
-          addLog(`${result.signal} 진입 실패: ${err.message}`, 'loss');
+          await handleEntryError(err, result.signal);
         }
       }
       return;
@@ -2137,16 +2171,14 @@ const FuturesBotApp = (() => {
       positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
       savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
       addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
-      if (r.slTpError) {
-        addLog(`거래소 SL/TP 주문 실패: ${r.slTpError} — 브라우저 감시로 대체합니다.`, 'loss');
-      } else if (r.stopPrice != null || r.takeProfitPrice != null) {
+      if (r.stopPrice != null || r.takeProfitPrice != null) {
         addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
       }
       ensurePositionSlTpOverlay();
       await refreshTestnetStatus();
       updateUI();
     } catch (err) {
-      addLog(`${side} 진입 실패: ${err.message}`, 'loss');
+      await handleEntryError(err, `${side} 수동`);
     }
   }
 

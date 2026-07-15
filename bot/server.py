@@ -355,14 +355,30 @@ def open_order(body: OpenBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Register exchange-side SL/TP so they fill even when the browser is closed.
+    # If registration fails the position would be unprotected, so roll the entry
+    # back (close immediately) and report the error instead of keeping it open.
     sl_tp: dict[str, Any] = {"stop_price": None, "take_profit_price": None}
-    sl_tp_error: str | None = None
     if body.stop_price or body.take_profit_price:
         try:
             sl_tp = client.set_sl_tp(body.side, body.stop_price, body.take_profit_price)
-        except Exception as exc:  # noqa: BLE001 — entry succeeded; report SL/TP failure
-            sl_tp_error = str(exc)
-            logger.error("SL/TP order failed after open: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SL/TP order failed after open — rolling back entry: %s", exc)
+            rollback_error: str | None = None
+            try:
+                client.cancel_all_orders()
+                pos = client.get_position()
+                if pos:
+                    if pos["side"] == "LONG":
+                        client.close_long(pos["quantity"])
+                    else:
+                        client.close_short(pos["quantity"])
+            except Exception as rb:  # noqa: BLE001
+                rollback_error = str(rb)
+                logger.error("Rollback close failed: %s", rb)
+            detail = f"SL/TP 주문 실패로 진입을 자동 취소했습니다: {exc}"
+            if rollback_error:
+                detail += f" — 자동 청산도 실패했습니다. 포지션을 직접 확인하세요: {rollback_error}"
+            raise HTTPException(status_code=400, detail=detail) from exc
 
     pos = client.get_position()
     return {
@@ -372,7 +388,6 @@ def open_order(body: OpenBody) -> dict[str, Any]:
         "position": pos,
         "stopPrice": sl_tp["stop_price"],
         "takeProfitPrice": sl_tp["take_profit_price"],
-        "slTpError": sl_tp_error,
     }
 
 
