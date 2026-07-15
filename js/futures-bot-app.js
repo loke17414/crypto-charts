@@ -885,19 +885,15 @@ const FuturesBotApp = (() => {
     if (hasOpenPosition()) return;
 
     const isEntry = result?.signal === 'LONG' || result?.signal === 'SHORT';
-    if (isEntry) lastPendingSide = result.signal;
-
-    // Flat + no live entry signal + not in an active SL/TP setup session →
-    // nothing to preview; clear leftovers (e.g. right after SL/TP close).
-    const settingUp = slTpConfirmed
-      || (Date.now() - slTpPreviewTouchedAt < SLTP_PREVIEW_TTL_MS);
-    if (!isEntry && !settingUp) {
+    // 진입 신호가 있을 때만 미리보기 — 신호 없으면 즉시 지워서 목표가가 남지 않게.
+    if (!isEntry) {
       Chart.clearPositionOverlay();
       Chart.clearSignalOverlay();
       return;
     }
 
-    const side = isEntry ? result.signal : lastPendingSide;
+    lastPendingSide = result.signal;
+    const side = result.signal;
     const entryPrice = lastCandles.at(-1)?.close || state.lastPrice;
     if (!entryPrice || !side) {
       Chart.clearPositionOverlay();
@@ -910,8 +906,6 @@ const FuturesBotApp = (() => {
       Chart.clearPositionOverlay();
       return;
     }
-    // Price mode: SL/TP stay pinned at the user's absolute levels; only the
-    // entry line follows the current price.
     if (state.slTpMode === 'price') {
       const manual = readManualSlTpPrices();
       levels = {
@@ -927,7 +921,7 @@ const FuturesBotApp = (() => {
     Chart.setPositionOverlay({
       side,
       entryPrice,
-      showEntry: chartShowEntry(),
+      showEntry: true,
       stopPrice: chartStopPrice(levels.stopPrice),
       takeProfitPrice: levels.takeProfitPrice,
     });
@@ -1004,10 +998,6 @@ const FuturesBotApp = (() => {
 
   function chartStopPrice(stopPrice) {
     return state.useStopLoss === false ? null : stopPrice;
-  }
-
-  function chartShowEntry() {
-    return state.useStopLoss !== false;
   }
 
   function readManualSlTpPrices() {
@@ -1190,7 +1180,7 @@ const FuturesBotApp = (() => {
       Chart.setPositionOverlay({
         side,
         entryPrice,
-        showEntry: chartShowEntry(),
+        showEntry: true,
         stopPrice,
         takeProfitPrice,
         entryTime: getPositionEntryTimeSec(),
@@ -2120,6 +2110,9 @@ const FuturesBotApp = (() => {
     const result = FuturesStrategy.analyze(lastCandles, settings, pos || null);
     $('#signalInfo').textContent = result.reason;
     updateRsiDisplay(result.snapshot);
+    if (result?.signal === 'LONG' || result?.signal === 'SHORT') {
+      lastPendingSide = result.signal;
+    }
     syncPreviewSlTpOverlay(result);
     if (hasOpenPosition()) ensurePositionSlTpOverlay();
     maybeAutoEnterOnSignal(result);
