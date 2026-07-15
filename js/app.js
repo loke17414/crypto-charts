@@ -177,6 +177,7 @@ const state = {
   lastCandles: [],
   formingCandleTime: null,
   isFollowingRealtime: true,
+  backtestChartPinned: false,
   programmaticScroll: false,
   lastTickPrice: null,
   lastTickTime: 0,
@@ -434,7 +435,7 @@ async function catchUpRecentCandles() {
     const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
     replaceCandleSeriesData(merged);
 
-    if (state.isFollowingRealtime) {
+    if (state.isFollowingRealtime && !state.backtestChartPinned) {
       state.programmaticScroll = true;
       chart?.timeScale().scrollToRealTime();
       state.programmaticScroll = false;
@@ -752,11 +753,19 @@ function setFollowingRealtime(following) {
   if (chart) {
     chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: following });
   }
-  $('#goRealtimeBtn')?.classList.toggle('hidden', following);
+  const showGoRealtime = !following || state.backtestChartPinned;
+  $('#goRealtimeBtn')?.classList.toggle('hidden', !showGoRealtime);
+}
+
+function pinBacktestChartView(pinned) {
+  state.backtestChartPinned = Boolean(pinned);
+  if (pinned) setFollowingRealtime(false);
+  else $('#goRealtimeBtn')?.classList.toggle('hidden', state.isFollowingRealtime);
 }
 
 function scrollToRealtimeView() {
   if (!chart || !state.lastCandles.length) return;
+  pinBacktestChartView(false);
   resetPriceScaleToAuto();
   state.programmaticScroll = true;
   chart.timeScale().scrollToRealTime();
@@ -771,7 +780,9 @@ function setupChartInteractions() {
     if (state.programmaticScroll || !range || state.dragging) return;
     const barCount = state.lastCandles.length;
     if (!barCount) return;
-    setFollowingRealtime(range.to >= barCount - 5);
+    if (!state.backtestChartPinned) {
+      setFollowingRealtime(range.to >= barCount - 5);
+    }
     if (range.from < 40 && state.canLoadMore && !state.loadingMore) {
       scheduleLoadMoreCandles();
     }
@@ -2243,7 +2254,7 @@ function clearBacktestTradeOverlays() {
   clearBacktestOverlaySegments();
 }
 
-function focusChartTimeRange(fromTime, toTime, padBars = 10) {
+function focusChartTimeRange(fromTime, toTime, padBars = 10, options = {}) {
   if (!chart || !state.lastCandles.length || fromTime == null || toTime == null) return false;
   const candles = state.lastCandles;
   const barSec = getBarIntervalSeconds(candles);
@@ -2256,8 +2267,17 @@ function focusChartTimeRange(fromTime, toTime, padBars = 10) {
   if (toIdx < 0) toIdx = candles.length - 1;
   if (toIdx <= fromIdx) toIdx = Math.min(fromIdx + 40, candles.length - 1);
 
+  const anchor = options.anchor || 'range';
+  let viewFrom = fromIdx;
+  let viewTo = toIdx + 2;
+  if (anchor === 'end') {
+    const span = Math.max(50, toIdx - fromIdx + padBars * 2);
+    viewTo = Math.min(candles.length + 1, toIdx + 3);
+    viewFrom = Math.max(0, viewTo - span);
+  }
+
   state.programmaticScroll = true;
-  chart.timeScale().setVisibleLogicalRange({ from: fromIdx, to: toIdx + 2 });
+  chart.timeScale().setVisibleLogicalRange({ from: viewFrom, to: viewTo });
   state.programmaticScroll = false;
   setFollowingRealtime(false);
   return true;
@@ -2291,6 +2311,7 @@ window.CryptoCharts = {
   setBacktestTradeOverlays,
   clearBacktestTradeOverlays,
   focusChartTimeRange,
+  pinBacktestChartView,
   loadHistoryUntilTime,
   setSwingLevels: setSwingLevelLines,
   clearSwingLevels: () => setSwingLevelLines(null),
@@ -2331,6 +2352,7 @@ window.CryptoCharts = {
 window.CryptoCharts.setBacktestTradeOverlays = setBacktestTradeOverlays;
 window.CryptoCharts.clearBacktestTradeOverlays = clearBacktestTradeOverlays;
 window.CryptoCharts.focusChartTimeRange = focusChartTimeRange;
+window.CryptoCharts.pinBacktestChartView = pinBacktestChartView;
 window.CryptoCharts.loadHistoryUntilTime = loadHistoryUntilTime;
 window.CryptoCharts.setSignalOverlay = setSignalOverlay;
 window.CryptoCharts.clearSignalOverlay = clearSignalOverlay;

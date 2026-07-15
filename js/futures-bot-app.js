@@ -501,7 +501,7 @@ const FuturesBotApp = (() => {
     updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
     invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
-    applyBacktest(lastCandles, { force: true });
+    applyBacktest(lastCandles, { force: true, focusChart: true });
     updateSignalDisplay();
     scheduleServerStrategySync();
     updateUI();
@@ -772,7 +772,7 @@ const FuturesBotApp = (() => {
 
     if (strategyChanged) {
       invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
-      applyBacktest(lastCandles, { force: true });
+      applyBacktest(lastCandles, { force: true, focusChart: true });
     }
     // strategyChanged가 false면 BacktestRunner 캐시·진행 중 로드를 유지한다.
     // 예전에는 GPT가 SL/TP만 바꿔도(또는 이해 못하고 patch 없이
@@ -1910,14 +1910,20 @@ const FuturesBotApp = (() => {
     Chart.setBacktestTradeOverlays(trades, chartCandles);
   }
 
-  function focusBacktestTrades(trades, chartCandles) {
-    if (!trades?.length || !chartCandles?.length) return;
-    // 백테스트 kept 목록은 과거→최신 순 — 차트에는 가장 최근 거래 구간부터 보여준다.
+  function focusBacktestTrades(trades) {
+    if (!trades?.length || !Chart.available()) return;
+    const chartCandles = Chart.getCandles() || lastCandles;
+    if (!chartCandles.length) return;
+    Chart.pinBacktestChartView?.(true);
     const newestCount = Math.min(8, trades.length);
     const focusPool = trades.slice(-newestCount);
     const fromT = Math.min(...focusPool.map((t) => t.entryTime));
     const toT = Math.max(...focusPool.map((t) => t.exitTime));
-    Chart.focusChartTimeRange(fromT, toT);
+    const applyFocus = () => {
+      Chart.focusChartTimeRange(fromT, toT, 12, { anchor: 'end' });
+    };
+    applyFocus();
+    requestAnimationFrame(() => requestAnimationFrame(applyFocus));
   }
 
   const BAR_SECONDS = {
@@ -1971,28 +1977,33 @@ const FuturesBotApp = (() => {
   function renderBacktestResult(result, { force = false, focusChart = false } = {}) {
     const statsEl = $('#backtestStats');
     const { interval, stats, trades, markers, displayCandles } = result;
-    const chartCandles = displayCandles?.length ? displayCandles : (Chart.getCandles() || lastCandles);
+    const chartCandles = Chart.getCandles()?.length
+      ? Chart.getCandles()
+      : (displayCandles?.length ? displayCandles : lastCandles);
     const visibleTrades = filterTradesToChart(trades, chartCandles);
     const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
+    const shouldFocus = showBacktest && trades.length && (focusChart || force);
 
     if (showBacktest || force) {
       clearBacktestOverlays();
-      focusBacktestTrades(trades, chartCandles);
+      if (shouldFocus) focusBacktestTrades(trades);
       applyBacktestMarkersToChart(markers, trades, chartCandles);
       const hiddenTrades = trades.length - visibleTrades.length;
       if (hiddenTrades > 0) {
         expandChartHistoryForTrades(trades, () => {
           const updated = Chart.getCandles() || chartCandles;
           applyBacktestMarkersToChart(markers, trades, updated);
-          const statsEl = $('#backtestStats');
-          if (statsEl && statsEl.innerHTML) {
+          if (shouldFocus) focusBacktestTrades(trades);
+          const statsElRefresh = $('#backtestStats');
+          if (statsElRefresh && statsElRefresh.innerHTML) {
             const refreshedVisible = filterTradesToChart(trades, updated);
             const refreshedStats = { ...reportStats, chartVisibleTrades: refreshedVisible.length };
-            statsEl.innerHTML = formatBacktestStats(refreshedStats, interval);
+            statsElRefresh.innerHTML = formatBacktestStats(refreshedStats, interval);
           }
         });
       }
     } else {
+      Chart.pinBacktestChartView?.(false);
       Chart.setMarkers(getSwingPivotMarkers(chartCandles));
       clearBacktestOverlays();
     }
@@ -2034,7 +2045,8 @@ const FuturesBotApp = (() => {
   }
 
   function applyBacktest(chartCandles, options = {}) {
-    handleBacktestCompute(chartCandles, options).catch((err) => {
+    const focusChart = options.focusChart ?? Boolean(options.force);
+    handleBacktestCompute(chartCandles, { ...options, focusChart }).catch((err) => {
       console.error('[백테스트] 비동기 오류 (봇/차트는 계속 실행):', err);
     });
   }
@@ -2916,7 +2928,8 @@ const FuturesBotApp = (() => {
 
     $('#showBacktest')?.addEventListener('change', (e) => {
       showBacktest = e.target.checked;
-      applyBacktest(lastCandles, { force: true });
+      if (!showBacktest) Chart.pinBacktestChartView?.(false);
+      applyBacktest(lastCandles, { force: true, focusChart: showBacktest });
     });
 
     $('#runBacktestBtn')?.addEventListener('click', () => { runBacktest(); });
