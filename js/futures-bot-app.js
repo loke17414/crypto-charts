@@ -23,12 +23,6 @@ const FuturesBotApp = (() => {
   let lastCandles = [];
   let testnetStatus = null;
   let showBacktest = true;
-  let backtestDebounce = null;
-  let backtestRunId = 0;
-  let backtestHistoryCache = null;
-  let lastRenderedBacktestKey = null;
-  let backtestInFlightKey = null;
-  let backtestInFlightAt = 0;
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -357,7 +351,7 @@ const FuturesBotApp = (() => {
     readFormSettings();
     syncFromChart();
     const raw = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
-    const candles = closedCandlesOnly(raw, state.interval);
+    const candles = BacktestRunner.closedCandlesOnly(raw, state.interval);
     const settings = getSettings();
     const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
 
@@ -365,21 +359,9 @@ const FuturesBotApp = (() => {
       return { current: null, targetTrades, candlesUsed: 0 };
     }
 
-    const { stats } = FuturesStrategy.backtest(candles, settings, { maxTrades: targetTrades });
+    const snap = BacktestRunner.snapshotFromCandles(candles, settings, targetTrades, state.interval);
     return {
-      current: {
-        trades: stats.trades,
-        totalTrades: stats.totalTrades,
-        wins: stats.wins,
-        losses: stats.losses,
-        winRate: Math.round((stats.winRate || 0) * 10) / 10,
-        totalPnlPct: Math.round((stats.totalPnlPct || 0) * 100) / 100,
-        candlesUsed: stats.candlesUsed,
-        targetTrades: stats.targetTrades,
-        targetReached: stats.targetReached,
-      },
-      targetTrades,
-      candlesUsed: candles.length,
+      ...snap,
       interval: state.interval,
       symbol: state.symbol,
     };
@@ -467,12 +449,11 @@ const FuturesBotApp = (() => {
 
   function recomputeAfterSlotsChange() {
     readFormSettings();
-    backtestHistoryCache = null;
+    BacktestRunner.clearHistoryCache();
     updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
     invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
-    clearTimeout(backtestDebounce);
-    applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
+    applyBacktest(lastCandles, { force: true });
     updateSignalDisplay();
     scheduleServerStrategySync();
     updateUI();
@@ -726,10 +707,9 @@ const FuturesBotApp = (() => {
 
     if (strategyChanged) {
       invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
-      clearTimeout(backtestDebounce);
-      applyBacktest(lastCandles, { force: true }).catch((err) => console.error('Backtest failed:', err));
+      applyBacktest(lastCandles, { force: true });
     }
-    // strategyChanged가 false면 backtestHistoryCache·진행 중 로드를 유지한다.
+    // strategyChanged가 false면 BacktestRunner 캐시·진행 중 로드를 유지한다.
     // 예전에는 GPT가 SL/TP만 바꿔도(또는 이해 못하고 patch 없이
     // changed_fields만 보내도) 캐시를 지워 100회 로딩이 처음부터 다시 시작됐다.
 
@@ -1845,13 +1825,8 @@ const FuturesBotApp = (() => {
   }
 
   function invalidateBacktestChart(chartCandles, { message = null } = {}) {
-    backtestRunId += 1;
-    backtestHistoryCache = null;
-    lastRenderedBacktestKey = null;
-    backtestInFlightKey = null;
+    BacktestRunner.invalidate({ message });
     if (showBacktest) clearBacktestChartDisplay(chartCandles);
-    const statsEl = $('#backtestStats');
-    if (message && statsEl) statsEl.textContent = message;
   }
 
   function filterTradesToChart(trades, chartCandles) {
@@ -1888,194 +1863,68 @@ const FuturesBotApp = (() => {
     return markers.filter((m) => m.time >= minTime && m.time <= maxTime);
   }
 
-  const INTERVAL_SECONDS = {
-    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
-    '12h': 43200, '1d': 86400,
-  };
+  function renderBacktestResult(result, { force = false, focusChart = false } = {}) {
+    const statsEl = $('#backtestStats');
+    const { interval, stats, trades, markers, displayCandles } = result;
+    const visibleMarkers = filterMarkersToChart(markers, displayCandles);
+    const visibleTrades = filterTradesToChart(trades, displayCandles);
+    const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
 
-  // Backtests must only see CLOSED bars. Including the forming bar produced
-  // trades on a half-built candle whose wick keeps growing — a wick that hits
-  // SL/TP later in the bar was invisible to the already-rendered result.
-  // With the forming bar excluded, the new-bar refresh evaluates every candle
-  // exactly once, with its final high/low.
-  function closedCandlesOnly(candles, interval) {
-    if (!candles?.length) return candles || [];
-    const sec = INTERVAL_SECONDS[interval];
-    if (!sec) return candles;
-    const nowSec = Math.floor(Date.now() / 1000);
-    return candles.at(-1).time + sec > nowSec ? candles.slice(0, -1) : candles;
+    if (showBacktest || force) {
+      clearBacktestOverlays();
+      Chart.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
+      syncBacktestOverlays(visibleTrades, displayCandles);
+      if (focusChart && trades.length) focusBacktestTrades(trades, displayCandles);
+    } else {
+      Chart.setMarkers(getSwingPivotMarkers(displayCandles));
+      clearBacktestOverlays();
+    }
+    if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);
   }
 
-  function mergeCandlesByTime(older, newer) {
-    const byTime = new Map();
-    [...older, ...newer].forEach((c) => byTime.set(c.time, c));
-    return [...byTime.values()].sort((a, b) => a.time - b.time);
-  }
-
-  async function resolveBacktestCandles(chartCandles, settings, targetTrades, statsEl, runId) {
-    const interval = Chart.getState()?.interval || state.interval;
-    const rawSource = chartCandles?.length ? chartCandles : (Chart.getCandles() || lastCandles);
-    const chartSource = closedCandlesOnly(rawSource, interval);
-    let { stats } = FuturesStrategy.backtest(chartSource, settings, { maxTrades: targetTrades });
-
-    if (stats.trades >= targetTrades || !window.BacktestLoader) {
-      return { source: chartSource, fromCache: false };
-    }
-
-    const cacheKey = backtestCacheKey(interval, targetTrades, settings);
-    let seed = chartSource;
-    let seedTrades = stats.trades;
-    if (backtestHistoryCache?.key === cacheKey) {
-      // The cached extended history is frozen at fetch time — merge in the
-      // live chart candles so bars (and wicks) formed since then are tested.
-      const merged = mergeCandlesByTime(backtestHistoryCache.candles, chartSource);
-      const exhausted = backtestHistoryCache.exhausted === true;
-      backtestHistoryCache = { key: cacheKey, candles: merged, exhausted };
-      const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
-      // 목표 도달, 또는 거래소 히스토리를 이미 끝까지 받은 경우에만 캐시로 종료.
-      // 목표 미달인 부분 캐시는 시드로 삼아 더 오래된 데이터를 이어서 로드한다.
-      if (cachedStats.trades >= targetTrades || exhausted) {
-        return { source: merged, fromCache: true };
-      }
-      seed = merged;
-      seedTrades = cachedStats.trades;
-    }
-
-    if (statsEl) {
-      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${seedTrades}/${targetTrades}회, ${seed.length}봉)`;
-    }
-
-    const extended = await BacktestLoader.loadForTargetTrades(
-      state.symbol,
-      interval,
-      settings,
-      targetTrades,
-      (progress) => {
-        if (runId !== backtestRunId || !statsEl) return;
-        statsEl.textContent =
-          `백테스트: 과거 데이터 로딩 중... (${progress.trades}/${progress.target}회, ` +
-          `${progress.candles.toLocaleString()}봉 · ${progress.page}/${progress.maxPages}페이지)`;
-      },
-      seed,
-      () => runId !== backtestRunId,
-    );
-
-    const cancelled = runId !== backtestRunId;
-
-    if (extended.length > seed.length || !cancelled) {
-      backtestHistoryCache = {
-        key: cacheKey,
-        candles: extended,
-        exhausted: !cancelled && extended.length <= seed.length,
-      };
-    }
-    if (cancelled) return null;
-    return { source: extended, fromCache: false };
-  }
-
-  async function applyBacktest(chartCandles, { force = false, focusChart = false } = {}) {
+  async function handleBacktestCompute(chartCandles, { force = false, focusChart = false } = {}) {
     const statsEl = $('#backtestStats');
     if (!Chart.available()) {
       if (statsEl) statsEl.textContent = '백테스트: — (차트 미연동)';
       return;
     }
 
-    updateSwingChartOverlay(chartCandles);
-    readFormSettings();
-    const settings = getSettings();
-    const interval = Chart.getState()?.interval || state.interval;
-    const source = chartCandles?.length ? chartCandles : (Chart.getCandles() || lastCandles);
-    const minRequired = FuturesStrategy.minBars(settings);
-
-    if (!source.length || source.length < minRequired) {
-      Chart.setMarkers(getSwingPivotMarkers(chartCandles));
-      clearBacktestOverlays();
-      const reason = !source.length
-        ? '차트 데이터 없음 — 잠시 후 다시 시도'
-        : `${source.length}봉 (최소 ${minRequired}봉 필요)`;
-      if (statsEl) statsEl.textContent = `백테스트: — (${reason})`;
-      return;
-    }
-
-    // A long history load must not be cancelled and restarted from page 1 by
-    // every new bar / UI refresh with identical settings — that loop kept the
-    // backtest from ever finishing. Identical-key requests just wait for the
-    // in-flight run; a stale flag (e.g. hung network) expires after 3 minutes.
-    const targetTrades = state.backtestTradeCount;
-    const pendingKey = backtestCacheKey(interval, targetTrades, settings);
-    if (backtestInFlightKey === pendingKey
-      && Date.now() - backtestInFlightAt < 180_000) {
-      if (force && statsEl && !statsEl.innerHTML.includes('로딩 중')) {
-        statsEl.textContent = '백테스트: 계산 진행 중...';
-      }
-      return;
-    }
-
     try {
-      backtestInFlightKey = pendingKey;
-      backtestInFlightAt = Date.now();
-      const runId = ++backtestRunId;
-      const resolved = await resolveBacktestCandles(chartCandles, settings, targetTrades, statsEl, runId);
-      if (!resolved || runId !== backtestRunId) return;
-
-      const { source } = resolved;
-      const { markers, stats, trades } = FuturesStrategy.backtest(source, settings, { maxTrades: targetTrades });
-      let displayCandles = chartCandles?.length ? chartCandles : source;
-
-      if ((showBacktest || force) && focusChart && trades.length && displayCandles.length) {
-        const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
-        const chartData = Chart.getCandles() || displayCandles;
-        if (earliestEntry < chartData[0].time) {
-          const barSec = INTERVAL_SECONDS[interval] || 900;
-          const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
-          const maxPages = Math.min(60, Math.ceil(needBars / 1000) + 2);
-          await Chart.loadHistoryUntilTime(earliestEntry, maxPages);
+      updateSwingChartOverlay(chartCandles);
+      const result = await BacktestRunner.compute(chartCandles, { force, focusChart });
+      if (result.skipped) {
+        if (force && statsEl && !statsEl.innerHTML.includes('로딩 중')) {
+          statsEl.textContent = '백테스트: 계산 진행 중...';
         }
-        displayCandles = Chart.getCandles() || displayCandles;
+        return;
       }
-
-      if (runId !== backtestRunId) return;
-
-      let visibleMarkers = filterMarkersToChart(markers, displayCandles);
-      let visibleTrades = filterTradesToChart(trades, displayCandles);
-
-      if (runId !== backtestRunId) return;
-
-      if (showBacktest || force) {
-        clearBacktestOverlays();
-        Chart.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
-        syncBacktestOverlays(visibleTrades, displayCandles);
-        // Only move the chart when the user explicitly runs backtest — not on
-        // every live new-bar refresh (was snapping the view to trade history).
-        if (focusChart && trades.length) focusBacktestTrades(trades, displayCandles);
-      } else {
-        Chart.setMarkers(getSwingPivotMarkers(displayCandles));
-        clearBacktestOverlays();
+      if (result.cancelled) return;
+      if (!result.ok) {
+        if (result.reason && !result.error) {
+          Chart.setMarkers(getSwingPivotMarkers(chartCandles));
+          clearBacktestOverlays();
+          if (statsEl) statsEl.textContent = `백테스트: — (${result.reason})`;
+        } else if (result.error && statsEl) {
+          statsEl.textContent = `백테스트 실패: ${result.error.message}`;
+        }
+        return;
       }
-
-      const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
-
-      lastRenderedBacktestKey = backtestCacheKey(interval, targetTrades, settings);
-      if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);
+      renderBacktestResult(result, { force, focusChart });
     } catch (err) {
-      console.error('Backtest failed:', err);
-      if (statsEl) statsEl.textContent = `백테스트 실패: ${err.message}`;
-    } finally {
-      if (backtestInFlightKey === pendingKey) backtestInFlightKey = null;
+      console.error('[백테스트] 표시 오류 (봇/차트는 계속 실행):', err);
+      if (statsEl) statsEl.textContent = `백테스트 표시 실패: ${err.message}`;
     }
   }
 
+  function applyBacktest(chartCandles, options = {}) {
+    handleBacktestCompute(chartCandles, options).catch((err) => {
+      console.error('[백테스트] 비동기 오류 (봇/차트는 계속 실행):', err);
+    });
+  }
+
   function scheduleBacktest(chartCandles) {
-    clearTimeout(backtestDebounce);
-    readFormSettings();
-    const pendingKey = getBacktestCacheKey();
-    if (showBacktest && lastRenderedBacktestKey != null && pendingKey !== lastRenderedBacktestKey) {
-      invalidateBacktestChart(chartCandles, { message: '백테스트: 조건 변경 — 재계산 중...' });
-    }
-    backtestDebounce = setTimeout(() => {
-      applyBacktest(chartCandles).catch((err) => console.error('Backtest failed:', err));
-    }, 600);
+    if (!showBacktest && !BacktestRunner.isLoading()) return;
+    BacktestRunner.scheduleRefresh(chartCandles);
   }
 
   async function runBacktest() {
@@ -2100,17 +1949,41 @@ const FuturesBotApp = (() => {
       }
 
       lastCandles = chartCandles;
-      // The button is an explicit restart: cancel whatever run is in flight
-      // (it may be hung) and start clean instead of waiting on it.
-      backtestRunId += 1;
-      backtestInFlightKey = null;
-      await applyBacktest(chartCandles, { force: true, focusChart: true });
+      await BacktestRunner.runExplicit(chartCandles);
     } catch (err) {
-      console.error('Backtest run failed:', err);
+      console.error('[백테스트] 실행 오류 (봇/차트는 계속 실행):', err);
       if (statsEl) statsEl.textContent = `백테스트 실패: ${err.message}`;
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  function configureBacktestRunner() {
+    BacktestRunner.configure({
+      readFormSettings,
+      getSettings,
+      getSymbol: () => state.symbol,
+      getInterval: () => Chart.getState()?.interval || state.interval,
+      getTargetTrades: () => state.backtestTradeCount,
+      getShowBacktest: () => showBacktest,
+      getCacheKey: () => getBacktestCacheKey(),
+      getChartCandles: () => Chart.getCandles() || lastCandles,
+      cacheKey: backtestCacheKey,
+      loadChartHistoryUntil: (time, maxPages) => Chart.loadHistoryUntilTime(time, maxPages),
+      onProgress: (p) => {
+        const statsEl = $('#backtestStats');
+        if (!statsEl || p.phase !== 'loading') return;
+        const pageInfo = p.page != null ? ` · ${p.page}/${p.maxPages}페이지` : '';
+        statsEl.textContent =
+          `백테스트: 과거 데이터 로딩 중... (${p.trades}/${p.target}회, ` +
+          `${(p.candles ?? 0).toLocaleString()}봉${pageInfo})`;
+      },
+      onInvalidate: (message) => {
+        const statsEl = $('#backtestStats');
+        if (message && statsEl) statsEl.textContent = message;
+      },
+      onCompute: (candles, opts) => handleBacktestCompute(candles, opts),
+    });
   }
 
   function onChartCandlesUpdated(e) {
@@ -2938,6 +2811,7 @@ const FuturesBotApp = (() => {
   }
 
   async function init() {
+    configureBacktestRunner();
     bindUiEvents();
 
     readFormSettings();

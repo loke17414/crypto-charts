@@ -4,6 +4,7 @@
  *
  *   [1] 차트 + 백테스팅 표시
  *       app.js (window.CryptoCharts) — 캔들/오버레이/마커 렌더링
+ *       backtest-runner.js (window.BacktestRunner) — 백테스트 계산·로딩 (독립 격리)
  *   [2] API 서버 + 키 저장
  *       futures-api-client.js (window.FuturesApiClient) — 서버 통신, 키는 서버에만 저장
  *   [3] 전략 설정 + 봇 + GPT + 리스크 관리 + 진입조건 목록
