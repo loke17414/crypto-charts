@@ -404,6 +404,12 @@ function waitForContainer(container) {
 // When autoScale is on, panning time refits price to visible bars (Binance default).
 
 function candleAutoscaleProvider(original) {
+  // Scale from visible candle OHLC only — ignore SL/TP price lines and
+  // backtest overlay segments so they don't yank the price axis on each tick.
+  const range = getVisibleBarsPriceRange(0.06);
+  if (range) {
+    return { priceRange: { minValue: range.min, maxValue: range.max } };
+  }
   const res = original();
   if (res?.priceRange) {
     const pad = (res.priceRange.maxValue - res.priceRange.minValue) * 0.02;
@@ -768,11 +774,10 @@ function applyCandleData(candles, resetView = false) {
 
   if (resetView) {
     requestAnimationFrame(() => fitChartToSymbol(filled));
-  } else if (state.isFollowingRealtime) {
-    state.programmaticScroll = true;
-    chart.timeScale().scrollToRealTime();
-    state.programmaticScroll = false;
   }
+  // Do not scrollToRealTime on setData refresh — live updates use
+  // series.update() + shiftVisibleRangeOnNewBar; forced scroll here (and from
+  // backtest SL/TP refresh) was snapping the view backward on new bars.
 
   if (typeof IndicatorManager !== 'undefined') IndicatorManager.update(filled);
   syncVolumeVisibility();
@@ -1900,6 +1905,7 @@ const BACKTEST_OVERLAY_OPTS = {
     lineStyle: LightweightCharts.LineStyle.Dashed,
     lastValueVisible: false,
     priceLineVisible: false,
+    autoscaleInfoProvider: () => ({ priceRange: null }),
   },
   tp: {
     color: '#26a69a',
@@ -1907,6 +1913,7 @@ const BACKTEST_OVERLAY_OPTS = {
     lineStyle: LightweightCharts.LineStyle.Dashed,
     lastValueVisible: false,
     priceLineVisible: false,
+    autoscaleInfoProvider: () => ({ priceRange: null }),
   },
 };
 const MAX_BACKTEST_OVERLAY_TRADES = 50;

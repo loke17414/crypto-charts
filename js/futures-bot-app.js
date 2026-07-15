@@ -956,7 +956,7 @@ const FuturesBotApp = (() => {
     return { source: extended, fromCache: false };
   }
 
-  async function applyBacktest(chartCandles, { force = false } = {}) {
+  async function applyBacktest(chartCandles, { force = false, focusChart = false } = {}) {
     const statsEl = $('#backtestStats');
     if (!window.CryptoCharts) {
       if (statsEl) statsEl.textContent = '백테스트: — (차트 미연동)';
@@ -990,7 +990,7 @@ const FuturesBotApp = (() => {
       const { markers, stats, trades } = FuturesStrategy.backtest(source, settings, { maxTrades: targetTrades });
       let displayCandles = chartCandles?.length ? chartCandles : source;
 
-      if ((showBacktest || force) && trades.length && displayCandles.length) {
+      if ((showBacktest || force) && focusChart && trades.length && displayCandles.length) {
         const focusPool = trades.slice(-8);
         const earliestEntry = Math.min(...focusPool.map((t) => t.entryTime));
         const chartData = CryptoCharts.getCandles() || displayCandles;
@@ -1011,7 +1011,9 @@ const FuturesBotApp = (() => {
         clearBacktestOverlays();
         CryptoCharts.setMarkers(mergeChartMarkers(visibleMarkers, displayCandles));
         syncBacktestOverlays(visibleTrades, displayCandles);
-        if (trades.length) focusBacktestTrades(trades, displayCandles);
+        // Only move the chart when the user explicitly runs backtest — not on
+        // every live new-bar refresh (was snapping the view to trade history).
+        if (focusChart && trades.length) focusBacktestTrades(trades, displayCandles);
       } else {
         CryptoCharts.setMarkers(getSwingPivotMarkers(displayCandles));
         clearBacktestOverlays();
@@ -1070,7 +1072,7 @@ const FuturesBotApp = (() => {
       }
 
       lastCandles = chartCandles;
-      await applyBacktest(chartCandles, { force: true });
+      await applyBacktest(chartCandles, { force: true, focusChart: true });
     } catch (err) {
       console.error('Backtest run failed:', err);
       if (statsEl) statsEl.textContent = `백테스트 실패: ${err.message}`;
