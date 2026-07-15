@@ -358,6 +358,7 @@ class StrategySettings(BaseModel):
     rsiOverbought: float = Field(default=70, ge=50, le=90)
     stopLossPct: float = Field(default=1.5, ge=0.5, le=15)
     takeProfitPct: float = Field(default=3.0, ge=0.5, le=30)
+    useStopLoss: bool = True
     allowShort: bool = True
     leverage: int = Field(default=5, ge=1, le=125)
     riskPerTradePct: float = Field(default=1.0, ge=0.1, le=10)

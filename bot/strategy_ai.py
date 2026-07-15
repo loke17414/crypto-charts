@@ -62,7 +62,7 @@ Settings keys:
 - entryRules: { long: RuleGroup, short: RuleGroup }  — PRIMARY for entry logic
 - exitRules: { long: ExitRule, short: ExitRule } — dynamic SL/TP (overrides stopLossPct/takeProfitPct when set)
 - rsiPeriod, rsiOversold, rsiOverbought — legacy RSI preset (used only if entryRules omitted)
-- stopLossPct (0.5-15), takeProfitPct (0.5-30), allowShort (bool)
+- stopLossPct (0.5-15), takeProfitPct (0.5-30), useStopLoss (bool, default true), allowShort (bool)
 - leverage (1-125), riskPerTradePct, maxAccountLossPct, pollSeconds
 
 ExitRule:

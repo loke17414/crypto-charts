@@ -304,6 +304,7 @@ const FuturesBotApp = (() => {
       rsiOverbought: state.rsiOverbought,
       stopLossPct: state.stopLossPct,
       takeProfitPct: state.takeProfitPct,
+      useStopLoss: state.useStopLoss !== false,
       allowShort: state.allowShort,
       leverage: state.leverage,
       riskPerTradePct: state.riskPerTradePct,
@@ -642,8 +643,17 @@ const FuturesBotApp = (() => {
     if (touches('rsiOverbought')) setFieldValue('rsiOverbought', settings.rsiOverbought);
     if (touches('stopLossPct')) setFieldValue('stopLoss', settings.stopLossPct);
     if (touches('takeProfitPct')) setFieldValue('takeProfit', settings.takeProfitPct);
-    const slTpChanged = touches('stopLossPct') || touches('takeProfitPct');
-    if (slTpChanged && state.slTpMode !== 'pct') {
+    if (touches('useStopLoss')) {
+      const el = $('#useStopLoss');
+      const on = settings.useStopLoss !== false;
+      if (el) el.checked = on;
+      state.useStopLoss = on;
+      localStorage.setItem(USE_STOP_LOSS_KEY, String(on));
+      if (!on) positionStopPrice = null;
+    }
+    const pctSlTpChanged = touches('stopLossPct') || touches('takeProfitPct');
+    const slTpChanged = pctSlTpChanged || touches('useStopLoss') || touches('exitRules');
+    if (pctSlTpChanged && state.slTpMode !== 'pct') {
       setSlTpMode('pct');
       addLog('AI가 SL/TP를 %기준으로 설정 — SL/TP 입력 방식을 % 비율로 전환했습니다.', 'info');
     }
@@ -1758,19 +1768,6 @@ const FuturesBotApp = (() => {
     return `${bars}봉 · ${market} · ${fmt(stats.rangeFromTime)} ~ ${fmt(stats.rangeToTime)}`;
   }
 
-  function statsFromTrades(trades, base = {}) {
-    const wins = trades.filter((t) => t.pnlPct >= 0).length;
-    const totalPnl = trades.reduce((s, t) => s + t.pnlPct, 0);
-    return {
-      ...base,
-      trades: trades.length,
-      wins,
-      losses: trades.length - wins,
-      winRate: trades.length ? (wins / trades.length) * 100 : 0,
-      totalPnlPct: totalPnl,
-    };
-  }
-
   function formatBacktestStats(stats, interval) {
     const pnlCls = stats.totalPnlPct >= 0 ? 'positive' : 'negative';
     const pnlSign = stats.totalPnlPct >= 0 ? '+' : '';
@@ -1778,10 +1775,11 @@ const FuturesBotApp = (() => {
     let countLabel = stats.targetTrades
       ? `${stats.trades}/${stats.targetTrades}회`
       : `${stats.trades}회`;
-    if (stats.chartOnly && stats.totalTrades > stats.trades) {
-      countLabel = `차트 ${stats.trades}/${stats.totalTrades}회`;
-    } else if (stats.targetTrades && !stats.targetReached) {
-      countLabel += ` · ${stats.candlesUsed.toLocaleString()}봉 한도`;
+    if (stats.targetTrades && !stats.targetReached) {
+      countLabel += ` · 전체 히스토리 ${stats.candlesUsed.toLocaleString()}봉`;
+    }
+    if (stats.chartVisibleTrades != null && stats.chartVisibleTrades < stats.trades) {
+      countLabel += ` (차트 표시 ${stats.chartVisibleTrades}회 — 왼쪽으로 스크롤하면 더 보입니다)`;
     }
     return (
       `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
@@ -1926,19 +1924,26 @@ const FuturesBotApp = (() => {
     }
 
     const cacheKey = backtestCacheKey(interval, targetTrades, settings);
+    let seed = chartSource;
+    let seedTrades = stats.trades;
     if (backtestHistoryCache?.key === cacheKey) {
       // The cached extended history is frozen at fetch time — merge in the
       // live chart candles so bars (and wicks) formed since then are tested.
       const merged = mergeCandlesByTime(backtestHistoryCache.candles, chartSource);
-      backtestHistoryCache = { key: cacheKey, candles: merged };
+      const exhausted = backtestHistoryCache.exhausted === true;
+      backtestHistoryCache = { key: cacheKey, candles: merged, exhausted };
       const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
-      if (cachedStats.trades >= targetTrades || cachedStats.trades > stats.trades) {
+      // 목표 도달, 또는 거래소 히스토리를 이미 끝까지 받은 경우에만 캐시로 종료.
+      // 목표 미달인 부분 캐시는 시드로 삼아 더 오래된 데이터를 이어서 로드한다.
+      if (cachedStats.trades >= targetTrades || exhausted) {
         return { source: merged, fromCache: true };
       }
+      seed = merged;
+      seedTrades = cachedStats.trades;
     }
 
     if (statsEl) {
-      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${stats.trades}/${targetTrades}회, ${chartSource.length}봉)`;
+      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${seedTrades}/${targetTrades}회, ${seed.length}봉)`;
     }
 
     const extended = await BacktestLoader.loadForTargetTrades(
@@ -1952,12 +1957,20 @@ const FuturesBotApp = (() => {
           `백테스트: 과거 데이터 로딩 중... (${progress.trades}/${progress.target}회, ` +
           `${progress.candles.toLocaleString()}봉 · ${progress.page}/${progress.maxPages}페이지)`;
       },
-      chartSource,
+      seed,
+      () => runId !== backtestRunId,
     );
 
-    if (runId !== backtestRunId) return null;
+    const cancelled = runId !== backtestRunId;
 
-    backtestHistoryCache = { key: cacheKey, candles: extended };
+    if (extended.length > seed.length || !cancelled) {
+      backtestHistoryCache = {
+        key: cacheKey,
+        candles: extended,
+        exhausted: !cancelled && extended.length <= seed.length,
+      };
+    }
+    if (cancelled) return null;
     return { source: extended, fromCache: false };
   }
 
@@ -2011,11 +2024,13 @@ const FuturesBotApp = (() => {
       let displayCandles = chartCandles?.length ? chartCandles : source;
 
       if ((showBacktest || force) && focusChart && trades.length && displayCandles.length) {
-        const focusPool = trades.slice(-8);
-        const earliestEntry = Math.min(...focusPool.map((t) => t.entryTime));
+        const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
         const chartData = Chart.getCandles() || displayCandles;
         if (earliestEntry < chartData[0].time) {
-          await Chart.loadHistoryUntilTime(earliestEntry);
+          const barSec = INTERVAL_SECONDS[interval] || 900;
+          const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
+          const maxPages = Math.min(60, Math.ceil(needBars / 1000) + 2);
+          await Chart.loadHistoryUntilTime(earliestEntry, maxPages);
         }
         displayCandles = Chart.getCandles() || displayCandles;
       }
@@ -2039,16 +2054,7 @@ const FuturesBotApp = (() => {
         clearBacktestOverlays();
       }
 
-      let reportStats = stats;
-      if ((showBacktest || force) && visibleTrades.length && visibleTrades.length < trades.length) {
-        reportStats = statsFromTrades(visibleTrades, {
-          ...stats,
-          chartOnly: true,
-          totalTrades: stats.trades,
-          rangeFromTime: visibleTrades[0]?.entryTime ?? stats.rangeFromTime,
-          rangeToTime: visibleTrades.at(-1)?.exitTime ?? stats.rangeToTime,
-        });
-      }
+      const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
 
       lastRenderedBacktestKey = backtestCacheKey(interval, targetTrades, settings);
       if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);
