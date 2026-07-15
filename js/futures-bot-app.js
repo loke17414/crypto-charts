@@ -1685,7 +1685,10 @@ const FuturesBotApp = (() => {
   function formatBacktestRange(stats) {
     const bars = stats.candlesUsed ?? 0;
     if (!stats.rangeFromTime || !stats.rangeToTime) return `${bars}봉`;
+    // 1년 넘게 걸치는 결과에서 연도가 없으면 "10월 11일 ~ 10월 8일"처럼
+    // 거꾸로 보이는 착시가 생긴다 — 연도를 반드시 포함한다.
     const fmt = (t) => new Date(t * 1000).toLocaleString('ko-KR', {
+      year: '2-digit',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',

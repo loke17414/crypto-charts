@@ -3,6 +3,8 @@ const BacktestLoader = (() => {
   const FUTURES_API = 'https://fapi.binance.com/fapi/v1';
   const PAGE_SIZE = 1000;
   const HARD_MAX_PAGES = 300;
+  // 연속 페이지 요청 사이 지연 — 바이낸스 레이트리밋(가중치/분)을 넘지 않게.
+  const PAGE_FETCH_DELAY_MS = 150;
 
   function maxPagesForTarget(targetTrades) {
     return Math.min(HARD_MAX_PAGES, Math.max(10, Math.ceil(targetTrades / 2) + 5));
@@ -66,6 +68,7 @@ const BacktestLoader = (() => {
   async function fetchOlderPages(symbol, interval, candles, pageCount) {
     let merged = candles;
     for (let n = 0; n < pageCount; n++) {
+      if (n > 0) await new Promise((r) => setTimeout(r, PAGE_FETCH_DELAY_MS));
       const oldestMs = merged[0].time * 1000 - 1;
       const older = await fetchPage(symbol, interval, oldestMs);
       if (!older.length) break;
@@ -85,7 +88,6 @@ const BacktestLoader = (() => {
   }
 
   async function loadForTargetTrades(symbol, interval, settings, targetTrades, onProgress, seedCandles = []) {
-    const maxPages = maxPagesForTarget(targetTrades);
     let candles = seedCandles.length ? [...seedCandles] : await fetchPage(symbol, interval);
     if (!candles.length) return candles;
 
@@ -94,6 +96,10 @@ const BacktestLoader = (() => {
     // 목표 횟수를 못 채우는 부분 결과가 만들어졌다.
     let pagesUsed = seedCandles.length ? 0 : 1;
     let found = countTrades(candles, settings, targetTrades);
+    // 거래 밀도가 낮은 전략은 고정 예산으로 목표를 못 채운다. 관측된
+    // 봉/거래 밀도로 필요한 양을 추정해 예산을 넓히되, HARD_MAX_PAGES로
+    // 폭주를 막는다 (히스토리 끝에 닿으면 그 전에 멈춘다).
+    let budget = maxPagesForTarget(targetTrades);
 
     const report = (loading) => {
       if (!onProgress) return;
@@ -102,22 +108,24 @@ const BacktestLoader = (() => {
         target: targetTrades,
         candles: candles.length,
         page: pagesUsed,
-        maxPages,
+        maxPages: budget,
         loading,
       });
     };
     report(true);
 
-    while (found < targetTrades && pagesUsed < maxPages) {
+    while (found < targetTrades && pagesUsed < budget) {
       const before = candles.length;
       const remaining = targetTrades - found;
       const barsPerTrade = found > 0
         ? candles.length / found
         : barsPerTradeHint(interval) * 3;
       const neededBars = Math.ceil(remaining * barsPerTrade * 1.35) + PAGE_SIZE;
+      const estPagesNeeded = Math.ceil(neededBars / PAGE_SIZE);
+      budget = Math.min(HARD_MAX_PAGES, Math.max(budget, pagesUsed + estPagesNeeded));
       const pagesToFetch = Math.max(
         2,
-        Math.min(Math.ceil(neededBars / PAGE_SIZE), maxPages - pagesUsed, 10),
+        Math.min(estPagesNeeded, budget - pagesUsed, 10),
       );
 
       candles = await fetchOlderPages(symbol, interval, candles, pagesToFetch);
