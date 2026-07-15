@@ -833,6 +833,49 @@ a:hover { text-decoration: underline; }
   user-select: none;
 }
 
+/* Binance position-projection style labels on held-position dashed lines */
+.chart-position-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  display: none;
+}
+
+.pos-projection-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  border: 1px dashed;
+  background: rgba(19, 23, 34, 0.88);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+
+.pos-projection-label--tp {
+  color: #26a69a;
+  border-color: #26a69a;
+}
+
+.pos-projection-label--sl {
+  color: #ef5350;
+  border-color: #ef5350;
+}
+
+.pos-projection-label--entry {
+  color: #2962ff;
+  border-color: #2962ff;
+}
+
+.pos-projection-label--entry.pos-projection-label--short {
+  color: #f7931a;
+  border-color: #f7931a;
+}
+
 .footer {
   padding: 0.75rem 1.5rem;
   border-top: 1px solid var(--border);

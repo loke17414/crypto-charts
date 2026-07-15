@@ -642,6 +642,7 @@ function initChart(container) {
   chartInitialized = true;
   ensureLiveOhlcOverlay();
   setupChartInteractions();
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => updatePositionOverlayLabels());
   renderPositionOverlaySegments();
   applySwingLevelLines();
   applyStopLossLine();
@@ -1983,7 +1984,10 @@ function upsertPositionLineSeries(currentSeries, price, opts, tStart, tEnd, barS
 }
 
 function renderPositionOverlaySegments() {
-  if (!positionOverlayPending || !chart || !state.lastCandles?.length) return;
+  if (!positionOverlayPending || !chart || !state.lastCandles?.length) {
+    updatePositionOverlayLabels();
+    return;
+  }
   const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = positionOverlayPending;
   const times = resolvePositionSegmentTimes(entryTime);
   if (!times) return;
@@ -2007,11 +2011,104 @@ function renderPositionOverlaySegments() {
   if (candleSeries && isPriceScaleAuto()) {
     candleSeries.applyOptions({ autoscaleInfoProvider: candleAutoscaleProvider });
   }
+  updatePositionOverlayLabels();
+}
+
+// Binance long/short position projection style labels: centered boxes on each
+// dashed line showing target/stop % and risk-reward (no filled zones).
+function ensurePositionLabelWrap() {
+  const main = document.querySelector('.chart-main');
+  if (!main) return null;
+  let wrap = document.getElementById('chartPositionLabels');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'chartPositionLabels';
+    wrap.className = 'chart-position-labels';
+    for (const role of ['tp', 'entry', 'sl']) {
+      const el = document.createElement('div');
+      el.className = `pos-projection-label pos-projection-label--${role}`;
+      el.dataset.role = role;
+      wrap.appendChild(el);
+    }
+    main.appendChild(wrap);
+  }
+  return wrap;
+}
+
+function placePositionLabel(el, xMid, price, chartWidth) {
+  if (!el) return;
+  const y = candleSeries.priceToCoordinate(price);
+  if (!Number.isFinite(price) || y == null || y < 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  const half = el.offsetWidth / 2 || 60;
+  const x = Math.min(Math.max(xMid, half + 4), Math.max(chartWidth - half - 4, half + 4));
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+}
+
+function updatePositionOverlayLabels() {
+  const wrap = ensurePositionLabelWrap();
+  if (!wrap) return;
+  if (!positionOverlayPending || !chart || !candleSeries || !state.lastCandles?.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = positionOverlayPending;
+  const times = resolvePositionSegmentTimes(entryTime);
+  if (!times) { wrap.style.display = 'none'; return; }
+
+  const ts = chart.timeScale();
+  const chartWidth = ts.width() || $('#chartArea')?.clientWidth || 0;
+  let x1 = ts.timeToCoordinate(times.tStart);
+  let x2 = ts.timeToCoordinate(times.tEnd);
+  if (x1 == null) x1 = 0;
+  if (x2 == null) x2 = chartWidth;
+  const xMid = (x1 + x2) / 2;
+
+  const buy = side === 'LONG';
+  const dir = buy ? 1 : -1;
+  const tpPct = Number.isFinite(takeProfitPrice) && entryPrice
+    ? ((takeProfitPrice - entryPrice) / entryPrice) * 100 * dir : null;
+  const slPct = Number.isFinite(stopPrice) && entryPrice
+    ? ((entryPrice - stopPrice) / entryPrice) * 100 * dir : null;
+  const rr = tpPct != null && slPct != null && slPct > 0 ? tpPct / slPct : null;
+
+  wrap.style.display = 'block';
+
+  const tpEl = wrap.querySelector('[data-role="tp"]');
+  const entryEl = wrap.querySelector('[data-role="entry"]');
+  const slEl = wrap.querySelector('[data-role="sl"]');
+
+  if (tpEl) {
+    tpEl.textContent = Number.isFinite(takeProfitPrice)
+      ? `목표 ${formatPrice(takeProfitPrice)}${tpPct != null ? ` (+${tpPct.toFixed(2)}%)` : ''}`
+      : '';
+    placePositionLabel(tpEl, xMid, takeProfitPrice, chartWidth);
+  }
+  if (slEl) {
+    slEl.textContent = Number.isFinite(stopPrice)
+      ? `손절 ${formatPrice(stopPrice)}${slPct != null ? ` (-${slPct.toFixed(2)}%)` : ''}`
+      : '';
+    placePositionLabel(slEl, xMid, stopPrice, chartWidth);
+  }
+  if (entryEl) {
+    entryEl.classList.toggle('pos-projection-label--short', !buy);
+    entryEl.textContent = Number.isFinite(entryPrice)
+      ? `${buy ? '롱' : '숏'} 진입 ${formatPrice(entryPrice)}${rr != null ? ` · 손익비 ${rr.toFixed(2)}` : ''}`
+      : '';
+    placePositionLabel(entryEl, xMid, entryPrice, chartWidth);
+  }
 }
 
 function clearPositionOverlay() {
   positionOverlayPending = null;
   positionAutoscalePrices = [];
+  const labelWrap = document.getElementById('chartPositionLabels');
+  if (labelWrap) labelWrap.style.display = 'none';
   if (chart) {
     for (const s of [positionSlSeries, positionTpSeries, positionEntrySeries]) {
       if (s) { try { chart.removeSeries(s); } catch { /* ignore */ } }
