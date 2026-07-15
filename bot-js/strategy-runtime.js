@@ -1,11 +1,16 @@
 'use strict';
 
 /*
- * Loads the EXACT browser strategy engine (js/*.js) inside a headless Node vm
- * sandbox so the server bot makes byte-for-byte identical decisions to the
- * trading UI. No JS is copied or re-implemented here — the same source files
- * that run in the browser are concatenated and evaluated in one shared script
- * scope (mirroring how classic <script> tags share the global scope in a page).
+ * Loads the strategy engine inside a headless Node vm sandbox so the server
+ * bot makes decisions identical to the trading UI. The files are concatenated
+ * and evaluated in one shared script scope (mirroring how classic <script>
+ * tags share the global scope in a page).
+ *
+ * ISOLATION: the bot loads from its OWN snapshot (bot-js/strategy/), not the
+ * live js/ tree the website serves. The snapshot is only replaced by
+ * sync-strategy.js after the candidate code passes a validation gate, so a
+ * broken js/ edit can never crash the running bot. If no snapshot exists yet
+ * (first run), it falls back to js/ with a warning.
  *
  * The chart/DOM code (app.js, futures-bot-app.js, indicators.js IndicatorManager
  * rendering) is intentionally NOT loaded; only the pure decision layer is:
@@ -32,8 +37,20 @@ const LOAD_ORDER = [
   'futures-strategy.js',
 ];
 
+const SNAPSHOT_DIR = path.join(__dirname, 'strategy');
+
+function defaultDir() {
+  const complete = LOAD_ORDER.every((f) => fs.existsSync(path.join(SNAPSHOT_DIR, f)));
+  if (complete) return SNAPSHOT_DIR;
+  console.warn(
+    '[strategy-runtime] No strategy snapshot found (bot-js/strategy/). '
+    + 'Falling back to live js/ — run "node bot-js/sync-strategy.js" to isolate the bot.',
+  );
+  return path.join(__dirname, '..', 'js');
+}
+
 function buildRuntime(jsDir) {
-  const dir = jsDir || path.join(__dirname, '..', 'js');
+  const dir = jsDir || defaultDir();
 
   const sources = LOAD_ORDER.map((file) => {
     const full = path.join(dir, file);
@@ -86,4 +103,4 @@ function buildRuntime(jsDir) {
   return brain;
 }
 
-module.exports = { buildRuntime };
+module.exports = { buildRuntime, LOAD_ORDER, SNAPSHOT_DIR };

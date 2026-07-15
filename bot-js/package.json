@@ -6,7 +6,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "check": "node --check bot.js && node --check binance.js && node --check config.js && node --check strategy-runtime.js"
+    "sync": "node sync-strategy.js",
+    "check": "node --check bot.js && node --check binance.js && node --check config.js && node --check strategy-runtime.js && node --check sync-strategy.js"
   },
   "engines": {
     "node": ">=18"

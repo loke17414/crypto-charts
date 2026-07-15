@@ -2,8 +2,10 @@
 
 /*
  * Headless 24/7 auto-trading bot. Runs the SAME strategy engine as the trading
- * UI (via strategy-runtime) and replicates the UI bot loop (futures-bot-app.js
- * botTick + evaluateLiveExit):
+ * UI, but loaded from the bot's OWN validated snapshot (bot-js/strategy/, see
+ * sync-strategy.js) so website code changes can never crash the running bot.
+ * Entry rules still come from strategy.json exported from the UI. Replicates
+ * the UI bot loop (futures-bot-app.js botTick + evaluateLiveExit):
  *   - poll every pollSeconds
  *   - on an open position: intrabar wick exit (checkExitBar on the forming
  *     candle high/low) so fast SL/TP touches between polls are not missed,

@@ -64,6 +64,22 @@ if ! command -v node >/dev/null; then
 fi
 echo "    node: $(node -v)"
 
+# Update the bot's isolated strategy snapshot. If the new js/ code fails
+# validation the sync exits non-zero and the bot keeps its previous
+# known-good snapshot — the web update still proceeds.
+echo "==> Sync bot strategy snapshot (validated)"
+if node bot-js/sync-strategy.js; then
+  echo "    snapshot OK"
+else
+  echo "    WARN: strategy validation failed — bot keeps previous snapshot"
+fi
+
+# Restart the bot service if it is installed so it picks up the new snapshot.
+if systemctl list-unit-files crypto-bot.service --no-legend 2>/dev/null | grep -q crypto-bot; then
+  echo "==> Restart crypto-bot"
+  systemctl restart crypto-bot || echo "    WARN: crypto-bot restart failed"
+fi
+
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
