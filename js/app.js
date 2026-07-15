@@ -2095,26 +2095,6 @@ function getBarIntervalSeconds(candles) {
   return Math.max(1, candles[1].time - candles[0].time);
 }
 
-const BACKTEST_OVERLAY_OPTS = {
-  sl: {
-    color: '#ef5350',
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    lastValueVisible: false,
-    priceLineVisible: false,
-    autoscaleInfoProvider: () => ({ priceRange: null }),
-  },
-  tp: {
-    color: '#26a69a',
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    lastValueVisible: false,
-    priceLineVisible: false,
-    autoscaleInfoProvider: () => ({ priceRange: null }),
-  },
-};
-const MAX_BACKTEST_OVERLAY_TRADES = 50;
-
 function clearBacktestOverlaySegments() {
   if (chart) {
     for (const s of backtestSlSegments) {
@@ -2128,40 +2108,10 @@ function clearBacktestOverlaySegments() {
   backtestTpSegments = [];
 }
 
-function addHorizontalOverlaySegment(segmentList, opts, tStart, tEnd, price) {
-  if (!chart || !Number.isFinite(price) || tStart == null || tEnd == null || tStart > tEnd) return;
-  const series = chart.addLineSeries(opts);
-  series.setData([
-    { time: tStart, value: price },
-    { time: tEnd, value: price },
-  ]);
-  segmentList.push(series);
-}
-
-function setBacktestTradeOverlays(trades, chartCandles) {
+function setBacktestTradeOverlays(_trades, _chartCandles) {
   if (!chart || !candleSeries) return;
   clearBacktestOverlaySegments();
-
-  const candles = state.lastCandles?.length ? state.lastCandles : chartCandles;
-  if (!trades?.length || !candles?.length) return;
-
-  const barSec = getBarIntervalSeconds(candles);
-  const minT = candles[0].time;
-  const maxT = candles.at(-1).time;
-  const pool = trades.slice(-MAX_BACKTEST_OVERLAY_TRADES);
-
-  for (const trade of pool) {
-    if (trade.exitTime < minT || trade.entryTime > maxT) continue;
-
-    let tStart = Math.max(trade.entryTime, minT);
-    let tEnd = Math.min(trade.exitTime, maxT);
-    if (tStart > tEnd) continue;
-    if (tStart === tEnd) tEnd = Math.min(tStart + barSec, maxT);
-    if (tStart > tEnd) continue;
-
-    addHorizontalOverlaySegment(backtestSlSegments, BACKTEST_OVERLAY_OPTS.sl, tStart, tEnd, trade.stopPrice);
-    addHorizontalOverlaySegment(backtestTpSegments, BACKTEST_OVERLAY_OPTS.tp, tStart, tEnd, trade.takeProfitPrice);
-  }
+  // Backtest SL/TP dashed lines disabled — entry/exit markers only.
 }
 
 function clearBacktestTradeOverlays() {
