@@ -17,6 +17,7 @@ from bot.credentials import clear_binance_credentials, credentials_configured, l
 from bot.exchange import BinanceFuturesClient
 from bot.server_bot import bot_diagnostics, bot_status, restore_bot_if_needed, save_strategy_json, start_bot, stop_bot
 from bot.strategy_ai import ai_available, configure_openai_api_key, interpret_strategy, test_openai_api_key
+from bot.strategy_ai_memory import clear_memory, load_turns
 from bot.strategy_schema import StrategyInterpretRequest, StrategyInterpretResponse, StrategySettings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -175,7 +176,15 @@ def strategy_configure(body: StrategyConfigureBody) -> dict[str, Any]:
 @app.post("/api/strategy/interpret")
 def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretResponse:
     try:
-        result = interpret_strategy(body.prompt, body.current_settings, [m.model_dump() for m in body.history])
+        result = interpret_strategy(
+            body.prompt,
+            body.current_settings,
+            [m.model_dump() for m in body.history],
+            symbol=body.symbol,
+            interval=body.interval,
+            market_context=body.market_context,
+            backtest_snapshot=body.backtest_snapshot,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -190,7 +199,21 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
         rules=result["rules"],
         patch=result.get("patch") or {},
         changed_fields=result.get("changed_fields") or [],
+        market_insight=result.get("market_insight") or "",
+        backtest_insight=result.get("backtest_insight") or "",
     )
+
+
+@app.get("/api/strategy/ai-history")
+def strategy_ai_history() -> dict[str, Any]:
+    turns = load_turns()
+    return {"ok": True, "turns": turns, "count": len(turns)}
+
+
+@app.post("/api/strategy/ai-history/clear")
+def strategy_ai_history_clear() -> dict[str, Any]:
+    clear_memory()
+    return {"ok": True, "message": "서버 대화 기록이 초기화되었습니다."}
 
 
 @app.post("/api/connect")

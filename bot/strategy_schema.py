@@ -429,12 +429,17 @@ class StrategySettings(BaseModel):
 class StrategyChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=2000)
+    meta: dict[str, Any] | None = None
 
 
 class StrategyInterpretRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
     current_settings: dict[str, Any] = Field(default_factory=dict)
-    history: list[StrategyChatMessage] = Field(default_factory=list, max_length=20)
+    history: list[StrategyChatMessage] = Field(default_factory=list, max_length=30)
+    symbol: str = "BTCUSDT"
+    interval: str = "1h"
+    market_context: dict[str, Any] | None = None
+    backtest_snapshot: dict[str, Any] | None = None
 
 
 class StrategyInterpretResponse(BaseModel):
@@ -444,3 +449,5 @@ class StrategyInterpretResponse(BaseModel):
     rules: str
     patch: dict[str, Any] = Field(default_factory=dict)
     changed_fields: list[str] = Field(default_factory=list)
+    market_insight: str = ""
+    backtest_insight: str = ""

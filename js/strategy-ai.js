@@ -2,7 +2,7 @@
 
 const StrategyAI = (() => {
   const HISTORY_KEY = 'crypto-charts-strategy-ai-history';
-  const MAX_HISTORY = 16;
+  const MAX_HISTORY = 24;
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -29,11 +29,35 @@ const StrategyAI = (() => {
     }
   }
 
-  function rememberTurn(role, content) {
+  function rememberTurn(role, content, meta = null) {
     const text = String(content || '').trim();
     if (!text) return;
-    conversationHistory.push({ role, content: text.slice(0, 2000) });
+    const entry = { role, content: text.slice(0, 2000) };
+    if (meta && typeof meta === 'object') entry.meta = meta;
+    conversationHistory.push(entry);
     saveHistory();
+  }
+
+  async function syncHistoryFromServer() {
+    try {
+      const serverOk = await FuturesApiClient.checkServer();
+      if (!serverOk) return;
+      const data = await FuturesApiClient.getStrategyAiHistory();
+      const serverTurns = Array.isArray(data?.turns) ? data.turns : [];
+      if (!serverTurns.length) return;
+
+      const merged = [...conversationHistory];
+      for (const turn of serverTurns) {
+        if (!turn?.role || !turn?.content) continue;
+        const exists = merged.some((m) => m.role === turn.role && m.content === turn.content);
+        if (!exists) merged.push({ role: turn.role, content: turn.content, meta: turn.meta });
+      }
+      conversationHistory = merged.slice(-MAX_HISTORY);
+      saveHistory();
+      restoreHistoryToUi();
+    } catch {
+      /* ignore */
+    }
   }
 
   function restoreHistoryToUi() {
@@ -45,7 +69,7 @@ const StrategyAI = (() => {
     }
   }
 
-  function addMessage(role, text, { persist = false } = {}) {
+  function addMessage(role, text, { persist = false, meta = null } = {}) {
     const box = $('#strategyAiMessages');
     if (!box) return;
 
@@ -55,7 +79,7 @@ const StrategyAI = (() => {
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;
 
-    if (persist) rememberTurn(role, text);
+    if (persist) rememberTurn(role, text, meta);
   }
 
   function setThinking(on, text = 'GPT가 전략을 분석하는 중...') {
@@ -200,9 +224,9 @@ const StrategyAI = (() => {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
 
-    const priorHistory = conversationHistory.slice(-12);
+    const priorHistory = conversationHistory.slice(-20);
     addMessage('user', trimmed, { persist: true });
-    setThinking(true);
+    setThinking(true, '차트·백테스트 데이터 분석 후 GPT 전략 적용 중...');
 
     try {
       const serverOk = await FuturesApiClient.checkServer();
@@ -218,7 +242,15 @@ const StrategyAI = (() => {
       }
 
       const current = FuturesBotApp.getFormStateForAi();
-      const result = await FuturesApiClient.interpretStrategy(trimmed, current, priorHistory);
+      const marketContext = FuturesBotApp.getMarketContextForAi?.() || null;
+      const backtestSnapshot = FuturesBotApp.getBacktestSnapshotForAi?.() || null;
+
+      const result = await FuturesApiClient.interpretStrategy(trimmed, current, priorHistory, {
+        symbol: current.symbol,
+        interval: current.interval,
+        marketContext,
+        backtestSnapshot,
+      });
 
       FuturesBotApp.applyStrategySettings(result.settings, {
         rulesHtml: result.rules,
@@ -227,10 +259,19 @@ const StrategyAI = (() => {
       });
 
       const changed = (result.changed_fields || result.changedFields || []).join(', ');
-      const reply = changed
-        ? `${result.summary}\n(변경: ${changed})`
-        : result.summary;
-      addMessage('assistant', reply, { persist: true });
+      const parts = [result.summary];
+      if (result.market_insight) parts.push(`📊 ${result.market_insight}`);
+      if (result.backtest_insight) parts.push(`📈 ${result.backtest_insight}`);
+      if (changed) parts.push(`(변경: ${changed})`);
+
+      const reply = parts.join('\n');
+      addMessage('assistant', reply, {
+        persist: true,
+        meta: {
+          changed_fields: result.changed_fields || result.changedFields || [],
+          backtest: backtestSnapshot?.current || null,
+        },
+      });
     } catch (err) {
       console.error(err);
       addMessage('assistant', err.message || '전략 적용에 실패했습니다. 다시 시도해 주세요.', { persist: true });
@@ -320,13 +361,16 @@ const StrategyAI = (() => {
     }
   }
 
-  function clearHistory() {
+  async function clearHistory() {
     conversationHistory = [];
     saveHistory();
     restoreHistoryToUi();
+    try {
+      await FuturesApiClient.clearStrategyAiHistory();
+    } catch { /* ignore */ }
     addMessage(
       'assistant',
-      '대화 기록을 초기화했습니다. 이전 맥락 없이 새 전략을 설명해 주세요.',
+      '대화 기록을 초기화했습니다 (브라우저 + 서버). 이전 맥락 없이 새 전략을 설명해 주세요.',
       { persist: true },
     );
   }
@@ -367,13 +411,14 @@ const StrategyAI = (() => {
     loadHistory();
     bindEvents();
     const status = await refreshStatus({ verify: true });
+    await syncHistoryFromServer();
 
     if (conversationHistory.length) {
       restoreHistoryToUi();
     } else if (status?.configured && status?.verified) {
       addMessage(
         'assistant',
-        `서버에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 바로 전략을 설명하세요.`,
+        `서버에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 차트·백테스트 데이터를 분석해 전략을 적용합니다. 이전 대화는 서버에 기억됩니다.`,
         { persist: false },
       );
     } else if (status?.configured) {

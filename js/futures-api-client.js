@@ -128,15 +128,27 @@ const FuturesApiClient = (() => {
     });
   }
 
-  async function interpretStrategy(prompt, currentSettings, history = []) {
+  async function interpretStrategy(prompt, currentSettings, history = [], options = {}) {
     return request('/api/strategy/interpret', {
       method: 'POST',
       body: JSON.stringify({
         prompt,
         current_settings: currentSettings,
         history,
+        symbol: options.symbol || 'BTCUSDT',
+        interval: options.interval || '1h',
+        market_context: options.marketContext || null,
+        backtest_snapshot: options.backtestSnapshot || null,
       }),
     });
+  }
+
+  async function getStrategyAiHistory() {
+    return request('/api/strategy/ai-history');
+  }
+
+  async function clearStrategyAiHistory() {
+    return request('/api/strategy/ai-history/clear', { method: 'POST' });
   }
 
   async function configureOpenAiKey(openaiApiKey) {
@@ -187,6 +199,8 @@ const FuturesApiClient = (() => {
     getStrategyAiStatus,
     testOpenAiKey,
     interpretStrategy,
+    getStrategyAiHistory,
+    clearStrategyAiHistory,
     configureOpenAiKey,
     syncStrategy,
     getBotStatus,

@@ -14,6 +14,8 @@ import requests
 from dotenv import load_dotenv
 
 from bot.config import ROOT
+from bot.strategy_ai_memory import append_turn, clear_memory, load_turns, merge_histories
+from bot.strategy_market import build_market_context
 from bot.strategy_schema import StrategySettings
 
 logger = logging.getLogger(__name__)
@@ -148,6 +150,25 @@ Rules:
 - Set short.enabled=false when user wants long-only.
 - Change only what user asks; use partial entryRules/exitRules patches for follow-up edits.
 - Keep summary and rules in Korean.
+
+MARKET DATA & BACKTEST (critical for accuracy):
+- You receive market_context (recent price, RSI, EMA trend, volatility ATR%, range) and backtest_snapshot.
+- Use market_context to calibrate thresholds: e.g. if rsi14 is 68, "과매수 롱" should use rsi >= 65-70 not <= 30.
+- If recentTrend is bullish and volatility high (atrPct > 2), prefer wider stopLossPct or ATR-based exits.
+- backtest_snapshot.current = performance of ACTIVE strategy on recent candles.
+- If winRate < 40% with trades >= 10, suggest tightening entry filters (add AND conditions, raise RSI thresholds).
+- If trades < 5, strategy may be too strict — suggest loosening one filter.
+- Mention market_insight (1 sentence on current market) and backtest_insight (1 sentence on backtest) in JSON response.
+
+Respond with JSON only — extended shape:
+{
+  "settings": { /* changed fields only */ },
+  "changed_fields": ["stopLossPct"],
+  "summary": "Korean 1-3 sentences — what changed and why",
+  "rules": "Korean HTML bullets",
+  "market_insight": "Korean 1 sentence on current market vs strategy fit",
+  "backtest_insight": "Korean 1 sentence on backtest result / expected improvement"
+}
 """
 
 
@@ -489,6 +510,8 @@ def _call_openai(
     current: StrategySettings,
     indicator_catalog: str = "",
     history: list[dict[str, str]] | None = None,
+    market_context: dict[str, Any] | None = None,
+    backtest_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     api_key, model = _openai_config()
     if not api_key:
@@ -505,6 +528,8 @@ def _call_openai(
         {
             "current_settings": current.model_dump(),
             "indicator_catalog": indicator_catalog,
+            "market_context": market_context or {},
+            "backtest_snapshot": backtest_snapshot or {},
             "user_request": prompt,
         },
         ensure_ascii=False,
@@ -618,25 +643,69 @@ def interpret_strategy(
     prompt: str,
     current_settings: dict[str, Any] | None = None,
     history: list[dict[str, Any]] | None = None,
+    *,
+    symbol: str = "BTCUSDT",
+    interval: str = "1h",
+    market_context: dict[str, Any] | None = None,
+    backtest_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
     current = StrategySettings.model_validate(raw_settings)
-    normalized_history = _normalize_history(history)
-    raw = _call_openai(prompt.strip(), current, indicator_catalog, normalized_history)
+
+    merged_history = merge_histories(history, load_turns())
+    market = build_market_context(
+        symbol=symbol,
+        interval=interval,
+        client_context=market_context,
+        use_testnet=True,
+    )
+
+    append_turn(role="user", content=prompt.strip())
+
+    raw = _call_openai(
+        prompt.strip(),
+        current,
+        indicator_catalog,
+        merged_history,
+        market,
+        backtest_snapshot,
+    )
 
     patch = raw.get("settings") or {}
     if not isinstance(patch, dict):
         patch = {}
 
-    patch = _apply_rule_templates(prompt.strip(), patch, normalized_history)
+    patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
 
     merged = current.merged(patch)
     summary = str(raw.get("summary") or "전략 설정을 업데이트했습니다.").strip()
     rules = str(raw.get("rules") or merged.rules_text()).strip()
+    market_insight = str(raw.get("market_insight") or "").strip()
+    backtest_insight = str(raw.get("backtest_insight") or "").strip()
     changed_fields = raw.get("changed_fields")
     if not isinstance(changed_fields, list):
         changed_fields = list(patch.keys())
+
+    bt_meta = None
+    if backtest_snapshot and isinstance(backtest_snapshot.get("current"), dict):
+        bt_meta = backtest_snapshot["current"]
+
+    assistant_text = summary
+    if market_insight:
+        assistant_text += f"\n📊 {market_insight}"
+    if backtest_insight:
+        assistant_text += f"\n📈 {backtest_insight}"
+
+    append_turn(
+        role="assistant",
+        content=assistant_text,
+        meta={
+            "changed_fields": changed_fields,
+            "backtest": bt_meta,
+            "patch_keys": list(patch.keys()),
+        },
+    )
 
     logger.info("Strategy AI applied patch: %s", patch)
 
@@ -647,6 +716,8 @@ def interpret_strategy(
         "rules": rules,
         "patch": patch,
         "changed_fields": changed_fields,
+        "market_insight": market_insight,
+        "backtest_insight": backtest_insight,
     }
 
 

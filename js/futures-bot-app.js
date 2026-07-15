@@ -200,6 +200,8 @@ const FuturesBotApp = (() => {
   function getFormStateForAi() {
     readFormSettings();
     return {
+      symbol: state.symbol,
+      interval: state.interval,
       rsiPeriod: state.rsiPeriod,
       rsiOversold: state.rsiOversold,
       rsiOverbought: state.rsiOverbought,
@@ -213,6 +215,74 @@ const FuturesBotApp = (() => {
       entryRules: state.entryRules,
       exitRules: state.exitRules,
       indicatorCatalog: window.StrategyEngine?.catalogForAi?.() || '',
+    };
+  }
+
+  function getMarketContextForAi() {
+    readFormSettings();
+    syncFromChart();
+    const candles = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    if (!candles.length) {
+      return { symbol: state.symbol, interval: state.interval, candleCount: 0 };
+    }
+
+    const closes = candles.map((c) => c.close);
+    const price = closes.at(-1) || 0;
+    const lookback = Math.min(24, closes.length - 1);
+    const base = closes[closes.length - 1 - lookback] || price;
+    const changePct = base ? ((price - base) / base) * 100 : 0;
+
+    let rsi14 = null;
+    if (window.TA?.rsi) {
+      const rsiSeries = TA.rsi(candles, state.rsiPeriod || 14);
+      const last = rsiSeries?.at(-1);
+      rsi14 = last?.value ?? last ?? null;
+    }
+
+    const last20 = candles.slice(-20);
+    const upBars = last20.filter((c, i, arr) => i > 0 && c.close > arr[i - 1].close).length;
+
+    return {
+      symbol: state.symbol,
+      interval: state.interval,
+      candleCount: candles.length,
+      price: Math.round(price * 100) / 100,
+      change24BarsPct: Math.round(changePct * 100) / 100,
+      rsi14: rsi14 != null ? Math.round(rsi14 * 10) / 10 : null,
+      last20Bars: { up: upBars, down: Math.max(0, last20.length - 1 - upBars) },
+      recentHigh: Math.max(...candles.slice(-lookback).map((c) => c.high)),
+      recentLow: Math.min(...candles.slice(-lookback).map((c) => c.low)),
+    };
+  }
+
+  function getBacktestSnapshotForAi() {
+    readFormSettings();
+    syncFromChart();
+    const candles = lastCandles.length ? lastCandles : (CryptoCharts?.getCandles?.() || []);
+    const settings = getSettings();
+    const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
+
+    if (!candles.length || !window.FuturesStrategy?.backtest) {
+      return { current: null, targetTrades, candlesUsed: 0 };
+    }
+
+    const { stats } = FuturesStrategy.backtest(candles, settings, { maxTrades: targetTrades });
+    return {
+      current: {
+        trades: stats.trades,
+        totalTrades: stats.totalTrades,
+        wins: stats.wins,
+        losses: stats.losses,
+        winRate: Math.round((stats.winRate || 0) * 10) / 10,
+        totalPnlPct: Math.round((stats.totalPnlPct || 0) * 100) / 100,
+        candlesUsed: stats.candlesUsed,
+        targetTrades: stats.targetTrades,
+        targetReached: stats.targetReached,
+      },
+      targetTrades,
+      candlesUsed: candles.length,
+      interval: state.interval,
+      symbol: state.symbol,
     };
   }
 
@@ -1724,6 +1794,8 @@ const FuturesBotApp = (() => {
     init,
     getSettings,
     getFormStateForAi,
+    getMarketContextForAi,
+    getBacktestSnapshotForAi,
     applyStrategySettings,
     updateStrategyRulesDisplay,
     exportStrategyForServer,
