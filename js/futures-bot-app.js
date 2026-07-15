@@ -1758,6 +1758,19 @@ const FuturesBotApp = (() => {
     return `${bars}봉 · ${market} · ${fmt(stats.rangeFromTime)} ~ ${fmt(stats.rangeToTime)}`;
   }
 
+  function statsFromTrades(trades, base = {}) {
+    const wins = trades.filter((t) => t.pnlPct >= 0).length;
+    const totalPnl = trades.reduce((s, t) => s + t.pnlPct, 0);
+    return {
+      ...base,
+      trades: trades.length,
+      wins,
+      losses: trades.length - wins,
+      winRate: trades.length ? (wins / trades.length) * 100 : 0,
+      totalPnlPct: totalPnl,
+    };
+  }
+
   function formatBacktestStats(stats, interval) {
     const pnlCls = stats.totalPnlPct >= 0 ? 'positive' : 'negative';
     const pnlSign = stats.totalPnlPct >= 0 ? '+' : '';
@@ -1765,11 +1778,10 @@ const FuturesBotApp = (() => {
     let countLabel = stats.targetTrades
       ? `${stats.trades}/${stats.targetTrades}회`
       : `${stats.trades}회`;
-    if (stats.targetTrades && !stats.targetReached) {
-      countLabel += ` · 전체 히스토리 ${stats.candlesUsed.toLocaleString()}봉`;
-    }
-    if (stats.chartVisibleTrades != null && stats.chartVisibleTrades < stats.trades) {
-      countLabel += ` (차트 표시 ${stats.chartVisibleTrades}회 — 왼쪽으로 스크롤하면 더 보입니다)`;
+    if (stats.chartOnly && stats.totalTrades > stats.trades) {
+      countLabel = `차트 ${stats.trades}/${stats.totalTrades}회`;
+    } else if (stats.targetTrades && !stats.targetReached) {
+      countLabel += ` · ${stats.candlesUsed.toLocaleString()}봉 한도`;
     }
     return (
       `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
@@ -1914,27 +1926,19 @@ const FuturesBotApp = (() => {
     }
 
     const cacheKey = backtestCacheKey(interval, targetTrades, settings);
-    let seed = chartSource;
-    let seedTrades = stats.trades;
     if (backtestHistoryCache?.key === cacheKey) {
       // The cached extended history is frozen at fetch time — merge in the
       // live chart candles so bars (and wicks) formed since then are tested.
       const merged = mergeCandlesByTime(backtestHistoryCache.candles, chartSource);
-      const exhausted = backtestHistoryCache.exhausted === true;
-      backtestHistoryCache = { key: cacheKey, candles: merged, exhausted };
+      backtestHistoryCache = { key: cacheKey, candles: merged };
       const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
-      // 목표 도달, 또는 거래소 히스토리를 이미 끝까지 받은 경우에만 캐시로 종료.
-      // 목표 미달인 부분 캐시는 시드로 삼아 더 오래된 데이터를 이어서 로드한다
-      // (예전에는 여기서 바로 반환해 100회를 영영 못 채우는 버그가 있었다).
-      if (cachedStats.trades >= targetTrades || exhausted) {
+      if (cachedStats.trades >= targetTrades || cachedStats.trades > stats.trades) {
         return { source: merged, fromCache: true };
       }
-      seed = merged;
-      seedTrades = cachedStats.trades;
     }
 
     if (statsEl) {
-      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${seedTrades}/${targetTrades}회, ${seed.length}봉)`;
+      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${stats.trades}/${targetTrades}회, ${chartSource.length}봉)`;
     }
 
     const extended = await BacktestLoader.loadForTargetTrades(
@@ -1948,26 +1952,12 @@ const FuturesBotApp = (() => {
           `백테스트: 과거 데이터 로딩 중... (${progress.trades}/${progress.target}회, ` +
           `${progress.candles.toLocaleString()}봉 · ${progress.page}/${progress.maxPages}페이지)`;
       },
-      seed,
-      // 새 실행이 시작되면(runId 변경) 이 로더는 다음 페이지에서 멈춘다 —
-      // 예전에는 취소된 로더가 백그라운드에서 계속 받아 요청이 중복됐다.
-      () => runId !== backtestRunId,
+      chartSource,
     );
 
-    const cancelled = runId !== backtestRunId;
+    if (runId !== backtestRunId) return null;
 
-    // 취소되었더라도 받은 과거 데이터는 캐시에 보존한다 — 다음 실행이 여기서
-    // 이어서 로드한다. 예전에는 취소 시 전부 버려서, 로딩이 오래 걸리는 전략은
-    // 3분 가드 만료 → 재시작 → 처음부터 다시 로드가 무한 반복됐다.
-    if (extended.length > seed.length || !cancelled) {
-      backtestHistoryCache = {
-        key: cacheKey,
-        candles: extended,
-        // 소진 판정은 정상 완료된 실행에서만 — 취소로 봉이 안 는 것과 구분.
-        exhausted: !cancelled && extended.length <= seed.length,
-      };
-    }
-    if (cancelled) return null;
+    backtestHistoryCache = { key: cacheKey, candles: extended };
     return { source: extended, fromCache: false };
   }
 
@@ -2021,16 +2011,11 @@ const FuturesBotApp = (() => {
       let displayCandles = chartCandles?.length ? chartCandles : source;
 
       if ((showBacktest || force) && focusChart && trades.length && displayCandles.length) {
-        // 전체 결과(예: 100건)가 차트에 모두 표시되도록, 가장 오래된 거래의
-        // 진입 시점까지 차트 히스토리를 확장한다. 예전에는 최근 8건까지만
-        // 확장해 나머지 거래가 차트 범위 밖이라 마커가 보이지 않았다.
-        const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
+        const focusPool = trades.slice(-8);
+        const earliestEntry = Math.min(...focusPool.map((t) => t.entryTime));
         const chartData = Chart.getCandles() || displayCandles;
         if (earliestEntry < chartData[0].time) {
-          const barSec = INTERVAL_SECONDS[interval] || 900;
-          const needBars = Math.ceil((chartData[0].time - earliestEntry) / barSec);
-          const maxPages = Math.min(60, Math.ceil(needBars / 1000) + 2);
-          await Chart.loadHistoryUntilTime(earliestEntry, maxPages);
+          await Chart.loadHistoryUntilTime(earliestEntry);
         }
         displayCandles = Chart.getCandles() || displayCandles;
       }
@@ -2054,10 +2039,16 @@ const FuturesBotApp = (() => {
         clearBacktestOverlays();
       }
 
-      // 결과는 항상 전체 백테스트 기준으로 표시한다. 예전에는 차트에 보이는
-      // 거래만으로 통계를 다시 계산해 "차트 42/100회"처럼 목표를 못 채운 것처럼
-      // 보였다. 차트 범위 밖 거래가 있으면 표시 개수만 참고로 덧붙인다.
-      const reportStats = { ...stats, chartVisibleTrades: visibleTrades.length };
+      let reportStats = stats;
+      if ((showBacktest || force) && visibleTrades.length && visibleTrades.length < trades.length) {
+        reportStats = statsFromTrades(visibleTrades, {
+          ...stats,
+          chartOnly: true,
+          totalTrades: stats.trades,
+          rangeFromTime: visibleTrades[0]?.entryTime ?? stats.rangeFromTime,
+          rangeToTime: visibleTrades.at(-1)?.exitTime ?? stats.rangeToTime,
+        });
+      }
 
       lastRenderedBacktestKey = backtestCacheKey(interval, targetTrades, settings);
       if (statsEl) statsEl.innerHTML = formatBacktestStats(reportStats, interval);

@@ -297,25 +297,6 @@ const FuturesStrategy = (() => {
       : ((entryPrice - exitPrice) / entryPrice) * 100;
   }
 
-  // ── 세그먼트 백테스트: "최신 → 과거" 원칙의 핵심 ─────────────────────────
-  // 캔들을 절대시간 기준 고정 구간(SEGMENT_BARS봉)으로 나눠 각 구간을 독립적으로
-  // 시뮬레이션한다. 구간 경계가 창 크기와 무관하게 결정적이므로, 과거 데이터를
-  // 더 받아와도 이미 계산된 최신 구간의 거래는 변하지 않는다. 예전에는 전체를
-  // 한 번에 돌려서, 새로 추가된 과거 진입이 포지션을 오래 점유하면 그 뒤의
-  // (이미 세었던) 최근 거래들이 사라져 로딩 중 횟수가 줄어드는 문제가 있었다.
-  const SEGMENT_BARS = 5000;
-
-  function segmentSpanSec(candles) {
-    // 봉 간격 추정 — 결측 봉이 있어도 중앙값이면 안전하다.
-    const deltas = [];
-    for (let i = 1; i < Math.min(candles.length, 30); i++) {
-      deltas.push(candles[i].time - candles[i - 1].time);
-    }
-    deltas.sort((a, b) => a - b);
-    const dt = deltas[Math.floor(deltas.length / 2)] || 60;
-    return SEGMENT_BARS * dt;
-  }
-
   function backtest(candles, settings, options = {}) {
     const { maxTrades = null } = options;
     const trades = [];
@@ -341,11 +322,9 @@ const FuturesStrategy = (() => {
       };
     }
 
+    const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(candles, settings);
     const minStart = minBars(settings);
-    // 각 구간 앞에 붙이는 지표 워밍업 컨텍스트. 길이가 항상 고정이라
-    // 창을 과거로 넓혀도 구간 안의 지표값·거래가 변하지 않는다.
-    const warmupBars = Math.max(300, minStart * 3);
-    const span = segmentSpanSec(candles);
+    const startIdx = Math.max(warmupIdx, minStart);
 
     function closePosition(candle, reason, exitPrice = candle.close) {
       const pnlPct = calcPnlPct(position.side, position.entryPrice, exitPrice);
@@ -377,65 +356,37 @@ const FuturesStrategy = (() => {
       };
     }
 
-    // 구간 경계는 절대시간(epoch) 기준으로 고정 — 데이터 창을 과거로 넓혀도
-    // 같은 시각의 봉은 항상 같은 구간에 속해 결과가 변하지 않는다.
-    const segments = [];
-    if (candles.length) {
-      let segStart = 0;
-      let bucket = Math.floor(candles[0].time / span);
-      for (let i = 1; i <= candles.length; i++) {
-        const b = i < candles.length ? Math.floor(candles[i].time / span) : null;
-        if (b !== bucket) {
-          segments.push([segStart, i]);
-          segStart = i;
-          bucket = b;
-        }
-      }
-    }
+    // Run the full window (oldest → newest). We keep the MOST RECENT maxTrades
+    // afterwards so backtest results reflect the latest trades, not the oldest.
+    for (let i = startIdx; i < candles.length; i++) {
+      const candle = candles[i];
 
-    // 각 구간은 독립 시뮬레이션 (시간순, 구간 안에서도 과거 → 최신으로 진행).
-    // 구간 앞 warmupBars봉은 지표 계산 컨텍스트로만 쓰고 진입은 평가하지 않는다.
-    for (const [from, to] of segments) {
-      const ctxStart = Math.max(0, from - warmupBars);
-      const ctx = candles.slice(ctxStart, to);
-      const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(ctx, settings);
-      const startLocal = Math.max(from - ctxStart, warmupIdx, minStart);
-      position = null;
-
-      for (let i = startLocal; i < ctx.length; i++) {
-        const candle = ctx[i];
-
-        if (position) {
-          const slTp = checkExitBar(position.side, position.entryPrice, candle, settings, {
-            stopPrice: position.stopPrice,
-            takeProfitPrice: position.takeProfitPrice,
-            stopLossPct: position.stopLossPct,
-            takeProfitPct: position.takeProfitPct,
-          });
-          if (slTp) {
-            closePosition(candle, slTp.reason, slTp.exitPrice);
-            continue;
-          }
-        }
-
-        if (!position) {
-          const hit = StrategyEngine.matchEntrySlotsAt
-            ? StrategyEngine.matchEntrySlotsAt(ctx, i, slots, cache, null)
-            : null;
-          const matched = hit?.side ?? StrategyEngine.matchEntryAt(ctx, i, rules, cache, null);
-          if (matched === 'LONG' || matched === 'SHORT') {
-            const levelSettings = hit?.slot?.exitRules
-              ? { ...settings, exitRules: hit.slot.exitRules }
-              : settings;
-            const levels = calcEntryLevels(matched, candle.close, levelSettings, { candles: ctx, index: i });
-            if (levels) openPosition(candle, matched, levels, hit?.slot?.name);
-          }
+      if (position) {
+        const slTp = checkExitBar(position.side, position.entryPrice, candle, settings, {
+          stopPrice: position.stopPrice,
+          takeProfitPrice: position.takeProfitPrice,
+          stopLossPct: position.stopLossPct,
+          takeProfitPct: position.takeProfitPct,
+        });
+        if (slTp) {
+          closePosition(candle, slTp.reason, slTp.exitPrice);
+          continue;
         }
       }
 
-      // 구간 끝에서 아직 열려 있는 포지션은 세지 않는다 — 미래 데이터에 따라
-      // 결과가 달라질 수 있는 거래를 확정하지 않아야 횟수가 안정적이다.
-      position = null;
+      if (!position) {
+        const hit = StrategyEngine.matchEntrySlotsAt
+          ? StrategyEngine.matchEntrySlotsAt(candles, i, slots, cache, null)
+          : null;
+        const matched = hit?.side ?? StrategyEngine.matchEntryAt(candles, i, rules, cache, null);
+        if (matched === 'LONG' || matched === 'SHORT') {
+          const levelSettings = hit?.slot?.exitRules
+            ? { ...settings, exitRules: hit.slot.exitRules }
+            : settings;
+          const levels = calcEntryLevels(matched, candle.close, levelSettings, { candles, index: i });
+          if (levels) openPosition(candle, matched, levels, hit?.slot?.name);
+        }
+      }
     }
 
     const totalTrades = trades.length;
@@ -474,7 +425,7 @@ const FuturesStrategy = (() => {
         winRate: kept.length ? (wins / kept.length) * 100 : 0,
         totalPnlPct: totalPnl,
         candlesUsed: candles.length,
-        rangeFromTime: kept[0]?.entryTime ?? candles[0]?.time ?? null,
+        rangeFromTime: kept[0]?.entryTime ?? candles[startIdx]?.time ?? null,
         rangeToTime: kept.at(-1)?.exitTime ?? candles.at(-1)?.time ?? null,
         targetTrades: maxTrades,
         targetReached: maxTrades != null && totalTrades >= maxTrades,
