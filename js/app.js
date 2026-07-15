@@ -166,9 +166,15 @@ async function loadBinanceSymbols() {
   const data = await fetchWithCache(`${BINANCE_API}/exchangeInfo`, 3600_000);
   binanceSymbolMap = new Map();
   for (const s of data.symbols) {
-    if (s.quoteAsset === 'USDT' && s.status === 'TRADING') {
-      binanceSymbolMap.set(s.baseAsset.toUpperCase(), s.symbol);
+    if (s.quoteAsset !== 'USDT' || s.status !== 'TRADING') continue;
+    // Futures exchangeInfo includes quarterly delivery contracts (BTCUSDT_261225).
+    // Prefer USDT-M perpetuals only — delivery pairs have flat/illiquid 1m bars
+    // that leave the chart blank (zero price range).
+    if (isTradingPage) {
+      if (s.contractType && s.contractType !== 'PERPETUAL') continue;
+      if (s.symbol !== `${s.baseAsset}USDT`) continue;
     }
+    binanceSymbolMap.set(s.baseAsset.toUpperCase(), s.symbol);
   }
   return binanceSymbolMap;
 }
@@ -176,9 +182,16 @@ async function loadBinanceSymbols() {
 async function resolveBinanceSymbol(coin) {
   const map = await loadBinanceSymbols();
   const base = coin.symbol?.toUpperCase();
+  if (!base) return null;
+  const exact = `${base}USDT`;
+  // Always prefer the plain perpetual/spot pair name when present.
+  for (const sym of map.values()) {
+    if (sym === exact) return exact;
+  }
   if (map.has(base)) return map.get(base);
   const idBase = coin.id?.toUpperCase();
-  if (map.has(idBase)) return map.get(idBase);
+  if (idBase && map.has(idBase)) return map.get(idBase);
+  if (isTradingPage && /^[A-Z0-9]+$/.test(base)) return exact;
   return null;
 }
 
@@ -226,6 +239,28 @@ function fillCandleGaps(candles, intervalSeconds) {
   return result;
 }
 
+/** Deduplicate / sort / drop invalid bars so Lightweight Charts never gets bad setData. */
+function sanitizeCandleSeries(candles) {
+  const byTime = new Map();
+  for (const c of candles) {
+    if (!c || !Number.isFinite(c.time)) continue;
+    const open = Number(c.open);
+    const high = Number(c.high);
+    const low = Number(c.low);
+    const close = Number(c.close);
+    if (![open, high, low, close].every(Number.isFinite)) continue;
+    byTime.set(c.time, {
+      time: c.time,
+      open,
+      high: Math.max(high, open, close),
+      low: Math.min(low, open, close),
+      close,
+      volume: Number.isFinite(c.volume) ? c.volume : 0,
+    });
+  }
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
 /** Fetch latest klines bypassing cache (required after reconnect / tab wake). */
 async function fetchRecentKlinesUncached(symbol, interval, limit = 200) {
   const url = `${binanceRestBase()}/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(limit, 1000)}`;
@@ -255,7 +290,8 @@ async function fetchRecentKlinesUncached(symbol, interval, limit = 200) {
 function replaceCandleSeriesData(candles) {
   if (!candleSeries || !candles.length) return;
   const intervalSec = getIntervalSeconds();
-  const filled = fillCandleGaps(candles, intervalSec);
+  const filled = sanitizeCandleSeries(fillCandleGaps(candles, intervalSec));
+  if (!filled.length) return;
   state.lastCandles = filled;
   candleSeries.setData(filled.map(({ time, open, high, low, close }) => (
     { time, open, high, low, close }
@@ -705,7 +741,8 @@ function applyCandleData(candles, resetView = false) {
   if (!candleSeries || !candles.length) return;
 
   const intervalSec = INTERVALS[state.interval].seconds;
-  const filled = fillCandleGaps(candles, intervalSec);
+  const filled = sanitizeCandleSeries(fillCandleGaps(candles, intervalSec));
+  if (!filled.length) return;
   state.lastCandles = filled;
 
   const candleData = filled.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));
@@ -1434,7 +1471,8 @@ async function loadHistoryUntilTime(targetTime, maxPages = 12) {
 
 function showError(message) {
   $('#chartError').classList.remove('hidden');
-  $('#chartError').querySelector('p').textContent = message || '차트를 불러오지 못했습니다.';
+  const text = (message && String(message).trim()) || '차트를 불러오지 못했습니다.';
+  $('#chartError').querySelector('p').textContent = text;
   $('#chartLoading').classList.add('hidden');
   closeWebSocket();
 }
@@ -1490,7 +1528,7 @@ async function loadChart(retryCount = 0) {
       await new Promise((r) => setTimeout(r, 1500 * (retryCount + 1)));
       return loadChart(retryCount + 1);
     }
-    showError(err.message);
+    showError(err?.message || String(err));
   }
 }
 
@@ -1527,7 +1565,7 @@ async function initTradingChart() {
     await loadChart();
   } catch (err) {
     console.error('Trading chart init error:', err);
-    showError(err.message);
+    showError(err?.message || String(err));
   }
 }
 
