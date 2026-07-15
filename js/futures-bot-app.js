@@ -553,6 +553,33 @@ const FuturesBotApp = (() => {
     }
   }
 
+  // Pre-entry preview tracks the live price: the entry line follows the
+  // current price and SL/TP keep their % distance from it (set via the %
+  // fields or a drag, which syncs those fields). Absolute $ values would pin
+  // the lines while price walks away, so they are recomputed every tick here.
+  function calcTrackedPreviewLevels(side, entryPrice) {
+    readFormSettings();
+    const index = lastCandles.length ? lastCandles.length - 1 : null;
+    return FuturesStrategy.calcEntryLevels(side, entryPrice, getSettings(), {
+      candles: lastCandles,
+      index,
+    });
+  }
+
+  // Mirror tracked preview levels into the $ fields so a later entry (which
+  // reads them as manual override) uses exactly what the chart shows. A field
+  // the user is typing in is left alone.
+  function syncManualPriceFieldsFromLevels(levels) {
+    const slEl = document.getElementById('stopLossPrice');
+    const tpEl = document.getElementById('takeProfitPrice');
+    if (slEl && document.activeElement !== slEl && Number.isFinite(levels.stopPrice)) {
+      slEl.value = levels.stopPrice.toFixed(2);
+    }
+    if (tpEl && document.activeElement !== tpEl && Number.isFinite(levels.takeProfitPrice)) {
+      tpEl.value = levels.takeProfitPrice.toFixed(2);
+    }
+  }
+
   function syncPreviewSlTpOverlay(result) {
     if (hasOpenPosition()) return;
 
@@ -577,11 +604,12 @@ const FuturesBotApp = (() => {
       return;
     }
 
-    const levels = result?.entryLevels || calcEntryLevels(side, entryPrice);
+    const levels = result?.entryLevels || calcTrackedPreviewLevels(side, entryPrice);
     if (!levels) {
       window.CryptoCharts?.clearPositionOverlay?.();
       return;
     }
+    syncManualPriceFieldsFromLevels(levels);
 
     window.CryptoCharts?.clearSignalOverlay?.();
     window.CryptoCharts?.setPositionOverlay?.({
@@ -2440,6 +2468,17 @@ const FuturesBotApp = (() => {
         if (hasOpenPosition()) {
           syncOpenPositionSlTp();
         } else {
+          // A typed $ price is converted to a % distance from the current
+          // price once, so the tracked preview keeps that distance while it
+          // follows the live price.
+          if (id === 'stopLossPrice' || id === 'takeProfitPrice') {
+            const entryPrice = state.lastPrice || lastCandles.at(-1)?.close;
+            const manual = readManualSlTpPrices();
+            if (entryPrice) {
+              syncPctFieldsFromPrices(lastPendingSide, entryPrice, manual.stopPrice, manual.takeProfitPrice);
+              readFormSettings();
+            }
+          }
           slTpPreviewTouchedAt = Date.now();
           resetSlTpConfirm();
           syncPreviewFromLastSignal();
