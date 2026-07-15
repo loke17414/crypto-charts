@@ -28,6 +28,7 @@ const FuturesBotApp = (() => {
   let sessionStartEquity = 0;
   let positionStopPrice = null;
   let positionTakeProfitPrice = null;
+  const POS_SLTP_STORAGE_KEY = 'crypto-charts-pos-sltp';
   let liveExitBusy = false;
   let autoEntryBusy = false;
   let lastAutoEntryKey = null;
@@ -462,6 +463,62 @@ const FuturesBotApp = (() => {
     return calcEntryLevels(side)?.stopPrice ?? null;
   }
 
+  function savePositionSlTpStorage(side, entryPrice, stopPrice, takeProfitPrice) {
+    if (stopPrice == null && takeProfitPrice == null) return;
+    try {
+      sessionStorage.setItem(POS_SLTP_STORAGE_KEY, JSON.stringify({
+        side,
+        entryPrice,
+        stopPrice,
+        takeProfitPrice,
+        symbol: state.symbol,
+      }));
+    } catch { /* ignore */ }
+  }
+
+  function loadPositionSlTpStorage() {
+    try {
+      const raw = sessionStorage.getItem(POS_SLTP_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function clearPositionSlTpStorage() {
+    sessionStorage.removeItem(POS_SLTP_STORAGE_KEY);
+  }
+
+  function resolveOpenPositionSlTp(side, entryPrice) {
+    if (!side || entryPrice == null) return null;
+    if (positionStopPrice != null && positionTakeProfitPrice != null) {
+      return { stopPrice: positionStopPrice, takeProfitPrice: positionTakeProfitPrice };
+    }
+    const stored = loadPositionSlTpStorage();
+    if (stored
+      && stored.side === side
+      && stored.symbol === state.symbol
+      && Math.abs(stored.entryPrice - entryPrice) < entryPrice * 0.0001) {
+      return { stopPrice: stored.stopPrice, takeProfitPrice: stored.takeProfitPrice };
+    }
+    const levels = calcEntryLevels(side, entryPrice);
+    return levels ? { stopPrice: levels.stopPrice, takeProfitPrice: levels.takeProfitPrice } : null;
+  }
+
+  function applyResolvedSlTp(side, entryPrice, resolved, { persistPaper = false } = {}) {
+    if (!resolved) return;
+    positionStopPrice = resolved.stopPrice;
+    positionTakeProfitPrice = resolved.takeProfitPrice;
+    savePositionSlTpStorage(side, entryPrice, resolved.stopPrice, resolved.takeProfitPrice);
+    if (persistPaper && !isTestnetMode()) {
+      const pos = FuturesPaper.getPosition();
+      if (pos) {
+        pos.stopPrice = resolved.stopPrice;
+        pos.takeProfitPrice = resolved.takeProfitPrice;
+      }
+    }
+  }
+
   function updatePositionOverlay() {
     const setFn = window.CryptoCharts?.setPositionOverlay;
     const clearFn = window.CryptoCharts?.clearPositionOverlay;
@@ -495,6 +552,29 @@ const FuturesBotApp = (() => {
     }
   }
 
+  /** Keep held-position SL/TP dashed lines on the chart across ticks and reloads. */
+  function ensurePositionSlTpOverlay() {
+    if (!hasOpenPosition()) return;
+
+    let side;
+    let entryPrice;
+    if (isTestnetMode()) {
+      side = testnetStatus?.position?.side;
+      entryPrice = testnetStatus?.position?.entryPrice;
+    } else {
+      const pos = FuturesPaper.getPosition();
+      side = pos?.side;
+      entryPrice = pos?.entryPrice;
+    }
+    if (!side || entryPrice == null) return;
+
+    if (positionStopPrice == null || positionTakeProfitPrice == null) {
+      const resolved = resolveOpenPositionSlTp(side, entryPrice);
+      applyResolvedSlTp(side, entryPrice, resolved, { persistPaper: !isTestnetMode() });
+    }
+    updatePositionOverlay();
+  }
+
   /** @deprecated use updatePositionOverlay */
   function updatePositionStopLine() {
     updatePositionOverlay();
@@ -518,22 +598,17 @@ const FuturesBotApp = (() => {
     const levels = calcEntryLevels(side, entryPrice);
     if (!levels) return;
 
-    positionStopPrice = levels.stopPrice;
-    positionTakeProfitPrice = levels.takeProfitPrice;
-
-    if (!isTestnetMode()) {
-      const pos = FuturesPaper.getPosition();
-      if (pos) {
-        pos.stopPrice = levels.stopPrice;
-        pos.takeProfitPrice = levels.takeProfitPrice;
-      }
-    }
+    applyResolvedSlTp(side, entryPrice, {
+      stopPrice: levels.stopPrice,
+      takeProfitPrice: levels.takeProfitPrice,
+    }, { persistPaper: !isTestnetMode() });
     updatePositionOverlay();
   }
 
   function clearPositionStop() {
     positionStopPrice = null;
     positionTakeProfitPrice = null;
+    clearPositionSlTpStorage();
     window.CryptoCharts?.clearPositionOverlay?.();
     window.CryptoCharts?.clearStopLossLine?.();
   }
@@ -1177,6 +1252,7 @@ const FuturesBotApp = (() => {
     state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
     scheduleBacktest(lastCandles);
     updateSignalDisplay();
+    ensurePositionSlTpOverlay();
     updateUI();
   }
 
@@ -1196,6 +1272,7 @@ const FuturesBotApp = (() => {
     $('#signalInfo').textContent = result.reason;
     updateRsiDisplay(result.snapshot);
     syncSignalOverlay(result);
+    if (hasOpenPosition()) ensurePositionSlTpOverlay();
     maybeAutoEnterOnSignal(result);
   }
 
@@ -1502,6 +1579,7 @@ const FuturesBotApp = (() => {
           const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
           positionStopPrice = levels.stopPrice;
           positionTakeProfitPrice = levels.takeProfitPrice;
+          savePositionSlTpStorage(side, price, levels.stopPrice, levels.takeProfitPrice);
           addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
           updatePositionStopLine();
           await refreshTestnetStatus();
@@ -1539,7 +1617,12 @@ const FuturesBotApp = (() => {
         levels.stopPrice,
         levels.takeProfitPrice,
       );
-      if (r.ok) updatePositionStopLine();
+      if (r.ok) {
+        positionStopPrice = levels.stopPrice;
+        positionTakeProfitPrice = levels.takeProfitPrice;
+        savePositionSlTpStorage(side, price, levels.stopPrice, levels.takeProfitPrice);
+        updatePositionStopLine();
+      }
       addLog(r.message + (r.ok ? formatLevelsNote(levels) : ''), r.ok ? (side === 'LONG' ? 'win' : 'loss') : 'loss');
     }
   }
@@ -1917,6 +2000,7 @@ const FuturesBotApp = (() => {
     state.interval = e.detail?.interval || CryptoCharts.getState().interval;
     state.lastPrice = lastCandles.at(-1)?.close || CryptoCharts.getPrice() || 0;
     updateSignalDisplay();
+    if (hasOpenPosition()) ensurePositionSlTpOverlay();
     if (botRunning && !(isTestnetMode() && serverBotActive)) evaluateLiveExit();
     if (e.detail?.newBar) {
       scheduleBacktest(lastCandles);

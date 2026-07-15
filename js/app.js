@@ -761,6 +761,8 @@ function applyCandleData(candles, resetView = false) {
   }));
 
   if (resetView) {
+    clearSignalOverlay();
+    clearPositionOverlay();
     candleSeries.setData([]);
     lineSeries.setData([]);
     volumeSeries.setData([]);
@@ -1905,6 +1907,22 @@ function clearPositionOverlay() {
   positionOverlay = null;
 }
 
+function upsertPositionOverlayLine(overlay, key, price, lineOpts) {
+  if (!candleSeries || !overlay) return;
+  if (!Number.isFinite(price)) {
+    if (overlay[key]) {
+      try { candleSeries.removePriceLine(overlay[key]); } catch { /* ignore */ }
+      overlay[key] = null;
+    }
+    return;
+  }
+  if (overlay[key]) {
+    overlay[key].applyOptions({ price });
+  } else {
+    overlay[key] = candleSeries.createPriceLine({ price, ...lineOpts });
+  }
+}
+
 function setPositionOverlay(pos) {
   if (!candleSeries || !pos) { clearPositionOverlay(); return; }
   const { side, entryPrice, stopPrice, takeProfitPrice } = pos;
@@ -1912,45 +1930,54 @@ function setPositionOverlay(pos) {
   const buy = side === 'LONG';
 
   if (positionOverlay && positionOverlay.side === side) {
-    if (positionOverlay.entry && Number.isFinite(entryPrice)) positionOverlay.entry.applyOptions({ price: entryPrice });
-    if (positionOverlay.stop && Number.isFinite(stopPrice)) positionOverlay.stop.applyOptions({ price: stopPrice });
-    if (positionOverlay.tp && Number.isFinite(takeProfitPrice)) positionOverlay.tp.applyOptions({ price: takeProfitPrice });
-    return;
-  }
-
-  clearPositionOverlay();
-  positionOverlay = { side, entry: null, stop: null, tp: null };
-
-  if (Number.isFinite(entryPrice)) {
-    positionOverlay.entry = candleSeries.createPriceLine({
-      price: entryPrice,
+    upsertPositionOverlayLine(positionOverlay, 'entry', entryPrice, {
       color: buy ? '#2962ff' : '#f7931a',
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: buy ? '롱 진입' : '숏 진입',
     });
-  }
-  if (Number.isFinite(stopPrice)) {
-    positionOverlay.stop = candleSeries.createPriceLine({
-      price: stopPrice,
+    upsertPositionOverlayLine(positionOverlay, 'stop', stopPrice, {
       color: '#ef5350',
       lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: '손절',
     });
-  }
-  if (Number.isFinite(takeProfitPrice)) {
-    positionOverlay.tp = candleSeries.createPriceLine({
-      price: takeProfitPrice,
+    upsertPositionOverlayLine(positionOverlay, 'tp', takeProfitPrice, {
       color: '#26a69a',
       lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: '익절',
     });
+    return;
   }
+
+  clearPositionOverlay();
+  positionOverlay = { side, entry: null, stop: null, tp: null };
+
+  upsertPositionOverlayLine(positionOverlay, 'entry', entryPrice, {
+    color: buy ? '#2962ff' : '#f7931a',
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: buy ? '롱 진입' : '숏 진입',
+  });
+  upsertPositionOverlayLine(positionOverlay, 'stop', stopPrice, {
+    color: '#ef5350',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: '손절',
+  });
+  upsertPositionOverlayLine(positionOverlay, 'tp', takeProfitPrice, {
+    color: '#26a69a',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: '익절',
+  });
 }
 
 function getBarIntervalSeconds(candles) {
