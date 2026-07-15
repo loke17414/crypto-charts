@@ -519,6 +519,15 @@ const FuturesBotApp = (() => {
     }
   }
 
+  function getPositionEntryTimeSec() {
+    if (!lastCandles.length) return null;
+    if (!isTestnetMode()) {
+      const openMs = FuturesPaper.getPosition()?.openTime;
+      if (openMs) return Math.floor(openMs / 1000);
+    }
+    return lastCandles.at(-1)?.time ?? null;
+  }
+
   function updatePositionOverlay() {
     const setFn = window.CryptoCharts?.setPositionOverlay;
     const clearFn = window.CryptoCharts?.clearPositionOverlay;
@@ -546,7 +555,13 @@ const FuturesBotApp = (() => {
 
     if (side && entryPrice != null && (stopPrice != null || takeProfitPrice != null)) {
       window.CryptoCharts?.clearSignalOverlay?.();
-      setFn({ side, entryPrice, stopPrice, takeProfitPrice });
+      setFn({
+        side,
+        entryPrice,
+        stopPrice,
+        takeProfitPrice,
+        entryTime: getPositionEntryTimeSec(),
+      });
     } else if (typeof clearFn === 'function') {
       clearFn();
     }
@@ -1906,8 +1921,9 @@ const FuturesBotApp = (() => {
       const r = await FuturesApiClient.openPosition(side, tradeMargin, state.leverage, price);
       positionStopPrice = levels.stopPrice;
       positionTakeProfitPrice = levels.takeProfitPrice;
+      savePositionSlTpStorage(side, price, levels.stopPrice, levels.takeProfitPrice);
       addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
-      updatePositionStopLine();
+      ensurePositionSlTpOverlay();
       await refreshTestnetStatus();
       updateUI();
     } catch (err) {

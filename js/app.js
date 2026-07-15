@@ -57,6 +57,11 @@ let backtestSlSegments = [];
 let backtestTpSegments = [];
 let signalOverlay = null;
 let positionOverlay = null;
+let positionOverlayPending = null;
+let positionAutoscalePrices = [];
+let positionSlSeries = null;
+let positionTpSeries = null;
+let positionEntrySeries = null;
 let pendingSwingLevels = null;
 let pendingStopLossPrice = null;
 function isPriceScaleAuto() {
@@ -405,11 +410,19 @@ function waitForContainer(container) {
 // When autoScale is on, panning time refits price to visible bars (Binance default).
 
 function candleAutoscaleProvider(original) {
-  // Scale from visible candle OHLC only — ignore SL/TP price lines and
-  // backtest overlay segments so they don't yank the price axis on each tick.
+  // Scale from visible candle OHLC, but include open-position SL/TP/entry so
+  // those dashed lines stay on screen (they sit outside the wick range).
   const range = getVisibleBarsPriceRange(0.06);
   if (range) {
-    return { priceRange: { minValue: range.min, maxValue: range.max } };
+    for (const p of positionAutoscalePrices) {
+      if (Number.isFinite(p)) {
+        range.min = Math.min(range.min, p);
+        range.max = Math.max(range.max, p);
+      }
+    }
+    const span = range.max - range.min;
+    const pad = Math.max(span * 0.04, range.max * 0.00005, 1e-8);
+    return { priceRange: { minValue: range.min - pad, maxValue: range.max + pad } };
   }
   const res = original();
   if (res?.priceRange) {
@@ -629,6 +642,7 @@ function initChart(container) {
   chartInitialized = true;
   ensureLiveOhlcOverlay();
   setupChartInteractions();
+  renderPositionOverlaySegments();
   applySwingLevelLines();
   applyStopLossLine();
 
@@ -786,6 +800,7 @@ function applyCandleData(candles, resetView = false) {
   syncVolumeVisibility();
 
   if (lastCandle) updateLiveOhlcDisplay(lastCandle);
+  renderPositionOverlaySegments();
 
   document.dispatchEvent(new CustomEvent('chart-candles-updated', {
     detail: { candles: filled, interval: state.interval, symbol: state.binanceSymbol },
@@ -950,6 +965,7 @@ function renderCandleImmediate(candle, { newBar = false } = {}) {
   // the user had panned or zoomed (TradingView/Binance never do this).
 
   scheduleLiveIndicatorUpdate(newBar);
+  renderPositionOverlaySegments();
 }
 
 function createNewFormingCandle(time, openPrice) {
@@ -1896,9 +1912,112 @@ function setSignalOverlay(signal) {
   }
 }
 
-// Open-position overlay: same dashed entry / SL / TP style as the live signal
-// overlay, but labelled for an active trade.
+// Open-position overlay: dashed horizontal segments for entry / SL / TP (same
+// style as backtest trade overlays, but spanning from entry bar to latest bar).
+const POSITION_OVERLAY_OPTS = {
+  sl: {
+    color: '#ef5350',
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    lastValueVisible: true,
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => ({ priceRange: null }),
+  },
+  tp: {
+    color: '#26a69a',
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    lastValueVisible: true,
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => ({ priceRange: null }),
+  },
+  entry: {
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    lastValueVisible: true,
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => ({ priceRange: null }),
+  },
+};
+
+function resolvePositionSegmentTimes(entryTimeSec) {
+  const candles = state.lastCandles;
+  if (!candles?.length) return null;
+  const barSec = getBarIntervalSeconds(candles);
+  const minT = candles[0].time;
+  const maxT = candles.at(-1).time;
+  let tStart = Math.max(minT, maxT - barSec * 50);
+  if (entryTimeSec != null && Number.isFinite(entryTimeSec)) {
+    for (let i = candles.length - 1; i >= 0; i--) {
+      if (candles[i].time <= entryTimeSec) {
+        tStart = candles[i].time;
+        break;
+      }
+    }
+    tStart = Math.max(minT, tStart);
+  }
+  let tEnd = maxT;
+  if (tStart > tEnd) tEnd = Math.min(tStart + barSec, maxT);
+  return { tStart, tEnd, barSec };
+}
+
+function upsertPositionLineSeries(currentSeries, price, opts, tStart, tEnd, barSec) {
+  if (!chart || !Number.isFinite(price) || tStart == null || tEnd == null) {
+    if (currentSeries) {
+      try { chart.removeSeries(currentSeries); } catch { /* ignore */ }
+    }
+    return null;
+  }
+  const end = tEnd <= tStart ? tStart + (barSec || 60) : tEnd;
+  const data = [{ time: tStart, value: price }, { time: end, value: price }];
+  if (currentSeries) {
+    currentSeries.setData(data);
+    return currentSeries;
+  }
+  const series = chart.addLineSeries(opts);
+  series.setData(data);
+  return series;
+}
+
+function renderPositionOverlaySegments() {
+  if (!positionOverlayPending || !chart || !state.lastCandles?.length) return;
+  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = positionOverlayPending;
+  const times = resolvePositionSegmentTimes(entryTime);
+  if (!times) return;
+  const { tStart, tEnd, barSec } = times;
+  const buy = side === 'LONG';
+
+  positionSlSeries = upsertPositionLineSeries(
+    positionSlSeries, stopPrice, POSITION_OVERLAY_OPTS.sl, tStart, tEnd, barSec,
+  );
+  positionTpSeries = upsertPositionLineSeries(
+    positionTpSeries, takeProfitPrice, POSITION_OVERLAY_OPTS.tp, tStart, tEnd, barSec,
+  );
+  const entryOpts = {
+    ...POSITION_OVERLAY_OPTS.entry,
+    color: buy ? '#2962ff' : '#f7931a',
+  };
+  positionEntrySeries = upsertPositionLineSeries(
+    positionEntrySeries, entryPrice, entryOpts, tStart, tEnd, barSec,
+  );
+
+  if (candleSeries && isPriceScaleAuto()) {
+    candleSeries.applyOptions({ autoscaleInfoProvider: candleAutoscaleProvider });
+  }
+}
+
 function clearPositionOverlay() {
+  positionOverlayPending = null;
+  positionAutoscalePrices = [];
+  if (chart) {
+    for (const s of [positionSlSeries, positionTpSeries, positionEntrySeries]) {
+      if (s) { try { chart.removeSeries(s); } catch { /* ignore */ } }
+    }
+  }
+  positionSlSeries = positionTpSeries = positionEntrySeries = null;
   if (candleSeries && positionOverlay) {
     for (const pl of [positionOverlay.entry, positionOverlay.stop, positionOverlay.tp]) {
       if (pl) { try { candleSeries.removePriceLine(pl); } catch { /* ignore */ } }
@@ -1907,77 +2026,20 @@ function clearPositionOverlay() {
   positionOverlay = null;
 }
 
-function upsertPositionOverlayLine(overlay, key, price, lineOpts) {
-  if (!candleSeries || !overlay) return;
-  if (!Number.isFinite(price)) {
-    if (overlay[key]) {
-      try { candleSeries.removePriceLine(overlay[key]); } catch { /* ignore */ }
-      overlay[key] = null;
-    }
-    return;
-  }
-  if (overlay[key]) {
-    overlay[key].applyOptions({ price });
-  } else {
-    overlay[key] = candleSeries.createPriceLine({ price, ...lineOpts });
-  }
-}
-
 function setPositionOverlay(pos) {
-  if (!candleSeries || !pos) { clearPositionOverlay(); return; }
-  const { side, entryPrice, stopPrice, takeProfitPrice } = pos;
+  if (!pos) { clearPositionOverlay(); return; }
+  const { side, entryPrice, stopPrice, takeProfitPrice, entryTime } = pos;
   if (side !== 'LONG' && side !== 'SHORT') { clearPositionOverlay(); return; }
-  const buy = side === 'LONG';
 
-  if (positionOverlay && positionOverlay.side === side) {
-    upsertPositionOverlayLine(positionOverlay, 'entry', entryPrice, {
-      color: buy ? '#2962ff' : '#f7931a',
-      lineWidth: 2,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: buy ? '롱 진입' : '숏 진입',
-    });
-    upsertPositionOverlayLine(positionOverlay, 'stop', stopPrice, {
-      color: '#ef5350',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: '손절',
-    });
-    upsertPositionOverlayLine(positionOverlay, 'tp', takeProfitPrice, {
-      color: '#26a69a',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: '익절',
-    });
-    return;
+  if (positionOverlayPending?.side && positionOverlayPending.side !== side) {
+    clearPositionOverlay();
   }
 
-  clearPositionOverlay();
-  positionOverlay = { side, entry: null, stop: null, tp: null };
+  positionOverlayPending = { side, entryPrice, stopPrice, takeProfitPrice, entryTime };
+  positionAutoscalePrices = [entryPrice, stopPrice, takeProfitPrice].filter(Number.isFinite);
 
-  upsertPositionOverlayLine(positionOverlay, 'entry', entryPrice, {
-    color: buy ? '#2962ff' : '#f7931a',
-    lineWidth: 2,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: buy ? '롱 진입' : '숏 진입',
-  });
-  upsertPositionOverlayLine(positionOverlay, 'stop', stopPrice, {
-    color: '#ef5350',
-    lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: '손절',
-  });
-  upsertPositionOverlayLine(positionOverlay, 'tp', takeProfitPrice, {
-    color: '#26a69a',
-    lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: '익절',
-  });
+  if (!chart || !candleSeries) return;
+  renderPositionOverlaySegments();
 }
 
 function getBarIntervalSeconds(candles) {
