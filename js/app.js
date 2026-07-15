@@ -56,72 +56,18 @@ let backtestTpSegments = [];
 let signalOverlay = null;
 let pendingSwingLevels = null;
 let pendingStopLossPrice = null;
-let priceScaleRaf = null;
-let dragMoveRaf = null;
-let pendingDragMove = null;
-let visibleAutoscaleRaf = null;
-let lastLiveScaleSyncAt = 0;
-
-function getMainPaneHeight() {
-  if (!chart) return 1;
-  const pane = chart.paneSize(0);
-  return Math.max(pane?.height ?? $('#chartArea').clientHeight * 0.75, 1);
+function isPriceScaleAuto() {
+  if (!chart) return true;
+  try {
+    return chart.priceScale('right').options().autoScale !== false;
+  } catch {
+    return true;
+  }
 }
 
-function applyManualPriceRangeToScale() {
-  if (!chart || !candleSeries) return;
-
+function resetPriceScaleToAuto() {
+  if (!chart) return;
   chart.priceScale('right').applyOptions({ autoScale: true });
-  candleSeries.applyOptions({ autoscaleInfoProvider: candleAutoscaleProvider });
-  lineSeries?.applyOptions({ autoscaleInfoProvider: candleAutoscaleProvider });
-
-  if (!state.manualPriceRange) return;
-
-  const last = state.lastCandles[state.lastCandles.length - 1];
-  if (last) {
-    const bar = {
-      time: last.time,
-      open: last.open,
-      high: last.high,
-      low: last.low,
-      close: last.close,
-    };
-    candleSeries.update(bar);
-    lineSeries?.update({ time: last.time, value: last.close });
-  }
-}
-
-function schedulePriceScaleRefresh() {
-  if (priceScaleRaf != null) return;
-  priceScaleRaf = requestAnimationFrame(() => {
-    priceScaleRaf = null;
-    applyManualPriceRangeToScale();
-  });
-}
-
-// Synchronous price-range refresh for manual axis zoom. The autoscale
-// providers return state.manualPriceRange; nudging series data forces
-// LightweightCharts to re-run the provider in the same frame.
-function applyManualPriceRangeNow() {
-  if (!chart || !candleSeries || !state.manualPriceRange) return;
-  const last = state.lastCandles[state.lastCandles.length - 1];
-  if (!last) return;
-  candleSeries.update({
-    time: last.time,
-    open: last.open,
-    high: last.high,
-    low: last.low,
-    close: last.close,
-  });
-  if (lineSeries) lineSeries.update({ time: last.time, value: last.close });
-}
-
-function refreshPriceScaleNow() {
-  if (priceScaleRaf != null) {
-    cancelAnimationFrame(priceScaleRaf);
-    priceScaleRaf = null;
-  }
-  applyManualPriceRangeToScale();
 }
 
 const state = {
@@ -134,9 +80,6 @@ const state = {
   formingCandleTime: null,
   isFollowingRealtime: true,
   programmaticScroll: false,
-  manualPriceRange: null,
-  liveScaleRange: null,
-  frozenPanPriceRange: null,
   lastTickPrice: null,
   lastTickTime: 0,
   loadingMore: false,
@@ -298,44 +241,17 @@ function waitForContainer(container) {
   });
 }
 
-// ── Chart (TradingView style) ───────────────────────────────
+// ── Chart (TradingView / Binance style) ─────────────────────
+// Use Lightweight Charts native scroll/scale:
+//   body drag  → time pan only
+//   price axis → price zoom (disables autoScale)
+//   time axis  → time zoom
+//   dblclick   → restore autoScale
+// When autoScale is on, panning time refits price to visible bars (Binance default).
 
 function candleAutoscaleProvider(original) {
-  if (state.manualPriceRange) {
-    return {
-      priceRange: {
-        minValue: state.manualPriceRange.min,
-        maxValue: state.manualPriceRange.max,
-      },
-    };
-  }
-  if (state.frozenPanPriceRange) {
-    return {
-      priceRange: {
-        minValue: state.frozenPanPriceRange.min,
-        maxValue: state.frozenPanPriceRange.max,
-      },
-    };
-  }
-  if (state.liveScaleRange) {
-    return {
-      priceRange: {
-        minValue: state.liveScaleRange.min,
-        maxValue: state.liveScaleRange.max,
-      },
-    };
-  }
-  const visible = getVisibleBarsPriceRange(0.06);
-  if (visible) {
-    return {
-      priceRange: {
-        minValue: visible.min,
-        maxValue: visible.max,
-      },
-    };
-  }
   const res = original();
-  if (res) {
+  if (res?.priceRange) {
     const pad = (res.priceRange.maxValue - res.priceRange.minValue) * 0.02;
     res.priceRange.minValue -= pad;
     res.priceRange.maxValue += pad;
@@ -366,63 +282,20 @@ function getVisibleBarsPriceRange(paddingPct = 0.06) {
   return { min: min - pad, max: max + pad };
 }
 
-function nudgePriceScaleAutoscale() {
-  if (!chart || !candleSeries) return;
-  if (!state.manualPriceRange && !state.frozenPanPriceRange && !state.liveScaleRange) return;
-  chart.priceScale('right').applyOptions({ autoScale: true });
-  const last = state.lastCandles.at(-1);
-  if (!last) return;
-  candleSeries.update({
-    time: last.time,
-    open: last.open,
-    high: last.high,
-    low: last.low,
-    close: last.close,
-  });
-  lineSeries?.update({ time: last.time, value: last.close });
-}
-
-function scheduleVisibleAutoscale() {
-  if (state.manualPriceRange || state.dragging) return;
-  if (visibleAutoscaleRaf != null) return;
-  visibleAutoscaleRaf = requestAnimationFrame(() => {
-    visibleAutoscaleRaf = null;
-    refreshVisibleAutoscale();
-  });
-}
-
-function refreshVisibleAutoscale() {
-  if (!chart || !candleSeries || state.manualPriceRange || state.dragging) return;
-  const target = getVisibleBarsPriceRange(state.isFollowingRealtime ? 0.05 : 0.06);
-  if (!target) return;
-  state.liveScaleRange = { ...target };
-  nudgePriceScaleAutoscale();
-}
-
-function syncLivePriceScale() {
-  if (!chart || !candleSeries || state.manualPriceRange || state.dragging) return;
-
-  const now = performance.now();
-  if (now - lastLiveScaleSyncAt < 120) return;
-  lastLiveScaleSyncAt = now;
-
-  const target = getVisibleBarsPriceRange(state.isFollowingRealtime ? 0.05 : 0.06);
-  if (!target) return;
-
-  if (state.isFollowingRealtime) {
-    if (!state.liveScaleRange) {
-      state.liveScaleRange = { ...target };
-    } else {
-      const lerp = 0.35;
-      const s = state.liveScaleRange;
-      s.min += (target.min - s.min) * lerp;
-      s.max += (target.max - s.max) * lerp;
-    }
-  } else {
-    state.liveScaleRange = { ...target };
+function captureVisiblePriceRange() {
+  if (!chart || !candleSeries) return null;
+  try {
+    const height = chart.paneSize(0)?.height || $('#chartArea').clientHeight * 0.75;
+    const topPrice = candleSeries.coordinateToPrice(0);
+    const bottomPrice = candleSeries.coordinateToPrice(Math.max(height, 1));
+    if (topPrice == null || bottomPrice == null) return null;
+    return {
+      min: Math.min(topPrice, bottomPrice),
+      max: Math.max(topPrice, bottomPrice),
+    };
+  } catch {
+    return null;
   }
-
-  nudgePriceScaleAutoscale();
 }
 
 function ensureLiveOhlcOverlay() {
@@ -464,137 +337,15 @@ function updateLiveOhlcDisplay(candle) {
   ].join('');
 }
 
-function clearFrozenPanPriceRange() {
-  state.frozenPanPriceRange = null;
-}
-
-function captureVisiblePriceRange() {
-  if (!chart || !candleSeries) return null;
-  const height = getMainPaneHeight();
-  const topPrice = candleSeries.coordinateToPrice(0);
-  const bottomPrice = candleSeries.coordinateToPrice(height);
-  if (topPrice == null || bottomPrice == null) return null;
-  return {
-    min: Math.min(topPrice, bottomPrice),
-    max: Math.max(topPrice, bottomPrice),
-  };
-}
-
-function refreshPriceScaleRender() {
-  schedulePriceScaleRefresh();
-}
-
-function activateManualPriceControl(range) {
-  if (!chart || !candleSeries || !range) return;
-  const min = Math.min(range.min, range.max);
-  const max = Math.max(range.min, range.max);
-  if (!isFinite(min) || !isFinite(max) || min === max) return;
-
-  state.manualPriceRange = { min, max };
-  state.liveScaleRange = null;
-  setFollowingRealtime(false);
-  schedulePriceScaleRefresh();
-}
-
-function syncManualPriceFromAxisIfNeeded() {
-  if (!chart || !candleSeries) return;
-  if (state.manualPriceRange) return;
-  const captured = captureVisiblePriceRange();
-  if (captured) activateManualPriceControl(captured);
-}
-
 function getVisibleCandlesPriceRange() {
   if (!state.lastCandles.length) return { min: 0, max: 1 };
-  if (state.manualPriceRange) return { ...state.manualPriceRange };
-
   const captured = captureVisiblePriceRange();
   if (captured) return captured;
-
-  const logical = chart?.timeScale().getVisibleLogicalRange();
-  let from = 0;
-  let to = state.lastCandles.length;
-  if (logical) {
-    from = Math.max(0, Math.floor(logical.from));
-    to = Math.min(state.lastCandles.length, Math.ceil(logical.to));
-  }
-
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = from; i < to; i++) {
-    const c = state.lastCandles[i];
-    if (!c) continue;
-    min = Math.min(min, c.low);
-    max = Math.max(max, c.high);
-  }
-  if (!isFinite(min)) {
-    for (const c of state.lastCandles) {
-      min = Math.min(min, c.low);
-      max = Math.max(max, c.high);
-    }
-  }
-  const pad = (max - min) * 0.05 || 1;
-  return { min: min - pad, max: max + pad };
-}
-
-const CHART_TIME_PAN_SENSITIVITY = 1;
-const PRICE_AXIS_SCALE_SENSITIVITY = 1.25;
-
-function lockPriceRangeForBodyPan() {
-  if (state.manualPriceRange || state.frozenPanPriceRange) return;
-  const range = captureVisiblePriceRange()
-    || (state.liveScaleRange ? { ...state.liveScaleRange } : null);
-  if (!range) return;
-  state.frozenPanPriceRange = { ...range };
-  nudgePriceScaleAutoscale();
-}
-
-function preserveLockedPriceRangeAfterPan() {
-  if (!state.frozenPanPriceRange || state.manualPriceRange) return;
-  state.liveScaleRange = { ...state.frozenPanPriceRange };
-}
-
-function applyPriceAxisAdjust(startY, currentY, baseRange) {
-  const height = getMainPaneHeight();
-  const dy = currentY - startY;
-  const span = baseRange.max - baseRange.min;
-  const center = (baseRange.min + baseRange.max) / 2;
-  const scaleFactor = Math.exp((dy / height) * PRICE_AXIS_SCALE_SENSITIVITY);
-  const newSpan = Math.max(span * scaleFactor, span * 0.02);
-
-  state.manualPriceRange = {
-    min: center - newSpan / 2,
-    max: center + newSpan / 2,
-  };
-
-  applyManualPriceRangeNow();
-}
-
-function applyTimePan(startX, currentX, baseTimeRange) {
-  if (!chart || !baseTimeRange) return;
-  const dx = currentX - startX;
-  const barSpacing = chart.timeScale().options().barSpacing || 8;
-  const logicalShift = (dx / barSpacing) * CHART_TIME_PAN_SENSITIVITY;
-
-  state.programmaticScroll = true;
-  const newTo = baseTimeRange.to - logicalShift;
-  chart.timeScale().setVisibleLogicalRange({
-    from: baseTimeRange.from - logicalShift,
-    to: newTo,
-  });
-  state.programmaticScroll = false;
-
-  if (!state.dragging) {
-    const barCount = state.lastCandles.length;
-    if (barCount) setFollowingRealtime(newTo >= barCount - 5);
-  }
+  return getVisibleBarsPriceRange(0.05) || { min: 0, max: 1 };
 }
 
 function resetManualPriceScale() {
-  state.manualPriceRange = null;
-  state.liveScaleRange = null;
-  state.frozenPanPriceRange = null;
-  applyManualPriceRangeToScale();
-  scheduleVisibleAutoscale();
+  resetPriceScaleToAuto();
 }
 
 const TV_COLORS = {
@@ -656,12 +407,13 @@ function initChart(container) {
     },
     handleScroll: {
       mouseWheel: true,
-      pressedMouseMove: false,
-      horzTouchDrag: false,
+      pressedMouseMove: true,
+      horzTouchDrag: true,
       vertTouchDrag: false,
     },
     handleScale: {
-      axisPressedMouseMove: { time: true, price: false },
+      axisPressedMouseMove: { time: true, price: true },
+      axisDoubleClickReset: { time: true, price: true },
       mouseWheel: true,
       pinch: true,
     },
@@ -709,14 +461,13 @@ function initChart(container) {
       if (typeof IndicatorManager !== 'undefined') IndicatorManager.onResize();
       const h = workspace?.clientHeight || mainEl?.clientHeight || 280;
       chart.applyOptions({ width: container.clientWidth, height: h });
-      if (state.manualPriceRange) schedulePriceScaleRefresh();
       if (typeof DrawingManager !== 'undefined') DrawingManager.redraw();
     }
   });
   resizeObserver.observe(workspace || mainEl || container);
   chartInitialized = true;
   ensureLiveOhlcOverlay();
-  setupChartPanning();
+  setupChartInteractions();
   applySwingLevelLines();
   applyStopLossLine();
 
@@ -731,9 +482,6 @@ function initChart(container) {
 
 function setFollowingRealtime(following) {
   state.isFollowingRealtime = following;
-  if (!following) {
-    state.liveScaleRange = null;
-  }
   if (chart) {
     chart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: following });
   }
@@ -742,14 +490,14 @@ function setFollowingRealtime(following) {
 
 function scrollToRealtimeView() {
   if (!chart || !state.lastCandles.length) return;
-  resetManualPriceScale();
+  resetPriceScaleToAuto();
   state.programmaticScroll = true;
   chart.timeScale().scrollToRealTime();
   state.programmaticScroll = false;
   setFollowingRealtime(true);
 }
 
-function setupChartPanning() {
+function setupChartInteractions() {
   if (!chart) return;
 
   chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -766,164 +514,34 @@ function setupChartPanning() {
   panningSetup = true;
 
   const container = $('#chartArea');
+  if (!container) return;
   container.style.touchAction = 'none';
-  let priceDrag = null;
-  let axisDrag = null;
 
-  const isOnPriceAxis = (clientX) => {
-    if (!chart) return false;
-    const rect = container.getBoundingClientRect();
-    const axisWidth = chart.priceScale('right').width() || 60;
-    return clientX >= rect.right - axisWidth - 4;
-  };
-
-  const startDrag = (clientX, clientY) => {
+  // Track active pointer for indicator deferral only — do not capture
+  // or custom-pan. Native Lightweight Charts handles Binance/TV gestures.
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
     if (typeof DrawingManager !== 'undefined' && DrawingManager.isDrawingMode()) return;
-
     state.dragging = true;
-
-    if (isOnPriceAxis(clientX)) {
-      const captured = captureVisiblePriceRange();
-      if (!captured) return;
-      axisDrag = {
-        startY: clientY,
-        range: captured,
-        active: false,
-      };
-      activateManualPriceControl(captured);
-      container.classList.add('chart-area--dragging');
-      return;
-    }
-
-    const timeRange = chart.timeScale().getVisibleLogicalRange();
-    priceDrag = {
-      anchorX: clientX,
-      anchorY: clientY,
-      originTimeRange: timeRange ? { from: timeRange.from, to: timeRange.to } : null,
-      active: false,
-    };
     container.classList.add('chart-area--dragging');
   };
 
-  const processDragMove = (clientX, clientY) => {
-    if (axisDrag) {
-      const dy = clientY - axisDrag.startY;
-      if (!axisDrag.active && Math.abs(dy) < 3) return;
-      axisDrag.active = true;
-      applyPriceAxisAdjust(axisDrag.startY, clientY, axisDrag.range);
-      return;
-    }
-
-    if (!priceDrag) return;
-    const dx = clientX - priceDrag.anchorX;
-    const dy = clientY - priceDrag.anchorY;
-
-    if (!priceDrag.active) {
-      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-      priceDrag.active = true;
-      lockPriceRangeForBodyPan();
-    }
-
-    if (priceDrag.originTimeRange) {
-      applyTimePan(priceDrag.anchorX, clientX, priceDrag.originTimeRange);
-    }
-  };
-
-  const finishBodyDrag = () => {
-    if (!priceDrag?.active) return;
-
-    preserveLockedPriceRangeAfterPan();
-
-    const range = chart?.timeScale().getVisibleLogicalRange();
-    if (range) {
-      const barCount = state.lastCandles.length;
-      if (barCount) setFollowingRealtime(range.to >= barCount - 5);
-      if (range.from < 40 && state.canLoadMore && !state.loadingMore) {
-        scheduleLoadMoreCandles();
-      }
-    }
-  };
-
-  const cancelBodyDrag = () => {};
-
-  const scheduleDragMove = (clientX, clientY) => {
-    pendingDragMove = { clientX, clientY };
-    if (dragMoveRaf != null) return;
-    dragMoveRaf = requestAnimationFrame(() => {
-      dragMoveRaf = null;
-      if (!pendingDragMove) return;
-      const { clientX: x, clientY: y } = pendingDragMove;
-      pendingDragMove = null;
-      processDragMove(x, y);
-    });
-  };
-
-  const flushDragMove = () => {
-    if (dragMoveRaf != null) {
-      cancelAnimationFrame(dragMoveRaf);
-      dragMoveRaf = null;
-    }
-    if (pendingDragMove) {
-      const { clientX, clientY } = pendingDragMove;
-      pendingDragMove = null;
-      processDragMove(clientX, clientY);
-    }
-  };
-
-  const endDrag = () => {
-    flushDragMove();
+  const onPointerEnd = () => {
+    if (!state.dragging) return;
     state.dragging = false;
-
-    if (axisDrag) {
-      if (axisDrag.active) refreshPriceScaleNow();
-      axisDrag = null;
-      container.classList.remove('chart-area--dragging');
-      clearFrozenPanPriceRange();
-      scheduleLiveIndicatorUpdate();
-      return;
-    }
-
-    if (!priceDrag) {
-      clearFrozenPanPriceRange();
-      return;
-    }
-
-    const wasClickOnly = !priceDrag.active;
-    if (wasClickOnly) cancelBodyDrag();
-    else finishBodyDrag();
-
-    priceDrag = null;
     container.classList.remove('chart-area--dragging');
-    clearFrozenPanPriceRange();
-    if (wasClickOnly) syncManualPriceFromAxisIfNeeded();
     scheduleLiveIndicatorUpdate();
   };
 
-  container.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    container.setPointerCapture(e.pointerId);
-    startDrag(e.clientX, e.clientY);
+  container.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointerup', onPointerEnd);
+  window.addEventListener('pointercancel', onPointerEnd);
+
+  container.addEventListener('dblclick', (e) => {
+    if (typeof DrawingManager !== 'undefined' && DrawingManager.isDrawingMode()) return;
+    e.preventDefault();
+    resetPriceScaleToAuto();
   });
-
-  container.addEventListener('pointermove', (e) => {
-    if (!priceDrag && !axisDrag) return;
-    scheduleDragMove(e.clientX, e.clientY);
-  });
-
-  container.addEventListener('pointerup', (e) => {
-    if (container.hasPointerCapture(e.pointerId)) {
-      container.releasePointerCapture(e.pointerId);
-    }
-    endDrag();
-  });
-
-  container.addEventListener('pointercancel', endDrag);
-
-  container.addEventListener('dblclick', () => resetManualPriceScale());
-
-  container.addEventListener('wheel', () => {
-    if (state.manualPriceRange) schedulePriceScaleRefresh();
-  }, { passive: true });
 }
 
 function syncVolumeVisibility() {
@@ -1159,13 +777,11 @@ function renderCandleImmediate(candle, { newBar = false } = {}) {
     priceLineColor: isUp ? TV_COLORS.up : TV_COLORS.down,
   });
 
-  syncLivePriceScale();
-
   if (typeof IndicatorManager !== 'undefined' && IndicatorManager.updateLive) {
     IndicatorManager.updateLive(state.lastCandles, { newBar });
   }
 
-  if (state.isFollowingRealtime && !state.manualPriceRange) {
+  if (state.isFollowingRealtime && isPriceScaleAuto()) {
     state.programmaticScroll = true;
     chart.timeScale().scrollToRealTime();
     state.programmaticScroll = false;
@@ -1629,13 +1245,11 @@ async function loadMoreHistoricalCandles() {
 
     const added = merged.length - state.lastCandles.length;
     const visibleRange = chart?.timeScale().getVisibleLogicalRange();
-    const lockedPrice = state.manualPriceRange ? { ...state.manualPriceRange } : null;
+    const wasAuto = isPriceScaleAuto();
     applyCandleData(merged, false);
 
-    if (lockedPrice) {
-      state.manualPriceRange = lockedPrice;
-      state.liveScaleRange = null;
-      refreshPriceScaleNow();
+    if (!wasAuto) {
+      chart.priceScale('right').applyOptions({ autoScale: false });
     }
 
     if (visibleRange && chart) {
