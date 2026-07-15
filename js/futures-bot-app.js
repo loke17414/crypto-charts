@@ -1863,19 +1863,27 @@ const FuturesBotApp = (() => {
     }
 
     const cacheKey = backtestCacheKey(interval, targetTrades, settings);
+    let seed = chartSource;
+    let seedTrades = stats.trades;
     if (backtestHistoryCache?.key === cacheKey) {
       // The cached extended history is frozen at fetch time — merge in the
       // live chart candles so bars (and wicks) formed since then are tested.
       const merged = mergeCandlesByTime(backtestHistoryCache.candles, chartSource);
-      backtestHistoryCache = { key: cacheKey, candles: merged };
+      const exhausted = backtestHistoryCache.exhausted === true;
+      backtestHistoryCache = { key: cacheKey, candles: merged, exhausted };
       const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
-      if (cachedStats.trades >= targetTrades || cachedStats.trades > stats.trades) {
+      // 목표 도달, 또는 거래소 히스토리를 이미 끝까지 받은 경우에만 캐시로 종료.
+      // 목표 미달인 부분 캐시는 시드로 삼아 더 오래된 데이터를 이어서 로드한다
+      // (예전에는 여기서 바로 반환해 100회를 영영 못 채우는 버그가 있었다).
+      if (cachedStats.trades >= targetTrades || exhausted) {
         return { source: merged, fromCache: true };
       }
+      seed = merged;
+      seedTrades = cachedStats.trades;
     }
 
     if (statsEl) {
-      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${stats.trades}/${targetTrades}회, ${chartSource.length}봉)`;
+      statsEl.textContent = `백테스트: 과거 데이터 로딩 중... (${seedTrades}/${targetTrades}회, ${seed.length}봉)`;
     }
 
     const extended = await BacktestLoader.loadForTargetTrades(
@@ -1889,12 +1897,18 @@ const FuturesBotApp = (() => {
           `백테스트: 과거 데이터 로딩 중... (${progress.trades}/${progress.target}회, ` +
           `${progress.candles.toLocaleString()}봉 · ${progress.page}/${progress.maxPages}페이지)`;
       },
-      chartSource,
+      seed,
     );
 
     if (runId !== backtestRunId) return null;
 
-    backtestHistoryCache = { key: cacheKey, candles: extended };
+    // 새 봉이 하나도 안 늘었다면 거래소 히스토리가 소진된 것 — 표시해 두고
+    // 매 갱신마다 헛된 재요청이 반복되지 않게 한다.
+    backtestHistoryCache = {
+      key: cacheKey,
+      candles: extended,
+      exhausted: extended.length <= seed.length,
+    };
     return { source: extended, fromCache: false };
   }
 

@@ -68,10 +68,13 @@ const BacktestLoader = (() => {
     for (let n = 0; n < pageCount; n++) {
       const oldestMs = merged[0].time * 1000 - 1;
       const older = await fetchPage(symbol, interval, oldestMs);
-      if (!older.length || older.length < PAGE_SIZE / 10) break;
+      if (!older.length) break;
+      // 짧은 페이지(히스토리 끝)도 병합한 뒤에 멈춘다 — 버리면 가장 오래된
+      // 구간이 유실되어 목표 횟수를 못 채운다.
       const next = mergeCandles(merged, older);
-      if (next.length === merged.length) break;
+      const grew = next.length > merged.length;
       merged = next;
+      if (!grew || older.length < PAGE_SIZE / 10) break;
     }
     return merged;
   }
@@ -86,7 +89,10 @@ const BacktestLoader = (() => {
     let candles = seedCandles.length ? [...seedCandles] : await fetchPage(symbol, interval);
     if (!candles.length) return candles;
 
-    let pagesUsed = seedCandles.length ? Math.max(1, Math.ceil(candles.length / PAGE_SIZE)) : 1;
+    // 페이지 예산은 "이번 실행에서 새로 받아오는 양"만 계산한다. 시드(차트에
+    // 이미 있던 캔들)를 예산에서 차감하면 시드가 클수록 로딩이 일찍 끊겨
+    // 목표 횟수를 못 채우는 부분 결과가 만들어졌다.
+    let pagesUsed = seedCandles.length ? 0 : 1;
     let found = countTrades(candles, settings, targetTrades);
 
     const report = (loading) => {
