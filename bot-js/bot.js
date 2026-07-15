@@ -196,7 +196,7 @@ async function openPosition(side, price, levels, candles, index) {
       entryTime: new Date().toISOString(),
       entryBarTime: candles?.[index]?.time ?? null,
     };
-    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL $${levels.stopPrice.toFixed(2)} TP $${levels.takeProfitPrice.toFixed(2)}`);
+    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)}`);
     saveState();
     return;
   }
@@ -221,7 +221,7 @@ async function openPosition(side, price, levels, candles, index) {
     entryTime: new Date().toISOString(),
     entryBarTime: candles?.[index]?.time ?? null,
   };
-  log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL $${levels.stopPrice.toFixed(2)} TP $${levels.takeProfitPrice.toFixed(2)}`);
+  log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)}`);
   saveState();
 }
 

@@ -198,9 +198,15 @@ const FuturesStrategy = (() => {
       return { signal: 'HOLD', reason: '손절/익절 계산 불가', snapshot };
     }
 
-    const slLabel = levels.dynamic
-      ? `$${levels.stopPrice.toFixed(0)}`
-      : `-${levels.stopLossPct.toFixed(1)}%`;
+    // With stop-loss disabled, stopPrice/stopLossPct are stripped to null.
+    let slLabel;
+    if (levels.stopPrice == null && levels.stopLossPct == null) {
+      slLabel = '없음';
+    } else {
+      slLabel = levels.dynamic
+        ? `$${levels.stopPrice.toFixed(0)}`
+        : `-${levels.stopLossPct.toFixed(1)}%`;
+    }
     const tpLabel = levels.dynamic
       ? `$${levels.takeProfitPrice.toFixed(0)}`
       : `+${levels.takeProfitPct.toFixed(1)}%`;
@@ -265,11 +271,16 @@ const FuturesStrategy = (() => {
     const hitTp = isLong ? high >= takeProfitPrice : low <= takeProfitPrice;
     if (!hitSl && !hitTp) return null;
 
-    const slFill = stopPrice != null
-      ? (isLong ? Math.min(stopPrice, open) : Math.max(stopPrice, open))
+    // slExit is only built when the stop actually hit (stopPrice may be null
+    // when stop-loss is disabled — building the label eagerly would crash).
+    const slExit = hitSl
+      ? {
+        signal: 'CLOSE',
+        reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`,
+        exitPrice: isLong ? Math.min(stopPrice, open) : Math.max(stopPrice, open),
+      }
       : null;
     const tpFill = isLong ? Math.max(takeProfitPrice, open) : Math.min(takeProfitPrice, open);
-    const slExit = { signal: 'CLOSE', reason: `손절 -${slPct}% ($${stopPrice.toFixed(2)})`, exitPrice: slFill };
     const tpExit = { signal: 'CLOSE', reason: `익절 +${tpPct}% ($${takeProfitPrice.toFixed(2)})`, exitPrice: tpFill };
 
     if (hitSl && hitTp) {
