@@ -17,6 +17,7 @@ const BacktestRunner = (() => {
   let debounceTimer = null;
   let explicitRunActive = false;
   let lastError = null;
+  let lastInvalidatedKey = null;
 
   function configure(hooks) {
     deps = hooks;
@@ -65,7 +66,10 @@ const BacktestRunner = (() => {
 
     let stats;
     try {
-      ({ stats } = FuturesStrategy.backtest(chartSource, settings, { maxTrades: targetTrades }));
+      ({ stats } = FuturesStrategy.backtest(chartSource, settings, {
+        maxTrades: targetTrades,
+        skipMarkers: true,
+      }));
     } catch (err) {
       throw new Error(`백테스트 엔진 오류: ${err.message}`);
     }
@@ -83,7 +87,10 @@ const BacktestRunner = (() => {
       const merged = mergeCandlesByTime(historyCache.candles, chartSource);
       historyExhausted = historyCache.exhausted === true;
       historyCache = { key, candles: merged, exhausted: historyExhausted };
-      const cachedStats = FuturesStrategy.backtest(merged, settings, { maxTrades: targetTrades }).stats;
+      const cachedStats = FuturesStrategy.backtest(merged, settings, {
+        maxTrades: targetTrades,
+        skipMarkers: true,
+      }).stats;
       if (cachedStats.trades >= targetTrades || historyExhausted) {
         return { source: merged, fromCache: true, historyExhausted };
       }
@@ -173,6 +180,7 @@ const BacktestRunner = (() => {
       }
 
       lastRenderedKey = pendingKey;
+      lastInvalidatedKey = null;
       return {
         ok: true,
         interval,
@@ -204,14 +212,21 @@ const BacktestRunner = (() => {
     clearTimeout(debounceTimer);
     deps.readFormSettings?.();
     const pendingKey = deps.getCacheKey?.();
+
+    // Same settings already computing — do not cancel in-flight history load.
+    if (inFlightKey && inFlightKey === pendingKey) return;
+
     if (deps.getShowBacktest?.()
       && lastRenderedKey != null
-      && pendingKey !== lastRenderedKey) {
+      && pendingKey !== lastRenderedKey
+      && pendingKey !== lastInvalidatedKey) {
+      lastInvalidatedKey = pendingKey;
       invalidate({ message: '백테스트: 조건 변경 — 재계산 중...' });
     }
     debounceTimer = setTimeout(() => {
+      if (inFlightKey && inFlightKey === pendingKey) return;
       deps.onCompute?.(chartCandles, { force: false, focusChart: false });
-    }, 600);
+    }, 1200);
   }
 
   async function runExplicit(chartCandles) {

@@ -267,12 +267,202 @@
     return { high, low };
   }
 
-  function evaluateSwingBreak(candles, index, condition) {
+  function precomputeSwingLevels(candles, pivotBars, lookback) {
+    const n = candles.length;
+    const highs = new Array(n);
+    const lows = new Array(n);
+    for (let i = 0; i < n; i++) {
+      if (i < pivotBars * 2 + 1) {
+        highs[i] = lows[i] = null;
+        continue;
+      }
+      const levels = swingLevelsAsOf(candles, i, pivotBars, lookback);
+      highs[i] = levels.high;
+      lows[i] = levels.low;
+    }
+    return { highs, lows };
+  }
+
+  function buildFvgZoneIndex(candles) {
+    const n = candles.length;
+    const zones = [];
+    for (let i = 2; i < n; i++) {
+      const c0 = candles[i - 2];
+      const c2 = candles[i];
+      if (c0.high < c2.low) {
+        zones.push({
+          side: 'bullish',
+          top: c2.low,
+          bottom: c0.high,
+          formedAt: i,
+          filledAt: n,
+        });
+      }
+      if (c0.low > c2.high) {
+        zones.push({
+          side: 'bearish',
+          top: c0.low,
+          bottom: c2.high,
+          formedAt: i,
+          filledAt: n,
+        });
+      }
+    }
+    for (const zone of zones) {
+      for (let j = zone.formedAt + 1; j < n; j++) {
+        const bar = candles[j];
+        if (zone.side === 'bullish' && bar.low <= zone.bottom) {
+          zone.filledAt = j;
+          break;
+        }
+        if (zone.side === 'bearish' && bar.high >= zone.top) {
+          zone.filledAt = j;
+          break;
+        }
+      }
+    }
+    return zones;
+  }
+
+  function queryFvgAt(fvgCache, candles, index, side, state, lookback) {
+    const minForm = Math.max(2, index - lookback + 1);
+    const price = candles[index]?.close;
+    const inWindow = fvgCache.zones.filter(
+      (z) => z.side === side && z.formedAt >= minForm && z.formedAt <= index,
+    );
+    if (state === 'filled') {
+      return inWindow.length > 0 && inWindow[inWindow.length - 1].filledAt <= index;
+    }
+    const open = inWindow.filter((z) => z.filledAt > index);
+    if (state === 'in_zone') {
+      return open.some((z) => priceInZone(price, z));
+    }
+    return open.length > 0;
+  }
+
+  function precomputeDivergenceSeries(candles, indicator, period, lookback) {
+    const n = candles.length;
+    const bullish = new Array(n).fill(false);
+    const bearish = new Array(n).fill(false);
+    const start = Math.max(lookback + period, 20);
+    for (let i = start; i < n; i++) {
+      const div = detectDivergence(candles.slice(0, i + 1), { indicator, period, lookback });
+      bullish[i] = div.bullish;
+      bearish[i] = div.bearish;
+    }
+    return { bullish, bearish };
+  }
+
+  function buildBacktestStructureCache(candles, conditions) {
+    const cache = { swing: {}, fvg: null, divergence: {} };
+    if (!Array.isArray(conditions) || !conditions.length) return cache;
+
+    for (const cond of conditions) {
+      if (!cond || typeof cond !== 'object') continue;
+      if (cond.type === 'swing_break' || cond.type === 'swing_near') {
+        const pivotBars = Math.max(2, parseInt(cond.pivotBars, 10) || 5);
+        const lookback = Math.max(pivotBars * 3, parseInt(cond.lookback, 10) || 60);
+        const key = `${pivotBars}:${lookback}`;
+        if (!cache.swing[key]) {
+          cache.swing[key] = precomputeSwingLevels(candles, pivotBars, lookback);
+        }
+      }
+      if (cond.type === 'fvg' && !cache.fvg) {
+        cache.fvg = { zones: buildFvgZoneIndex(candles) };
+      }
+      if (cond.type === 'divergence') {
+        const indicator = cond.indicator === 'macd' ? 'macd' : 'rsi';
+        const lookback = Math.max(15, parseInt(cond.lookback, 10) || 40);
+        const period = parseInt(cond.period, 10) || 14;
+        const key = `${indicator}:${period}:${lookback}`;
+        if (!cache.divergence[key]) {
+          cache.divergence[key] = precomputeDivergenceSeries(candles, indicator, period, lookback);
+        }
+      }
+    }
+    return cache;
+  }
+
+  function analyzeTrend(candles, opts = {}) {
+    const price = candles.at(-1)?.close;
+    const empty = {
+      direction: 'sideways',
+      structure: 'range',
+      maAlignment: null,
+      adx14: null,
+      ema7: null,
+      ema25: null,
+      ema99: null,
+      priceAboveEma7: null,
+      priceAboveEma25: null,
+      priceAboveEma99: null,
+    };
+    if (!Array.isArray(candles) || candles.length < 30 || !Number.isFinite(price)) return empty;
+
+    const emaVal = (period) => {
+      if (!window.TA?.emaLine) return null;
+      const pt = TA.emaLine(candles, period)?.at(-1);
+      return pt?.value ?? pt ?? null;
+    };
+    const ema7 = emaVal(7);
+    const ema25 = emaVal(25);
+    const ema99 = emaVal(99);
+
+    let adx14 = null;
+    if (window.TA?.adx) {
+      const pt = TA.adx(candles, 14)?.at(-1);
+      adx14 = pt?.value ?? pt ?? null;
+    }
+
+    const swings = detectSwings(candles, {
+      pivotBars: opts.pivotBars || 5,
+      lookback: opts.lookback || 60,
+    });
+    let structure = 'range';
+    if (swings.highs.length >= 2 && swings.lows.length >= 2) {
+      const hh = swings.highs[0].price > swings.highs[1].price;
+      const hl = swings.lows[0].price > swings.lows[1].price;
+      const lh = swings.highs[0].price < swings.highs[1].price;
+      const ll = swings.lows[0].price < swings.lows[1].price;
+      if (hh && hl) structure = 'uptrend';
+      else if (lh && ll) structure = 'downtrend';
+    }
+
+    let maAlignment = 'mixed';
+    if ([ema7, ema25, ema99].every(Number.isFinite)) {
+      if (ema7 > ema25 && ema25 > ema99) maAlignment = 'bullish_stack';
+      else if (ema7 < ema25 && ema25 < ema99) maAlignment = 'bearish_stack';
+    }
+
+    let direction = 'sideways';
+    if (structure === 'uptrend' || maAlignment === 'bullish_stack') direction = 'bullish';
+    else if (structure === 'downtrend' || maAlignment === 'bearish_stack') direction = 'bearish';
+    if (Number.isFinite(adx14) && adx14 < 18) direction = 'sideways';
+
+    return {
+      direction,
+      structure,
+      maAlignment,
+      adx14: adx14 != null ? round(adx14, 1) : null,
+      ema7: ema7 != null ? round(ema7, 2) : null,
+      ema25: ema25 != null ? round(ema25, 2) : null,
+      ema99: ema99 != null ? round(ema99, 2) : null,
+      priceAboveEma7: ema7 != null ? price > ema7 : null,
+      priceAboveEma25: ema25 != null ? price > ema25 : null,
+      priceAboveEma99: ema99 != null ? price > ema99 : null,
+      note: 'direction=overall bias; structure=HH/HL swing pattern; maAlignment=EMA7/25/99 stack; adx14<18=trend weak/ranging',
+    };
+  }
+
+  function evaluateSwingBreak(candles, index, condition, structureCache) {
     const side = condition.side === 'short' ? 'short' : 'long';
     const pivotBars = Math.max(2, parseInt(condition.pivotBars, 10) || 5);
     const lookback = Math.max(pivotBars * 3, parseInt(condition.lookback, 10) || 60);
     if (index < pivotBars * 2 + 1) return false;
-    const { high, low } = swingLevelsAsOf(candles, index, pivotBars, lookback);
+    const key = `${pivotBars}:${lookback}`;
+    const pre = structureCache?.swing?.[key];
+    const high = pre ? pre.highs[index] : swingLevelsAsOf(candles, index, pivotBars, lookback).high;
+    const low = pre ? pre.lows[index] : swingLevelsAsOf(candles, index, pivotBars, lookback).low;
     const closeNow = candles[index]?.close;
     const closePrev = candles[index - 1]?.close;
     if (![closeNow, closePrev].every(Number.isFinite)) return false;
@@ -284,13 +474,16 @@
     return closePrev >= low && closeNow < low;
   }
 
-  function evaluateSwingNear(candles, index, condition) {
+  function evaluateSwingNear(candles, index, condition, structureCache) {
     const side = condition.side === 'short' ? 'short' : 'long';
     const pivotBars = Math.max(2, parseInt(condition.pivotBars, 10) || 5);
     const lookback = Math.max(pivotBars * 3, parseInt(condition.lookback, 10) || 60);
     const tolerancePct = Math.max(0.05, parseFloat(condition.tolerancePct) || 0.5);
     if (index < pivotBars * 2 + 1) return false;
-    const { high, low } = swingLevelsAsOf(candles, index, pivotBars, lookback);
+    const key = `${pivotBars}:${lookback}`;
+    const pre = structureCache?.swing?.[key];
+    const high = pre ? pre.highs[index] : swingLevelsAsOf(candles, index, pivotBars, lookback).high;
+    const low = pre ? pre.lows[index] : swingLevelsAsOf(candles, index, pivotBars, lookback).low;
     const close = candles[index]?.close;
     if (!Number.isFinite(close)) return false;
     const level = side === 'long' ? low : high;
@@ -309,10 +502,13 @@
     return { zones, inZone: zones.filter((z) => priceInZone(price, z)) };
   }
 
-  function evaluateFvg(candles, index, condition) {
+  function evaluateFvg(candles, index, condition, structureCache) {
     const side = condition.side === 'bearish' ? 'bearish' : 'bullish';
     const state = condition.state || 'present';
     const lookback = Math.max(5, parseInt(condition.lookback, 10) || 30);
+    if (structureCache?.fvg) {
+      return queryFvgAt(structureCache.fvg, candles, index, side, state, lookback);
+    }
     const { zones, inZone } = activeFvgsAt(candles, index, lookback);
     const matching = zones.filter((z) => z.side === side);
     if (state === 'in_zone') return inZone.some((z) => z.side === side);
@@ -324,11 +520,14 @@
     return matching.length > 0;
   }
 
-  function evaluateDivergence(candles, index, condition) {
+  function evaluateDivergence(candles, index, condition, structureCache) {
     const kind = condition.kind === 'bearish' ? 'bearish' : 'bullish';
     const indicator = condition.indicator === 'macd' ? 'macd' : 'rsi';
     const lookback = Math.max(15, parseInt(condition.lookback, 10) || 40);
     const period = parseInt(condition.period, 10) || 14;
+    const key = `${indicator}:${period}:${lookback}`;
+    const pre = structureCache?.divergence?.[key];
+    if (pre) return kind === 'bullish' ? pre.bullish[index] : pre.bearish[index];
     const subset = candles.slice(0, index + 1);
     const div = detectDivergence(subset, { indicator, period, lookback });
     return kind === 'bullish' ? div.bullish : div.bearish;
@@ -356,6 +555,10 @@
     };
     const lastHigh = swings.lastHigh;
     const lastLow = swings.lastLow;
+    const trend = analyzeTrend(candles, {
+      pivotBars: opts.swingPivotBars || 5,
+      lookback: opts.swingLookback || 60,
+    });
 
     return {
       recentCandles: recent,
@@ -388,6 +591,7 @@
         rsi: { bullish: rsiDiv.bullish, bearish: rsiDiv.bearish, detail: rsiDiv.detail },
         macd: { bullish: macdDiv.bullish, bearish: macdDiv.bearish, detail: macdDiv.detail },
       },
+      trend,
     };
   }
 
@@ -415,6 +619,8 @@
     detectDivergence,
     detectSwings,
     swingLevelsAsOf,
+    analyzeTrend,
+    buildBacktestStructureCache,
     analyzeForAi,
     evaluateFvg,
     evaluateDivergence,

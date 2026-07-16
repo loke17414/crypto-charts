@@ -835,11 +835,33 @@ const StrategyEngine = (() => {
     return new Map();
   }
 
+  function collectStructureConditions(slots) {
+    const specs = [];
+    const seen = new Set();
+    const add = (cond) => {
+      if (!cond || typeof cond !== 'object') return;
+      const key = JSON.stringify(cond);
+      if (seen.has(key)) return;
+      seen.add(key);
+      specs.push(cond);
+    };
+    (slots || []).forEach((slot) => {
+      ['long', 'short'].forEach((side) => {
+        (slot.rules?.[side]?.conditions || []).forEach(add);
+      });
+    });
+    return specs;
+  }
+
   function prepareBacktest(candles, settings) {
     const slots = normalizeSlots(settings);
     const merged = mergedSlotRules(slots);
     const cache = createOperandCache();
     slots.forEach((slot) => warmupCache(candles, slot.rules, cache));
+    const structureSpecs = collectStructureConditions(slots);
+    if (structureSpecs.length && window.ChartStructure?.buildBacktestStructureCache) {
+      cache.__structure__ = ChartStructure.buildBacktestStructureCache(candles, structureSpecs);
+    }
     return {
       slots,
       rules: slots[0]?.rules ?? merged,
@@ -986,19 +1008,19 @@ const StrategyEngine = (() => {
     }
 
     if (type === 'fvg' && window.ChartStructure) {
-      return ChartStructure.evaluateFvg(candles, index, condition);
+      return ChartStructure.evaluateFvg(candles, index, condition, cache.__structure__);
     }
 
     if (type === 'divergence' && window.ChartStructure) {
-      return ChartStructure.evaluateDivergence(candles, index, condition);
+      return ChartStructure.evaluateDivergence(candles, index, condition, cache.__structure__);
     }
 
     if (type === 'swing_break' && window.ChartStructure) {
-      return ChartStructure.evaluateSwingBreak(candles, index, condition);
+      return ChartStructure.evaluateSwingBreak(candles, index, condition, cache.__structure__);
     }
 
     if (type === 'swing_near' && window.ChartStructure) {
-      return ChartStructure.evaluateSwingNear(candles, index, condition);
+      return ChartStructure.evaluateSwingNear(candles, index, condition, cache.__structure__);
     }
 
     return false;

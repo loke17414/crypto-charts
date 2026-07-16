@@ -29,6 +29,9 @@ const FuturesBotApp = (() => {
   let testnetStatus = null;
   let showBacktest = true;
   let backtestHistoryExpandId = 0;
+  let backtestExpandingHistory = false;
+  let lastBacktestScheduleMeta = { candleCount: 0, lastTime: 0, interval: '', symbol: '' };
+  let aiSnapshotCache = { key: null, at: 0, data: null };
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -409,6 +412,7 @@ const FuturesBotApp = (() => {
         swings: structure.swings,
         fvg: structure.fvg,
         divergence: structure.divergence,
+        trend: structure.trend,
       };
     }
 
@@ -449,17 +453,26 @@ const FuturesBotApp = (() => {
     const candles = BacktestRunner.closedCandlesOnly(raw, state.interval);
     const settings = getSettings();
     const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
+    const cacheKey = getBacktestCacheKey(settings);
+
+    if (aiSnapshotCache.key === cacheKey && Date.now() - aiSnapshotCache.at < 60_000) {
+      return aiSnapshotCache.data;
+    }
 
     if (!candles.length || !window.FuturesStrategy?.backtest) {
-      return { current: null, targetTrades, candlesUsed: 0 };
+      const empty = { current: null, targetTrades, candlesUsed: 0 };
+      aiSnapshotCache = { key: cacheKey, at: Date.now(), data: empty };
+      return empty;
     }
 
     const snap = BacktestRunner.snapshotFromCandles(candles, settings, targetTrades, state.interval);
-    return {
+    const result = {
       ...snap,
       interval: state.interval,
       symbol: state.symbol,
     };
+    aiSnapshotCache = { key: cacheKey, at: Date.now(), data: result };
+    return result;
   }
 
   function setFieldValue(id, value) {
@@ -1967,6 +1980,19 @@ const FuturesBotApp = (() => {
   // would treat every tick as a "settings change", cancel the in-flight
   // history load, and the backtest would never finish — so the key uses the
   // raw user inputs instead of the derived values.
+  const BACKTEST_KEY_COSMETIC = new Set(['color', 'lineWidth', 'fillOpacity', 'opacity', 'name', 'id', 'label']);
+
+  function stripCosmeticForBacktestKey(obj) {
+    if (obj == null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(stripCosmeticForBacktestKey);
+    const out = {};
+    Object.entries(obj).forEach(([k, v]) => {
+      if (BACKTEST_KEY_COSMETIC.has(k)) return;
+      out[k] = stripCosmeticForBacktestKey(v);
+    });
+    return out;
+  }
+
   function backtestSettingsForKey(settings) {
     let keyed = settings;
     // Slot names are cosmetic — exclude them so renaming a condition does not
@@ -1977,9 +2003,15 @@ const FuturesBotApp = (() => {
         entryRules: undefined,
         strategySlots: settings.strategySlots.map((s) => ({
           enabled: s.enabled !== false,
-          entryRules: s.entryRules,
-          exitRules: s.exitRules,
+          entryRules: stripCosmeticForBacktestKey(s.entryRules),
+          exitRules: stripCosmeticForBacktestKey(s.exitRules),
         })),
+      };
+    } else if (settings.entryRules) {
+      keyed = {
+        ...settings,
+        entryRules: stripCosmeticForBacktestKey(settings.entryRules),
+        exitRules: stripCosmeticForBacktestKey(settings.exitRules),
       };
     }
     if (state.slTpMode === 'pnl') {
@@ -2014,6 +2046,7 @@ const FuturesBotApp = (() => {
 
   function invalidateBacktestChart(chartCandles, { message = null } = {}) {
     backtestHistoryExpandId += 1;
+    aiSnapshotCache = { key: null, at: 0, data: null };
     BacktestRunner.invalidate({ message });
     if (showBacktest) clearBacktestChartDisplay(chartCandles);
   }
@@ -2057,9 +2090,11 @@ const FuturesBotApp = (() => {
       return;
     }
     const runId = ++backtestHistoryExpandId;
+    backtestExpandingHistory = true;
     const earliestEntry = Math.min(...trades.map((t) => t.entryTime));
     const chartData = Chart.getCandles() || [];
     if (!chartData.length || earliestEntry >= chartData[0].time) {
+      backtestExpandingHistory = false;
       onDone?.();
       return;
     }
@@ -2071,6 +2106,8 @@ const FuturesBotApp = (() => {
       await Chart.loadHistoryUntilTime(earliestEntry, maxPages, { relaxBarCap: true });
     } catch (err) {
       console.warn('[백테스트] 과거 차트 확장 실패:', err);
+    } finally {
+      backtestExpandingHistory = false;
     }
     if (runId !== backtestHistoryExpandId) return;
     onDone?.();
@@ -2137,7 +2174,7 @@ const FuturesBotApp = (() => {
     }
 
     try {
-      updateSwingChartOverlay(chartCandles);
+      if (force) updateSwingChartOverlay(chartCandles);
       const result = await BacktestRunner.compute(chartCandles, { force, focusChart });
       if (result.skipped) {
         if (force && statsEl && !statsEl.innerHTML.includes('로딩 중')) {
@@ -2240,11 +2277,33 @@ const FuturesBotApp = (() => {
     });
   }
 
+  function shouldScheduleBacktestOnCandleUpdate(candles) {
+    if (backtestExpandingHistory) return false;
+    if (!candles?.length) return false;
+    const interval = Chart.getState()?.interval || state.interval;
+    const lastTime = candles.at(-1)?.time ?? 0;
+    const count = candles.length;
+    const meta = lastBacktestScheduleMeta;
+    if (interval !== meta.interval || state.symbol !== meta.symbol) return true;
+    if (meta.candleCount === 0) return true;
+    if (lastTime !== meta.lastTime) return true;
+    if (count > meta.candleCount * 1.05) return true;
+    return false;
+  }
+
   function onChartCandlesUpdated(e) {
     lastCandles = e.detail?.candles || Chart.getCandles() || [];
     state.interval = e.detail?.interval || Chart.getState()?.interval || state.interval;
     state.lastPrice = lastCandles.at(-1)?.close || Chart.getPrice() || 0;
-    scheduleBacktest(lastCandles);
+    if (shouldScheduleBacktestOnCandleUpdate(lastCandles)) {
+      lastBacktestScheduleMeta = {
+        candleCount: lastCandles.length,
+        lastTime: lastCandles.at(-1)?.time ?? 0,
+        interval: state.interval,
+        symbol: state.symbol,
+      };
+      scheduleBacktest(lastCandles);
+    }
     updateSignalDisplay();
     ensurePositionSlTpOverlay();
     updateUI();

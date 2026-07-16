@@ -205,6 +205,8 @@ MARKET DATA & BACKTEST (critical for accuracy):
 - structure.swings: CONFIRMED 전고점/전저점 (pivotBars=5 both sides). Quote lastSwingHigh/lastSwingLow
   prices and barsAgo in answers. Never invent swings from a single candle or from recentHigh/recentLow.
 - structure.fvg / structure.divergence: FVG zones and RSI/MACD divergence flags.
+- structure.trend: direction (bullish/bearish/sideways), HH/HL structure, EMA7/25/99 stack, ADX14.
+  Use trend.direction + structure for trend questions — not recentHigh/recentLow alone.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 - hoveredCandle (optional): the exact candle the user is pointing at on the chart with full stats
   (o/h/l/c, changePct, rangePct=volatility, bodyPct, upperWickPct/lowerWickPct, volumeVsAvg20, barsAgo).
