@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260717a">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718a">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -67,6 +67,14 @@
             <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
             <button class="btn btn--tab" data-chart-type="line">라인</button>
           </div>
+          <div class="chart-controls__range">
+            <button class="btn btn--tab" data-interval="1m">1m</button>
+            <button class="btn btn--tab" data-interval="5m">5m</button>
+            <button class="btn btn--tab" data-interval="15m">15m</button>
+            <button class="btn btn--tab active" data-interval="1h">1h</button>
+            <button class="btn btn--tab" data-interval="4h">4h</button>
+            <button class="btn btn--tab" data-interval="1d">1d</button>
+          </div>
           <div class="chart-controls__tools">
             <div class="indicator-dropdown">
               <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
@@ -76,14 +84,6 @@
               </div>
             </div>
             <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
-          </div>
-          <div class="chart-controls__range">
-            <button class="btn btn--tab" data-interval="1m">1m</button>
-            <button class="btn btn--tab" data-interval="5m">5m</button>
-            <button class="btn btn--tab" data-interval="15m">15m</button>
-            <button class="btn btn--tab active" data-interval="1h">1h</button>
-            <button class="btn btn--tab" data-interval="4h">4h</button>
-            <button class="btn btn--tab" data-interval="1d">1d</button>
           </div>
         </div>
 
@@ -103,6 +103,39 @@
             <div id="indicatorPanes" class="indicator-panes"></div>
           </div>
         </div>
+
+        <section class="chart-ai-panel">
+          <div class="chart-ai-panel__head">
+            <h3 class="chart-ai-panel__title">AI 전략</h3>
+            <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
+          </div>
+          <div id="strategyAiDetails" class="strategy-ai-details"></div>
+          <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
+          <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
+            <label for="openaiApiKey">OpenAI Key</label>
+            <input type="password" id="openaiApiKey" autocomplete="off">
+          </div>
+          <div class="strategy-ai-actions chart-ai-panel__actions">
+            <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
+            <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
+            <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
+            <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">초기화</button>
+          </div>
+          <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
+          <div class="strategy-ai-quick">
+            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
+            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
+            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱, SL 1.5% TP 3%">BB</button>
+          </div>
+          <div class="strategy-ai-target">
+            <label for="strategyAiTargetSlot">슬롯</label>
+            <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
+          </div>
+          <div class="strategy-ai-input">
+            <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략을 설명하면 진입·SL/TP를 함께 설정합니다…"></textarea>
+            <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">적용</button>
+          </div>
+        </section>
 
         <details class="chart-advanced-panel">
           <summary>차트 고급 · 백테스트</summary>
@@ -143,28 +176,8 @@
         </div>
 
         <div class="control-section">
-          <div class="control-section__label">SL / TP</div>
-          <div class="bot-interval-picker hidden" id="slTpModePickerWrap">
-            <div class="bot-interval-picker__buttons" id="slTpModePicker" role="group">
-              <button type="button" class="btn btn--tab active" data-sltp-mode="pct">%</button>
-              <button type="button" class="btn btn--tab" data-sltp-mode="pnl">$</button>
-            </div>
-          </div>
-          <div class="sltp-row" id="slTpPctRow">
-            <div class="form-group"><label for="stopLoss">SL (%)</label><input type="number" id="stopLoss" value="1.5" min="0.1" max="50" step="0.1"></div>
-            <div class="form-group"><label for="takeProfit">TP (%)</label><input type="number" id="takeProfit" value="3" min="0.1" max="100" step="0.1"></div>
-          </div>
-          <div class="form-row hidden" id="slTpPnlRow">
-            <div class="form-group"><label for="stopLossPnl">SL ($)</label><input type="number" id="stopLossPnl" min="0" step="1"></div>
-            <div class="form-group"><label for="takeProfitPnl">TP ($)</label><input type="number" id="takeProfitPnl" min="0" step="1"></div>
-          </div>
-          <p class="api-hint hidden" id="slTpModeHint"></p>
-          <button type="button" id="confirmSlTpBtn" class="btn btn--simple-primary btn--block btn--sm">SL/TP 확인</button>
-          <p class="api-hint" id="slTpConfirmHint">확인 후 진입 가능</p>
-        </div>
-
-        <div class="control-section">
           <div class="control-section__label">전략</div>
+          <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
           <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
           <div class="strategy-slots">
             <div class="strategy-slots__header">
@@ -199,7 +212,7 @@
         </div>
 
         <details class="control-advanced">
-          <summary>고급 설정 · AI · 수동 주문</summary>
+          <summary>고급 설정 · 수동 주문</summary>
           <div class="control-advanced__body">
             <div class="form-group form-group--check hidden"><label><input type="checkbox" id="allowShort" checked> 숏 허용</label></div>
             <button type="button" id="exportStrategyBtn" class="btn btn--ghost btn--block btn--sm">전략 내보내기</button>
@@ -210,26 +223,6 @@
               <div class="form-group"><label for="rsiOversold">과매도</label><input type="number" id="rsiOversold" value="25" min="10" max="50"></div>
             </div>
             <div class="form-group"><label for="rsiOverbought">과매수</label><input type="number" id="rsiOverbought" value="70" min="50" max="90"></div>
-            <hr class="trading-divider">
-            <h2 class="trading-panel__title">AI 전략</h2>
-            <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
-            <div id="strategyAiDetails" class="strategy-ai-details"></div>
-            <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-            <div id="openaiApiKeyGroup" class="form-group"><label for="openaiApiKey">OpenAI Key</label><input type="password" id="openaiApiKey" autocomplete="off"></div>
-            <div class="strategy-ai-actions">
-              <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--block btn--sm">테스트</button>
-              <button type="button" id="strategyAiKeySaveBtn" class="btn btn--primary btn--block btn--sm">저장</button>
-              <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--block btn--sm">재검사</button>
-              <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--block btn--sm">대화 초기화</button>
-            </div>
-            <div id="strategyAiMessages" class="strategy-ai-messages"></div>
-            <div class="strategy-ai-quick">
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱">골든크로스</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱">RSI</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱">BB</button>
-            </div>
-            <div class="strategy-ai-target"><label for="strategyAiTargetSlot">슬롯</label><select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select></div>
-            <div class="strategy-ai-input"><textarea id="strategyAiInput" class="strategy-ai-text" rows="2"></textarea><button type="button" id="strategyAiSendBtn" class="btn btn--primary btn--block">적용</button></div>
             <hr class="trading-divider">
             <div class="indicator-toggles" id="chartIndicatorToggles">
               <button type="button" class="ind-toggle ind-toggle--off" data-chart-ind="ema">EMA</button>
@@ -257,6 +250,10 @@
           </div>
         </details>
 
+        <input type="hidden" id="stopLoss" value="1.5">
+        <input type="hidden" id="takeProfit" value="3">
+        <input type="hidden" id="stopLossPnl" value="">
+        <input type="hidden" id="takeProfitPnl" value="">
         <input type="hidden" id="macdFast" value="12">
         <input type="hidden" id="macdSlow" value="26">
         <input type="hidden" id="macdSignal" value="9">
@@ -299,7 +296,7 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260717v"></script>
+  <script src="js/futures-bot-app.js?v=20260718a"></script>
   <script src="js/strategy-ai.js?v=20260717d"></script>
 </body>
 </html>

@@ -478,6 +478,7 @@ const FuturesBotApp = (() => {
       lines.push(`· 손절 -${s.stopLossPct}% · 익절 +${s.takeProfitPct}% (진입가 기준, 동적 SL/TP 우선)`);
       lines.push('· 차트에 지표를 켜지 않아도 자동 계산됩니다');
       el.innerHTML = lines.filter(Boolean).join('<br>\n');
+      updateSlTpStrategyHint();
       return;
     }
     const shortLine = s.allowShort
@@ -488,6 +489,7 @@ const FuturesBotApp = (() => {
       shortLine,
       `· 손절 -${s.stopLossPct}% · 익절 +${s.takeProfitPct}% (진입가 기준)`,
     ].join('<br>\n');
+    updateSlTpStrategyHint();
   }
 
   function formatExitRulesSummary(exitRules) {
@@ -868,8 +870,8 @@ const FuturesBotApp = (() => {
 
     if (slTpChanged && !hasOpenPosition()) {
       slTpPreviewTouchedAt = Date.now();
-      resetSlTpConfirm();
-      addLog('AI가 SL/TP를 변경했습니다 — 진입하려면 SL/TP 확인 버튼을 다시 눌러주세요.', 'info');
+      autoConfirmSlTpFromStrategy({ log: true });
+      syncPreviewFromLastSignal();
     }
     scheduleServerStrategySync();
     return { applied: true };
@@ -878,6 +880,63 @@ const FuturesBotApp = (() => {
   function resetSlTpConfirm() {
     slTpConfirmed = false;
     updateConfirmSlTpUi();
+    updateSlTpStrategyHint();
+  }
+
+  function strategySlTpReady(side = lastPendingSide || 'LONG') {
+    readFormSettings();
+    if (state.useStopLoss !== false && !(state.stopLossPct > 0)) return false;
+    if (!(state.takeProfitPct > 0) && !state.exitRules) return false;
+    const entryPrice = state.lastPrice || lastCandles.at(-1)?.close;
+    if (!entryPrice) {
+      return state.stopLossPct > 0 && state.takeProfitPct > 0;
+    }
+    const levels = calcEntryLevels(side, entryPrice);
+    if (!levels?.takeProfitPrice) return false;
+    if (state.useStopLoss !== false && levels.stopPrice == null) return false;
+    return true;
+  }
+
+  function autoConfirmSlTpFromStrategy({ log = false } = {}) {
+    if (hasOpenPosition()) {
+      slTpConfirmed = true;
+      updateSlTpStrategyHint();
+      return true;
+    }
+    if (!strategySlTpReady()) {
+      slTpConfirmed = false;
+      updateSlTpStrategyHint();
+      return false;
+    }
+    slTpConfirmed = true;
+    updateConfirmSlTpUi();
+    updateSlTpStrategyHint();
+    if (log) {
+      const side = lastPendingSide || 'LONG';
+      const entryPrice = state.lastPrice || lastCandles.at(-1)?.close;
+      const levels = calcEntryLevels(side, entryPrice);
+      const slNote = levels?.stopPrice != null
+        ? `SL $${levels.stopPrice.toFixed(2)} · `
+        : '';
+      addLog(`전략 SL/TP 적용 — ${slNote}TP $${levels?.takeProfitPrice?.toFixed(2) ?? '—'}`, 'info');
+    }
+    return true;
+  }
+
+  function updateSlTpStrategyHint() {
+    const hint = $('#slTpStrategyHint');
+    if (!hint) return;
+    readFormSettings();
+    const exitHint = formatExitRulesSummary(state.exitRules);
+    if (exitHint) {
+      hint.textContent = `동적 SL/TP — ${exitHint}`;
+      return;
+    }
+    if (strategySlTpReady()) {
+      hint.textContent = `SL -${state.stopLossPct}% · TP +${state.takeProfitPct}% (AI 전략)`;
+      return;
+    }
+    hint.textContent = 'AI에게 SL/TP를 포함한 전략을 설정해 주세요.';
   }
 
   function confirmSlTp() {
@@ -1058,7 +1117,8 @@ const FuturesBotApp = (() => {
 
   function requireSlTpConfirmedForEntry() {
     if (hasOpenPosition() || slTpConfirmed) return true;
-    addLog('진입 보류: SL/TP 확인 버튼을 먼저 눌러주세요.', 'info');
+    if (autoConfirmSlTpFromStrategy()) return true;
+    addLog('진입 보류: AI 전략에 SL/TP를 설정해 주세요.', 'info');
     return false;
   }
 
@@ -1075,7 +1135,7 @@ const FuturesBotApp = (() => {
       await stopBot();
       addLog('안전을 위해 봇을 정지했습니다.', 'loss');
     }
-    addLog('거래가 차단되었습니다 — SL/TP 설정을 확인한 뒤 확인 버튼을 다시 눌러주세요.', 'loss');
+    addLog('거래가 차단되었습니다 — AI 전략의 SL/TP 설정을 확인해 주세요.', 'loss');
     await refreshTestnetStatus();
     updateUI();
   }
@@ -1507,9 +1567,9 @@ const FuturesBotApp = (() => {
       // still-active entry signal must not silently reopen the trade: drop the
       // SL/TP confirmation and pause auto entry until the current bar closes.
       if (slTpConfirmed) {
-        addLog('포지션 종료 감지 — 재진입하려면 SL/TP 확인 버튼을 다시 눌러주세요.', 'info');
+        addLog('포지션 종료 감지 — 전략 SL/TP로 재진입 대기', 'info');
       }
-      resetSlTpConfirm();
+      autoConfirmSlTpFromStrategy();
       slTpPreviewTouchedAt = 0;
     }
     return testnetStatus;
@@ -2215,8 +2275,8 @@ const FuturesBotApp = (() => {
       return;
     }
     if (hasOpenPosition()) return;
-    if (!slTpConfirmed) {
-      logEntrySkipOnce(`sltp:${key}`, `${result.signal} 신호 — SL/TP 확인 버튼을 눌러야 진입합니다.`);
+    if (!slTpConfirmed && !autoConfirmSlTpFromStrategy()) {
+      logEntrySkipOnce(`sltp:${key}`, `${result.signal} 신호 — AI 전략에 SL/TP가 필요합니다.`);
       return;
     }
     if (result.signal === 'SHORT' && !state.allowShort) {
@@ -2442,6 +2502,7 @@ const FuturesBotApp = (() => {
     $('#totalPnl').className = wallet.totalPnl >= 0 ? 'positive' : 'negative';
     updatePositionStopLine();
     updateConfirmSlTpUi();
+    updateSlTpStrategyHint();
   }
 
   async function executeSignal(result) {
@@ -3077,6 +3138,8 @@ const FuturesBotApp = (() => {
       Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
     }
     updateConfirmSlTpUi();
+    autoConfirmSlTpFromStrategy();
+    updateSlTpStrategyHint();
     syncPreviewFromLastSignal();
     if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 테스트넷 키 연결 가능', 'info');
 
@@ -3157,7 +3220,7 @@ const FuturesBotApp = (() => {
           syncOpenPositionSlTp();
         } else {
           slTpPreviewTouchedAt = Date.now();
-          resetSlTpConfirm();
+          autoConfirmSlTpFromStrategy();
           syncPreviewFromLastSignal();
         }
         scheduleServerStrategySync();
@@ -3180,7 +3243,7 @@ const FuturesBotApp = (() => {
         readFormSettings();
         if (!hasOpenPosition()) {
           slTpPreviewTouchedAt = Date.now();
-          resetSlTpConfirm();
+          autoConfirmSlTpFromStrategy();
           syncPreviewFromLastSignal();
         } else {
           syncOpenPositionSlTp();
