@@ -55,7 +55,7 @@ function recalcLevelsAtEntry(side, entryPrice, signalLevels, settings, context, 
     ...settings,
     stopLossPct: signalLevels.stopLossPct ?? settings?.stopLossPct,
     takeProfitPct: signalLevels.takeProfitPct ?? settings?.takeProfitPct,
-    useStopLoss: slOff ? false : settings?.useStopLoss !== false,
+    useStopLoss: !slOff,
   };
 
   const hasCtx = context?.candles && context.index != null;

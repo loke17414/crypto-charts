@@ -110,9 +110,6 @@
           </div>
         </div>
 
-        <div class="form-group form-group--check">
-          <label><input type="checkbox" id="useStopLoss" checked> 손절가(SL) 사용</label>
-        </div>
         <div class="bot-interval-picker">
           <span class="bot-interval-picker__label">SL/TP 설정 방식</span>
           <div class="bot-interval-picker__buttons" id="slTpModePicker" role="group" aria-label="SL/TP 설정 방식">
@@ -121,7 +118,7 @@
           </div>
         </div>
         <div class="form-row" id="slTpPctRow">
-          <div class="form-group" data-sl-field>
+          <div class="form-group">
             <label for="stopLoss">손절 SL (%)</label>
             <input type="number" id="stopLoss" value="1.5" min="0.1" max="50" step="0.1">
           </div>
@@ -131,7 +128,7 @@
           </div>
         </div>
         <div class="form-row hidden" id="slTpPnlRow">
-          <div class="form-group" data-sl-field>
+          <div class="form-group">
             <label for="stopLossPnl">손절 손실액 ($)</label>
             <input type="number" id="stopLossPnl" placeholder="예: 50" min="0" step="1">
           </div>
@@ -469,7 +466,7 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/futures-bot-app.js?v=20260717t"></script>
+  <script src="js/futures-bot-app.js?v=20260717u"></script>
   <script src="js/strategy-ai.js?v=20260717d"></script>
 </body>
 </html>

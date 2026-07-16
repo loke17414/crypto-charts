@@ -263,7 +263,7 @@ const FuturesBotApp = (() => {
       allowShort: state.allowShort,
       stopLossPct: state.stopLossPct,
       takeProfitPct: state.takeProfitPct,
-      useStopLoss: state.useStopLoss,
+      useStopLoss: true,
       entryRules: primaryEntryRulesFromState(),
       exitRules: state.exitRules,
       strategySlots: state.strategySlots?.length ? state.strategySlots : undefined,
@@ -286,7 +286,7 @@ const FuturesBotApp = (() => {
       allowShort: s.allowShort,
       stopLossPct: s.stopLossPct,
       takeProfitPct: s.takeProfitPct,
-      useStopLoss: s.useStopLoss,
+      useStopLoss: true,
       rsiPeriod: s.rsiPeriod,
       rsiOversold: s.rsiOversold,
       rsiOverbought: s.rsiOverbought,
@@ -748,16 +748,8 @@ const FuturesBotApp = (() => {
     if (touches('rsiOverbought')) setFieldValue('rsiOverbought', settings.rsiOverbought);
     if (touches('stopLossPct')) setFieldValue('stopLoss', settings.stopLossPct);
     if (touches('takeProfitPct')) setFieldValue('takeProfit', settings.takeProfitPct);
-    if (touches('useStopLoss')) {
-      const el = $('#useStopLoss');
-      const on = settings.useStopLoss !== false;
-      if (el) el.checked = on;
-      state.useStopLoss = on;
-      localStorage.setItem(USE_STOP_LOSS_KEY, String(on));
-      if (!on) positionStopPrice = null;
-    }
     const pctSlTpChanged = touches('stopLossPct') || touches('takeProfitPct');
-    const slTpChanged = pctSlTpChanged || touches('useStopLoss') || touches('exitRules');
+    const slTpChanged = pctSlTpChanged || touches('exitRules');
     if (pctSlTpChanged && state.slTpMode !== 'pct') {
       setSlTpMode('pct');
       addLog('AI가 SL/TP를 %기준으로 설정 — SL/TP 입력 방식을 % 비율로 전환했습니다.', 'info');
@@ -892,9 +884,9 @@ const FuturesBotApp = (() => {
     slTpConfirmed = true;
     slTpPreviewTouchedAt = Date.now();
     updateConfirmSlTpUi();
-    const slNote = state.useStopLoss && levels.stopPrice != null
+    const slNote = levels.stopPrice != null
       ? `SL $${levels.stopPrice.toFixed(2)} · `
-      : '손절 없음 · ';
+      : '';
     addLog(`SL/TP 확인 — ${slNote}TP $${levels.takeProfitPrice.toFixed(2)}`, 'info');
     scheduleServerStrategySync();
   }
@@ -911,23 +903,14 @@ const FuturesBotApp = (() => {
       return;
     }
     btn.disabled = false;
-    const slOff = state.useStopLoss === false;
     if (slTpConfirmed) {
-      btn.textContent = slOff ? 'TP 확인됨 ✓' : 'SL/TP 확인됨 ✓';
+      btn.textContent = 'SL/TP 확인됨 ✓';
       btn.className = 'btn btn--ghost btn--block btn--sm';
-      if (hint) {
-        hint.textContent = slOff
-          ? '확인 완료 — 손절 없이 익절(TP)만 적용됩니다.'
-          : '확인 완료 — 봇/수동 진입 시 이 SL/TP가 적용됩니다.';
-      }
+      if (hint) hint.textContent = '확인 완료 — 봇/수동 진입 시 이 SL/TP가 적용됩니다.';
     } else {
-      btn.textContent = slOff ? 'TP 확인' : 'SL/TP 확인';
+      btn.textContent = 'SL/TP 확인';
       btn.className = 'btn btn--primary btn--block btn--sm';
-      if (hint) {
-        hint.textContent = slOff
-          ? '익절(TP)을 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.'
-          : 'SL/TP를 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.';
-      }
+      if (hint) hint.textContent = 'SL/TP를 설정한 뒤 확인 버튼을 눌러야 진입할 수 있습니다.';
     }
   }
 
@@ -1012,8 +995,6 @@ const FuturesBotApp = (() => {
 
   function applySlTpDrag({ role, price, side, entryPrice, stopPrice, takeProfitPrice }) {
     readFormSettings();
-    if (role === 'sl' && state.useStopLoss === false) return;
-    if (state.useStopLoss === false) stopPrice = null;
     syncModeFieldsFromDrag(side, entryPrice, stopPrice, takeProfitPrice);
     readFormSettings();
 
@@ -1091,7 +1072,6 @@ const FuturesBotApp = (() => {
   }
 
   const SLTP_MODE_KEY = 'crypto-charts-sltp-mode';
-  const USE_STOP_LOSS_KEY = 'crypto-charts-use-stop-loss';
   const SLTP_MODE_HINTS = {
     pct: '진입가 대비 % 거리 — 진입 전 미리보기가 현재가를 따라갑니다.',
     pnl: '손익 금액(USDT) 기준 — 예상 포지션 규모로 %를 환산하며 현재가를 따라갑니다.',
@@ -1116,17 +1096,6 @@ const FuturesBotApp = (() => {
     if (hint) hint.textContent = SLTP_MODE_HINTS[mode];
     if (persist) localStorage.setItem(SLTP_MODE_KEY, mode);
     state.slTpMode = mode;
-  }
-
-  function updateUseStopLossUi() {
-    const on = state.useStopLoss !== false;
-    document.querySelectorAll('[data-sl-field]').forEach((el) => {
-      el.classList.toggle('hidden', !on);
-    });
-  }
-
-  function chartStopPrice(stopPrice) {
-    return state.useStopLoss === false ? null : stopPrice;
   }
 
   function calcEntryLevels(side, price = state.lastPrice || lastCandles.at(-1)?.close) {
@@ -1233,14 +1202,14 @@ const FuturesBotApp = (() => {
       side = testnetStatus.position.side;
       entryPrice = testnetStatus.position.entryPrice;
       // Prefer exchange-registered trigger prices (source of truth on Binance).
-      stopPrice = chartStopPrice(testnetStatus.position.stopPrice ?? positionStopPrice);
+      stopPrice = testnetStatus.position.stopPrice ?? positionStopPrice;
       takeProfitPrice = testnetStatus.position.takeProfitPrice ?? positionTakeProfitPrice;
     } else {
       const pos = FuturesPaper.getPosition();
       if (pos) {
         side = pos.side;
         entryPrice = pos.entryPrice;
-        stopPrice = chartStopPrice(pos.stopPrice ?? positionStopPrice);
+        stopPrice = pos.stopPrice ?? positionStopPrice;
         takeProfitPrice = pos.takeProfitPrice ?? positionTakeProfitPrice;
       }
     }
@@ -1336,13 +1305,7 @@ const FuturesBotApp = (() => {
     const price = state.lastPrice;
     if (isTestnetMode()) {
       await refreshTestnetStatus();
-      const bal = testnetStatus?.balance ?? 0;
-      const pos = testnetStatus?.position;
-      if (pos) {
-        const margin = (pos.quantity * pos.entryPrice) / (pos.leverage || state.leverage);
-        return bal + margin + (pos.unrealizedPnl ?? 0);
-      }
-      return bal;
+      return testnetStatus?.walletBalance ?? testnetStatus?.balance ?? 0;
     }
     return FuturesPaper.getEquity(price);
   }
@@ -1474,8 +1437,7 @@ const FuturesBotApp = (() => {
   //  - pnl:   USDT amounts converted via the planned position notional
   function readSlTpSettings() {
     state.slTpMode = getSlTpMode();
-    state.useStopLoss = $('#useStopLoss')?.checked !== false;
-    updateUseStopLossUi();
+    state.useStopLoss = true;
     const pctSl = parseFloat($('#stopLoss')?.value) || 1.5;
     const pctTp = parseFloat($('#takeProfit')?.value) || 3;
     state.stopLossPct = pctSl;
@@ -1486,7 +1448,7 @@ const FuturesBotApp = (() => {
       const tpPnl = parseFloat($('#takeProfitPnl')?.value);
       const notional = estimatePlannedNotional();
       if (notional > 0) {
-        if (state.useStopLoss !== false && Number.isFinite(slPnl) && slPnl > 0) {
+        if (Number.isFinite(slPnl) && slPnl > 0) {
           state.stopLossPct = Math.min(50, Math.max(0.05, (slPnl / notional) * 100));
         }
         if (Number.isFinite(tpPnl) && tpPnl > 0) {
@@ -1499,13 +1461,7 @@ const FuturesBotApp = (() => {
   // Equity from cached status (no network) — good enough for previews.
   function estimateEquitySync() {
     if (isTestnetMode()) {
-      const bal = testnetStatus?.balance ?? 0;
-      const pos = testnetStatus?.position;
-      if (pos) {
-        const margin = (pos.quantity * pos.entryPrice) / (pos.leverage || state.leverage);
-        return bal + margin + (pos.unrealizedPnl ?? 0);
-      }
-      return bal;
+      return testnetStatus?.walletBalance ?? testnetStatus?.balance ?? 0;
     }
     return FuturesPaper.getEquity(state.lastPrice);
   }
@@ -1917,7 +1873,7 @@ const FuturesBotApp = (() => {
     if (state.slTpMode === 'pnl') {
       return {
         ...keyed,
-        stopLossPct: state.useStopLoss === false ? 'off' : `pnl:${$('#stopLossPnl')?.value ?? ''}`,
+        stopLossPct: `pnl:${$('#stopLossPnl')?.value ?? ''}`,
         takeProfitPct: `pnl:${$('#takeProfitPnl')?.value ?? ''}`,
       };
     }
@@ -3220,30 +3176,6 @@ const FuturesBotApp = (() => {
     }
 
     $('#confirmSlTpBtn')?.addEventListener('click', () => confirmSlTp());
-
-    const useStopLossEl = $('#useStopLoss');
-    if (useStopLossEl) {
-      const savedUseSl = localStorage.getItem(USE_STOP_LOSS_KEY);
-      if (savedUseSl != null) useStopLossEl.checked = savedUseSl !== 'false';
-      useStopLossEl.addEventListener('change', () => {
-        readFormSettings();
-        localStorage.setItem(USE_STOP_LOSS_KEY, String(state.useStopLoss !== false));
-        if (state.useStopLoss === false) positionStopPrice = null;
-        resetSlTpConfirm();
-        scheduleServerStrategySync();
-        slTpPreviewTouchedAt = Date.now();
-        if (hasOpenPosition()) {
-          syncOpenPositionSlTp();
-          scheduleExchangeSlTpSync();
-          updatePositionOverlay();
-        } else {
-          syncPreviewFromLastSignal();
-        }
-        scheduleBacktest(lastCandles);
-        updateConfirmSlTpUi();
-        updateUI();
-      });
-    }
 
     ['leverage', 'emaFast', 'emaSlow', 'useMacd', 'macdFast', 'macdSlow', 'macdSignal',
       'useMacdLineFilter', 'macdLongMin', 'macdShortMax',

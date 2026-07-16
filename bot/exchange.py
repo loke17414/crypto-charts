@@ -90,6 +90,16 @@ class BinanceFuturesClient:
                 return float(b["balance"])
         return 0.0
 
+    def get_account_equity(self) -> float:
+        data = self._request("GET", "/fapi/v2/account", signed=True)
+        margin = float(data.get("totalMarginBalance", 0) or 0)
+        if margin > 0:
+            return margin
+        wallet = float(data.get("totalWalletBalance", 0) or 0)
+        if wallet > 0:
+            return wallet
+        return self.get_total_equity()
+
     def get_usdt_balance(self) -> float:
         balances = self._request("GET", "/fapi/v2/balance", signed=True)
         for b in balances:

@@ -91,6 +91,18 @@ class BinanceFuturesClient {
   }
 
   async getTotalEquity() {
+    return this.getAccountEquity();
+  }
+
+  /** Account equity for risk sizing (margin balance incl. unrealized PnL). */
+  async getAccountEquity() {
+    try {
+      const acct = await this._request('GET', '/fapi/v2/account', {}, true);
+      const marginBal = parseFloat(acct.totalMarginBalance);
+      if (Number.isFinite(marginBal) && marginBal > 0) return marginBal;
+      const wallet = parseFloat(acct.totalWalletBalance);
+      if (Number.isFinite(wallet) && wallet > 0) return wallet;
+    } catch { /* fall back */ }
     const balances = await this._request('GET', '/fapi/v2/balance', {}, true);
     const usdt = balances.find((b) => b.asset === 'USDT');
     return usdt ? parseFloat(usdt.balance) : 0;

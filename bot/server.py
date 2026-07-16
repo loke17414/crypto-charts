@@ -368,12 +368,14 @@ def status() -> dict[str, Any]:
 
     client = _session.client
     balance = client.get_usdt_balance()
+    wallet_balance = client.get_account_equity()
     pos = client.get_position()
 
     result: dict[str, Any] = {
         "connected": True,
         "testnet": True,
         "balance": balance,
+        "walletBalance": wallet_balance,
         "symbol": _session.config.symbol,
         "leverage": _session.config.leverage,
         "position": None,

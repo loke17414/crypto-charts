@@ -204,7 +204,7 @@ function maybeReloadStrategy() {
   const st = cfg.settings;
   st.stopLossPct = num(s.stopLossPct, st.stopLossPct);
   st.takeProfitPct = num(s.takeProfitPct, st.takeProfitPct);
-  st.useStopLoss = s.useStopLoss !== false;
+  st.useStopLoss = true;
   if (s.allowShort !== undefined) st.allowShort = Boolean(s.allowShort);
   st.rsiPeriod = num(s.rsiPeriod, st.rsiPeriod);
   st.rsiOversold = num(s.rsiOversold, st.rsiOversold);
@@ -244,8 +244,6 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
   try {
   const equity = await getEquity(price);
   const available = await getAvailableMargin();
-  // Wallet balance can exceed free margin (open orders, other symbols, locks).
-  const sizingEquity = cfg.dryRun ? equity : Math.min(equity, available);
   const sizingLevels = recalcLevelsAtEntry(
     side,
     price,
@@ -254,25 +252,21 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     { candles, index },
     FuturesStrategy.calcEntryLevels,
   );
+  const slPct = RiskSizing.resolveStopLossPctForSizing(sizingLevels, cfg.settings.stopLossPct);
+  if (slPct == null || slPct <= 0) {
+    log('진입 생략 — SL % 없음 (1회 리스크 계산 불가)', 'WARN');
+    return;
+  }
   const riskSettings = {
     riskPerTradePct: cfg.riskPerTradePct,
     leverage: cfg.leverage,
-    stopLossPct: cfg.settings.stopLossPct,
+    stopLossPct: slPct,
   };
-  const plan = RiskSizing.summarizeRiskPlan(sizingEquity, riskSettings, sizingLevels);
-  if (plan.sizedWithoutSl) {
-    // SL off — risk-based sizing impossible; entry proceeds with the UI's
-    // PnL-mode convention: margin = equity × risk%. Never skip the entry.
-    log(
-      `리스크 계획 — SL 없음(손절 OFF) → 증거금 = 가용 ${plan.riskPerTradePct}% = $${plan.margin.toFixed(2)} (가용 $${available.toFixed(2)})`,
-      'INFO',
-    );
-  } else {
-    log(
-      `리스크 계획 — SL ${plan.stopLossPct.toFixed(2)}% · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 가용 ${plan.riskPerTradePct}%) · 가용 $${available.toFixed(2)}`,
-      'INFO',
-    );
-  }
+  const plan = RiskSizing.summarizeRiskPlan(equity, riskSettings, sizingLevels);
+  log(
+    `리스크 계획 — SL ${slPct.toFixed(2)}% · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 계좌 ${plan.riskPerTradePct}%) · 계좌 $${equity.toFixed(2)} · 가용 $${available.toFixed(2)}`,
+    'INFO',
+  );
 
   if (cfg.dryRun) {
     let notional = plan.notional;
@@ -311,8 +305,9 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     return;
   }
   if (fit.notional + 1 < plan.notional) {
+    const fitLoss = RiskSizing.estimateLossAtSl(fit.marginReq, cfg.leverage, slPct);
     log(
-      `증거금 한도 — 계획 $${plan.notional.toFixed(0)} → $${fit.notional.toFixed(0)} (증거금 $${fit.marginReq.toFixed(2)} / 가용 $${available.toFixed(2)})`,
+      `증거금 한도 — 계획 $${plan.notional.toFixed(0)} → $${fit.notional.toFixed(0)} (SL손실 $${fitLoss.toFixed(2)} / 목표 $${plan.targetLoss.toFixed(2)})`,
       'WARN',
     );
   }
