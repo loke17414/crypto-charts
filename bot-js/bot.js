@@ -243,6 +243,9 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
   const settingsForLevels = levelSettings || cfg.settings;
   try {
   const equity = await getEquity(price);
+  const available = await getAvailableMargin();
+  // Wallet balance can exceed free margin (open orders, other symbols, locks).
+  const sizingEquity = cfg.dryRun ? equity : Math.min(equity, available);
   const sizingLevels = recalcLevelsAtEntry(
     side,
     price,
@@ -256,51 +259,25 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     leverage: cfg.leverage,
     stopLossPct: cfg.settings.stopLossPct,
   };
-  const plan = RiskSizing.summarizeRiskPlan(equity, riskSettings, sizingLevels);
+  const plan = RiskSizing.summarizeRiskPlan(sizingEquity, riskSettings, sizingLevels);
   if (plan.sizedWithoutSl) {
     // SL off — risk-based sizing impossible; entry proceeds with the UI's
     // PnL-mode convention: margin = equity × risk%. Never skip the entry.
     log(
-      `리스크 계획 — SL 없음(손절 OFF) → 증거금 = 원금 ${plan.riskPerTradePct}% = $${plan.margin.toFixed(2)}`,
+      `리스크 계획 — SL 없음(손절 OFF) → 증거금 = 가용 ${plan.riskPerTradePct}% = $${plan.margin.toFixed(2)} (가용 $${available.toFixed(2)})`,
       'INFO',
     );
   } else {
     log(
-      `리스크 계획 — SL ${plan.stopLossPct.toFixed(2)}% · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 원금 ${plan.riskPerTradePct}%)`,
+      `리스크 계획 — SL ${plan.stopLossPct.toFixed(2)}% · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 가용 ${plan.riskPerTradePct}%) · 가용 $${available.toFixed(2)}`,
       'INFO',
     );
   }
 
-  const available = await getAvailableMargin();
-  let notional = plan.notional;
-  const maxNotional = available * cfg.leverage;
-  if (notional > maxNotional) {
-    notional = maxNotional;
-    const cappedMargin = notional / cfg.leverage;
-    const cappedLoss = RiskSizing.estimateLossAtSl(cappedMargin, cfg.leverage, plan.stopLossPct);
-    log(
-      `증거금 부족 — 계획 $${plan.margin.toFixed(2)} → 사용 $${cappedMargin.toFixed(2)} (SL손실 $${cappedLoss.toFixed(2)} < 목표 $${plan.targetLoss.toFixed(2)})`,
-      'WARN',
-    );
-  }
-  const minNotional = cfg.dryRun ? 5 : await client.minViableNotional(price);
-  if (notional < minNotional) {
-    if (maxNotional >= minNotional) {
-      log(
-        `주문 최소 수량 맞춤 — $${notional.toFixed(2)} → $${minNotional.toFixed(2)} (거래소 LOT_SIZE/MIN_NOTIONAL)`,
-        'WARN',
-      );
-      notional = minNotional;
-    } else {
-      log(
-        `진입 생략 — 최소 주문 약 $${minNotional.toFixed(0)} 필요, 사용 가능 $${maxNotional.toFixed(2)} (잔고 $${available.toFixed(2)} × ${cfg.leverage}x). 리스크%·레버리지·잔고를 확인하세요.`,
-        'WARN',
-      );
-      return;
-    }
-  }
-
   if (cfg.dryRun) {
+    let notional = plan.notional;
+    const minNotional = 5;
+    if (notional < minNotional) notional = minNotional;
     const qty = Number((notional / price).toFixed(3));
     const usedMargin = (qty * price) / cfg.leverage;
     // Same fill price as the sizing calc — reuse instead of recomputing.
@@ -323,10 +300,42 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     return;
   }
 
-  const qty = await client.calcQuantity(notional, price);
+  let fit = await client.fitOrderToAvailable(plan.notional, price, cfg.leverage, available);
+  if (!fit) {
+    const minNot = await client.minViableNotional(price);
+    const needMargin = minNot / cfg.leverage;
+    log(
+      `진입 생략 — 가용 증거금 $${available.toFixed(2)}로 최소 주문 불가 (약 $${minNot.toFixed(0)} 포지션 / $${needMargin.toFixed(0)} 증거금 필요, ${cfg.leverage}x). 테스트넷 USDT를 충전하거나 레버리지를 올리세요.`,
+      'WARN',
+    );
+    return;
+  }
+  if (fit.notional + 1 < plan.notional) {
+    log(
+      `증거금 한도 — 계획 $${plan.notional.toFixed(0)} → $${fit.notional.toFixed(0)} (증거금 $${fit.marginReq.toFixed(2)} / 가용 $${available.toFixed(2)})`,
+      'WARN',
+    );
+  }
+
   await client.setupLeverageAndMargin();
-  if (side === 'LONG') await client.openLong(qty);
-  else await client.openShort(qty);
+  let qty = fit.qty;
+  try {
+    if (side === 'LONG') await client.openLong(qty);
+    else await client.openShort(qty);
+  } catch (err) {
+    if (!String(err.message).includes('Margin is insufficient')) throw err;
+    const refreshed = await getAvailableMargin();
+    fit = await client.fitOrderToAvailable(plan.notional * 0.85, price, cfg.leverage, refreshed, { safety: 0.92 });
+    if (!fit) {
+      throw new Error(
+        `Margin is insufficient — 가용 $${refreshed.toFixed(2)}, 필요 약 $${(plan.notional / cfg.leverage).toFixed(2)}. 테스트넷 잔고를 확인하세요.`,
+      );
+    }
+    log(`증거금 부족 — $${fit.notional.toFixed(0)} (${fit.qty} BTC)로 재시도`, 'WARN');
+    qty = fit.qty;
+    if (side === 'LONG') await client.openLong(qty);
+    else await client.openShort(qty);
+  }
 
   const live = await client.getPosition();
   const entryPrice = live ? live.entryPrice : price;

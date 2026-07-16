@@ -97,6 +97,16 @@ class BinanceFuturesClient {
   }
 
   async getUsdtBalance() {
+    return this.getAvailableBalance();
+  }
+
+  /** Free USDT margin for new orders (account-level, most accurate). */
+  async getAvailableBalance() {
+    try {
+      const acct = await this._request('GET', '/fapi/v2/account', {}, true);
+      const avail = parseFloat(acct.availableBalance);
+      if (Number.isFinite(avail) && avail >= 0) return avail;
+    } catch { /* fall back to asset balance */ }
     const balances = await this._request('GET', '/fapi/v2/balance', {}, true);
     const usdt = balances.find((b) => b.asset === 'USDT');
     return usdt ? parseFloat(usdt.availableBalance) : 0;
@@ -186,6 +196,42 @@ class BinanceFuturesClient {
     const f = await this.getSymbolFilters();
     const fromQty = f.minQty * price;
     return Math.max(f.minNotional, fromQty);
+  }
+
+  /**
+   * Size a market order to fit free margin (initial margin + fee headroom).
+   * Returns null when even the exchange minimum cannot be afforded.
+   */
+  async fitOrderToAvailable(desiredNotional, price, leverage, availableUsdt, { safety = 0.96 } = {}) {
+    if (!(price > 0) || !(leverage > 0) || !(availableUsdt > 0)) return null;
+    const f = await this.getSymbolFilters();
+    const minNotional = Math.max(f.minNotional, f.minQty * price);
+    const maxNotional = availableUsdt * leverage * safety;
+    if (maxNotional < minNotional) return null;
+
+    let notional = Math.min(Math.max(desiredNotional, 0), maxNotional);
+    if (notional < minNotional) notional = minNotional;
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      notional = Math.min(notional, maxNotional);
+      if (notional < minNotional) return null;
+
+      let qty = BinanceFuturesClient._roundStep(notional / price, f.stepSize);
+      if (qty < f.minQty) {
+        qty = f.minQty;
+      }
+      const actualNotional = qty * price;
+      if (actualNotional < f.minNotional) {
+        notional = minNotional * 1.02;
+        continue;
+      }
+      const marginReq = actualNotional / leverage;
+      if (marginReq <= availableUsdt * safety) {
+        return { qty, notional: actualNotional, marginReq };
+      }
+      notional *= 0.9;
+    }
+    return null;
   }
 
   async calcQuantity(notionalUsdt, price) {
