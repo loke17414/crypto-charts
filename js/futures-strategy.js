@@ -347,23 +347,6 @@ const FuturesStrategy = (() => {
     const warmupBars = Math.max(300, minStart * 3);
     const span = segmentSpanSec(candles);
 
-    function closePosition(candle, reason, exitPrice = candle.close) {
-      const pnlPct = calcPnlPct(position.side, position.entryPrice, exitPrice);
-      trades.push({
-        side: position.side,
-        entryTime: position.entryTime,
-        entryPrice: position.entryPrice,
-        exitTime: candle.time,
-        exitPrice,
-        stopPrice: position.stopPrice,
-        takeProfitPrice: position.takeProfitPrice,
-        pnlPct,
-        reason,
-        slotName: position.slotName ?? null,
-      });
-      position = null;
-    }
-
     function openPosition(candle, side, levels, slotName = null) {
       position = {
         side,
@@ -393,16 +376,34 @@ const FuturesStrategy = (() => {
       }
     }
 
-    // 각 구간은 독립 시뮬레이션 (시간순, 구간 안에서도 과거 → 최신으로 진행).
-    // 구간 앞 warmupBars봉은 지표 계산 컨텍스트로만 쓰고 진입은 평가하지 않는다.
-    // maxTrades는 루프 중간에 끊지 않는다 — 오래된 구간에서 N건을 채우고 멈추면
-    // kept = slice(-N)이 최신 거래가 아닌 과거 거래만 남아 차트 오른쪽에 마커가 없다.
-    for (const [from, to] of segments) {
+    // maxTrades가 있으면 최신 구간부터 역순으로 돌린다. 더 오래된 구간은
+    // slice(-N) 결과에 포함되지 않으므로, N건을 채우면 조기 종료해도 안전하다.
+    const segmentOrder = maxTrades != null ? segments.slice().reverse() : segments;
+
+    for (const [from, to] of segmentOrder) {
       const ctxStart = Math.max(0, from - warmupBars);
       const ctx = candles.slice(ctxStart, to);
       const { slots, rules, cache, startIdx: warmupIdx } = StrategyEngine.prepareBacktest(ctx, settings);
       const startLocal = Math.max(from - ctxStart, warmupIdx, minStart);
       position = null;
+      const segTrades = [];
+
+      const closeSegPosition = (candle, reason, exitPrice = candle.close) => {
+        const pnlPct = calcPnlPct(position.side, position.entryPrice, exitPrice);
+        segTrades.push({
+          side: position.side,
+          entryTime: position.entryTime,
+          entryPrice: position.entryPrice,
+          exitTime: candle.time,
+          exitPrice,
+          stopPrice: position.stopPrice,
+          takeProfitPrice: position.takeProfitPrice,
+          pnlPct,
+          reason,
+          slotName: position.slotName ?? null,
+        });
+        position = null;
+      };
 
       for (let i = startLocal; i < ctx.length; i++) {
         const candle = ctx[i];
@@ -415,7 +416,7 @@ const FuturesStrategy = (() => {
             takeProfitPct: position.takeProfitPct,
           });
           if (slTp) {
-            closePosition(candle, slTp.reason, slTp.exitPrice);
+            closeSegPosition(candle, slTp.reason, slTp.exitPrice);
             continue;
           }
         }
@@ -435,9 +436,13 @@ const FuturesStrategy = (() => {
         }
       }
 
-      // 구간 끝에서 아직 열려 있는 포지션은 세지 않는다 — 미래 데이터에 따라
-      // 결과가 달라질 수 있는 거래를 확정하지 않아야 횟수가 안정적이다.
       position = null;
+      if (maxTrades != null) {
+        trades = segTrades.concat(trades);
+        if (trades.length >= maxTrades) break;
+      } else {
+        trades.push(...segTrades);
+      }
     }
 
     const totalTrades = trades.length;

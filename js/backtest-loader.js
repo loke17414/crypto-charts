@@ -90,12 +90,23 @@ const BacktestLoader = (() => {
     return { candles: merged, pagesFetched, hitEnd };
   }
 
+  function tradeProgress(candles, settings, targetTrades) {
+    const stats = window.BacktestRunner?.runBacktestProbe
+      ? BacktestRunner.runBacktestProbe(candles, settings, targetTrades)
+      : FuturesStrategy.backtest(candles, settings, {
+        maxTrades: targetTrades,
+        skipMarkers: true,
+      }).stats;
+    if (!stats) return { totalTrades: 0, targetReached: false };
+    const totalTrades = stats.totalTrades ?? stats.trades;
+    return {
+      totalTrades,
+      targetReached: stats.targetReached === true || totalTrades >= targetTrades,
+    };
+  }
+
   function countTrades(candles, settings, targetTrades) {
-    const { stats } = FuturesStrategy.backtest(candles, settings, {
-      maxTrades: targetTrades,
-      skipMarkers: true,
-    });
-    return stats.totalTrades ?? stats.trades;
+    return tradeProgress(candles, settings, targetTrades).totalTrades;
   }
 
   // 데이터는 항상 "최신(시드의 최신 봉) → 과거" 방향으로만 확장한다.
@@ -106,10 +117,13 @@ const BacktestLoader = (() => {
     if (!candles.length) return { candles, exhausted: true, trades: 0 };
 
     let pagesUsed = seedCandles.length ? Math.max(1, Math.ceil(candles.length / PAGE_SIZE)) : 1;
-    let found = countTrades(candles, settings, targetTrades);
+    let progress = tradeProgress(candles, settings, targetTrades);
+    let found = progress.totalTrades;
     let budget = maxPagesForTarget(targetTrades);
     let exhausted = false;
     let noGainRounds = 0;
+    const NO_GAIN_LIMIT = 4;
+    const MIN_PAGES_BEFORE_NO_GAIN_EXHAUST = 8;
 
     const report = (loading, extra = {}) => {
       if (!onProgress) return;
@@ -126,7 +140,7 @@ const BacktestLoader = (() => {
     };
     report(true);
 
-    while (found < targetTrades && pagesUsed < budget && !exhausted) {
+    while (!progress.targetReached && pagesUsed < budget && !exhausted) {
       if (shouldStop?.()) break;
       const beforeLen = candles.length;
       const beforeFound = found;
@@ -153,12 +167,14 @@ const BacktestLoader = (() => {
       }
 
       report(true, { phase: 'compute' });
-      found = countTrades(candles, settings, targetTrades);
+      progress = tradeProgress(candles, settings, targetTrades);
+      found = progress.totalTrades;
+      if (progress.targetReached) break;
 
       if (found <= beforeFound) {
         noGainRounds += 1;
-        // 더 오래된 데이터를 받아도 거래 수가 늘지 않으면 히스토리 소진.
-        if (noGainRounds >= 1) {
+        // Segment backtest can need several past pages before older trades appear.
+        if (noGainRounds >= NO_GAIN_LIMIT && pagesUsed >= MIN_PAGES_BEFORE_NO_GAIN_EXHAUST) {
           exhausted = true;
           break;
         }
@@ -168,7 +184,7 @@ const BacktestLoader = (() => {
       report(true);
     }
 
-    if (found < targetTrades && pagesUsed >= budget) {
+    if (!progress.targetReached && pagesUsed >= budget) {
       exhausted = true;
     }
 

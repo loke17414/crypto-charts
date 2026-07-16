@@ -271,14 +271,35 @@
     const n = candles.length;
     const highs = new Array(n);
     const lows = new Array(n);
+    const pivotHighIdx = [];
+    const pivotLowIdx = [];
+    for (let i = pivotBars; i < n - pivotBars; i++) {
+      if (isPivotHighAt(candles, i, pivotBars)) pivotHighIdx.push(i);
+      if (isPivotLowAt(candles, i, pivotBars)) pivotLowIdx.push(i);
+    }
+    let hiPi = 0;
+    let loPi = 0;
     for (let i = 0; i < n; i++) {
       if (i < pivotBars * 2 + 1) {
         highs[i] = lows[i] = null;
         continue;
       }
-      const levels = swingLevelsAsOf(candles, i, pivotBars, lookback);
-      highs[i] = levels.high;
-      lows[i] = levels.low;
+      const searchEnd = i - pivotBars;
+      const searchStart = Math.max(pivotBars, i - lookback);
+      while (hiPi < pivotHighIdx.length && pivotHighIdx[hiPi] <= searchEnd) hiPi += 1;
+      while (loPi < pivotLowIdx.length && pivotLowIdx[loPi] <= searchEnd) loPi += 1;
+      let high = null;
+      let low = null;
+      if (hiPi > 0) {
+        const idx = pivotHighIdx[hiPi - 1];
+        if (idx >= searchStart) high = candles[idx].high;
+      }
+      if (loPi > 0) {
+        const idx = pivotLowIdx[loPi - 1];
+        if (idx >= searchStart) low = candles[idx].low;
+      }
+      highs[i] = high;
+      lows[i] = low;
     }
     return { highs, lows };
   }
@@ -346,7 +367,8 @@
     const bearish = new Array(n).fill(false);
     const start = Math.max(lookback + period, 20);
     for (let i = start; i < n; i++) {
-      const div = detectDivergence(candles.slice(0, i + 1), { indicator, period, lookback });
+      const sliceStart = Math.max(0, i + 1 - lookback);
+      const div = detectDivergence(candles.slice(sliceStart, i + 1), { indicator, period, lookback });
       bullish[i] = div.bullish;
       bearish[i] = div.bearish;
     }

@@ -18,6 +18,42 @@ const BacktestRunner = (() => {
   let explicitRunActive = false;
   let lastError = null;
   let lastInvalidatedKey = null;
+  const PROBE_MEMO_MAX = 32;
+  const probeMemo = new Map();
+  const probeMemoOrder = [];
+
+  function candleSignature(candles) {
+    if (!candles?.length) return '0';
+    return `${candles.length}:${candles[0].time}:${candles.at(-1).time}`;
+  }
+
+  function rememberProbeMemo(key, stats) {
+    probeMemo.set(key, stats);
+    probeMemoOrder.push(key);
+    if (probeMemoOrder.length > PROBE_MEMO_MAX) {
+      const old = probeMemoOrder.shift();
+      probeMemo.delete(old);
+    }
+  }
+
+  function clearProbeMemo() {
+    probeMemo.clear();
+    probeMemoOrder.length = 0;
+  }
+
+  function runBacktestProbe(candles, settings, targetTrades) {
+    if (!window.FuturesStrategy?.backtest || !candles?.length) return null;
+    const interval = deps?.getInterval?.() || '1h';
+    const settingsKey = deps?.getCacheKey?.() || cacheKey(interval, targetTrades, settings);
+    const memoKey = `${settingsKey}:${candleSignature(candles)}:${targetTrades}`;
+    if (probeMemo.has(memoKey)) return probeMemo.get(memoKey);
+    const { stats } = FuturesStrategy.backtest(candles, settings, {
+      maxTrades: targetTrades,
+      skipMarkers: true,
+    });
+    rememberProbeMemo(memoKey, stats);
+    return stats;
+  }
 
   function configure(hooks) {
     deps = hooks;
@@ -56,46 +92,54 @@ const BacktestRunner = (() => {
     inFlightKey = null;
     explicitRunActive = false;
     lastError = null;
+    clearProbeMemo();
     deps.onInvalidate?.(message);
   }
 
-  async function resolveCandles(chartCandles, settings, targetTrades, onProgress, localRunId) {
+  function targetReachedStats(stats, targetTrades) {
+    const total = stats.totalTrades ?? stats.trades;
+    return stats.targetReached === true || total >= targetTrades;
+  }
+
+  async function resolveCandles(chartCandles, settings, targetTrades, onProgress, localRunId, { forceRetry = false } = {}) {
     const interval = deps.getInterval();
     const rawSource = chartCandles?.length ? chartCandles : (deps.getChartCandles() || []);
     const chartSource = closedCandlesOnly(rawSource, interval);
 
     let stats;
     try {
-      ({ stats } = FuturesStrategy.backtest(chartSource, settings, {
-        maxTrades: targetTrades,
-        skipMarkers: true,
-      }));
+      stats = runBacktestProbe(chartSource, settings, targetTrades);
+      if (!stats) throw new Error('백테스트 엔진 없음');
     } catch (err) {
       throw new Error(`백테스트 엔진 오류: ${err.message}`);
     }
 
-    if (stats.trades >= targetTrades || !window.BacktestLoader) {
+    if (targetReachedStats(stats, targetTrades) || !window.BacktestLoader) {
       return { source: chartSource, fromCache: false, historyExhausted: false };
     }
 
     const key = cacheKey(interval, targetTrades, settings);
     let seed = chartSource;
-    let seedTrades = stats.trades;
+    let seedTrades = stats.totalTrades ?? stats.trades;
     let historyExhausted = false;
 
     if (historyCache?.key === key) {
       const merged = mergeCandlesByTime(historyCache.candles, chartSource);
-      historyExhausted = historyCache.exhausted === true;
-      historyCache = { key, candles: merged, exhausted: historyExhausted };
-      const cachedStats = FuturesStrategy.backtest(merged, settings, {
-        maxTrades: targetTrades,
-        skipMarkers: true,
-      }).stats;
-      if (cachedStats.trades >= targetTrades || historyExhausted) {
+      const cachedStats = runBacktestProbe(merged, settings, targetTrades);
+      const cachedDone = targetReachedStats(cachedStats, targetTrades);
+      const canRetryExhausted = forceRetry && historyCache.exhausted && !cachedDone;
+      historyExhausted = historyCache.exhausted === true && !canRetryExhausted;
+      historyCache = {
+        key,
+        candles: merged,
+        exhausted: historyExhausted,
+        trades: cachedStats.totalTrades ?? cachedStats.trades,
+      };
+      if (cachedDone || historyExhausted) {
         return { source: merged, fromCache: true, historyExhausted };
       }
       seed = merged;
-      seedTrades = cachedStats.trades;
+      seedTrades = cachedStats.totalTrades ?? cachedStats.trades;
     }
 
     onProgress?.({ phase: 'loading', trades: seedTrades, target: targetTrades, candles: seed.length });
@@ -115,20 +159,27 @@ const BacktestRunner = (() => {
 
     const cancelled = localRunId !== runId;
     const extended = loadResult?.candles ?? loadResult;
-    const loadExhausted = loadResult?.exhausted === true;
+    const loadExhausted = cancelled ? false : (loadResult?.exhausted === true);
     const loadTrades = loadResult?.trades;
 
-    if (extended.length > seed.length || !cancelled) {
-      historyExhausted = loadExhausted || (!cancelled && extended.length <= seed.length);
+    if (extended.length > seed.length) {
       historyCache = {
         key,
         candles: extended,
-        exhausted: historyExhausted,
+        exhausted: loadExhausted,
+        trades: loadTrades,
+      };
+    } else if (!cancelled) {
+      historyExhausted = loadExhausted;
+      historyCache = {
+        key,
+        candles: extended,
+        exhausted: loadExhausted,
         trades: loadTrades,
       };
     }
     if (cancelled) return null;
-    return { source: extended, fromCache: false, historyExhausted, loadTrades };
+    return { source: extended, fromCache: false, historyExhausted: loadExhausted, loadTrades };
   }
 
   async function compute(chartCandles, { force = false, focusChart = false } = {}) {
@@ -165,6 +216,7 @@ const BacktestRunner = (() => {
         targetTrades,
         (p) => deps.onProgress?.(p),
         localRunId,
+        { forceRetry: force || explicitRunActive },
       );
       if (!resolved || localRunId !== runId) {
         return { ok: false, cancelled: true, interval, settings, targetTrades };
@@ -216,6 +268,13 @@ const BacktestRunner = (() => {
     // Same settings already computing — do not cancel in-flight history load.
     if (inFlightKey && inFlightKey === pendingKey) return;
 
+    // Partial history exists but a prior run wrongly marked exhausted — keep loading.
+    if (historyCache?.key === pendingKey
+      && historyCache.exhausted
+      && (historyCache.trades ?? 0) < deps.getTargetTrades?.()) {
+      historyCache = { ...historyCache, exhausted: false };
+    }
+
     if (deps.getShowBacktest?.()
       && lastRenderedKey != null
       && pendingKey !== lastRenderedKey
@@ -265,6 +324,7 @@ const BacktestRunner = (() => {
 
   function clearHistoryCache() {
     historyCache = null;
+    clearProbeMemo();
   }
 
   return {
@@ -274,6 +334,7 @@ const BacktestRunner = (() => {
     compute,
     invalidate,
     snapshotFromCandles,
+    runBacktestProbe,
     closedCandlesOnly,
     isLoading,
     getLastError,
