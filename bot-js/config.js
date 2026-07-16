@@ -41,6 +41,16 @@ const int = (v, def) => {
   return Number.isFinite(n) ? n : def;
 };
 
+function normalizeSlotsFromFile(slots) {
+  if (!Array.isArray(slots) || !slots.length) return undefined;
+  return slots.map((s) => {
+    if (!s || typeof s !== 'object') return s;
+    const entryRules = s.entryRules ?? s.rules;
+    if (entryRules && !s.entryRules) return { ...s, entryRules };
+    return s;
+  });
+}
+
 function loadStrategy(rootDir) {
   const explicit = process.env.STRATEGY_FILE;
   const candidates = [
@@ -104,9 +114,7 @@ function loadConfig() {
     rsiOverbought: num(s.rsiOverbought ?? process.env.RSI_OVERBOUGHT, 70),
     entryRules: s.entryRules ?? null,
     exitRules: s.exitRules ?? null,
-    strategySlots: Array.isArray(s.strategySlots) && s.strategySlots.length
-      ? s.strategySlots
-      : undefined,
+    strategySlots: normalizeSlotsFromFile(s.strategySlots),
   };
 
   return {
@@ -131,4 +139,4 @@ function loadConfig() {
   };
 }
 
-module.exports = { loadConfig };
+module.exports = { loadConfig, normalizeSlotsFromFile };

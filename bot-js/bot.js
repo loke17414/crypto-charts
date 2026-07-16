@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { loadConfig } = require('./config');
+const { loadConfig, normalizeSlotsFromFile } = require('./config');
 const { buildRuntime } = require('./strategy-runtime');
 const { BinanceFuturesClient } = require('./binance');
 const { shiftLevelsToFill, recalcLevelsAtEntry, validateSlTp } = require('./sl-tp-utils');
@@ -211,9 +211,7 @@ function maybeReloadStrategy() {
   st.rsiOverbought = num(s.rsiOverbought, st.rsiOverbought);
   if ('entryRules' in s) st.entryRules = s.entryRules ?? null;
   if ('exitRules' in s) st.exitRules = s.exitRules ?? null;
-  st.strategySlots = Array.isArray(s.strategySlots) && s.strategySlots.length
-    ? s.strategySlots
-    : undefined;
+  st.strategySlots = normalizeSlotsFromFile(s.strategySlots);
   cfg.riskPerTradePct = num(s.riskPerTradePct, cfg.riskPerTradePct);
   cfg.maxAccountLossPct = num(s.maxAccountLossPct, cfg.maxAccountLossPct);
 
@@ -543,6 +541,9 @@ async function start() {
     log('No strategy.json found — falling back to the RSI oversold/overbought preset. Export your UI strategy for full parity.', 'WARN');
   } else if (StrategyEngine.normalizeSlots) {
     const slots = StrategyEngine.normalizeSlots(cfg.settings);
+    if (!slots.length) {
+      log('활성 진입 조건 없음 — strategy.json의 strategySlots/entryRules를 확인하세요', 'WARN');
+    }
     log(`Strategy: ${StrategyEngine.slotsSummary ? StrategyEngine.slotsSummary(slots) : slots.length + ' slot(s)'}`);
     slots.forEach((slot) => {
       if (StrategyEngine.validateEntryRules) {

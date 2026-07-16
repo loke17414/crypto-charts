@@ -511,25 +511,41 @@ const StrategyEngine = (() => {
   // when ANY enabled slot matches (first match wins, its name is reported).
   // Without settings.strategySlots this collapses to the single legacy rules,
   // so old strategy.json exports and bot-js keep working unchanged.
+  function slotRawRules(slot) {
+    return slot?.entryRules ?? slot?.rules ?? null;
+  }
+
+  function legacySlotFromSettings(settings) {
+    return [{
+      id: null,
+      name: null,
+      rules: normalizeRules(settings),
+      exitRules: sanitizeExitRules(settings?.exitRules),
+    }];
+  }
+
   function normalizeSlots(settings) {
     const raw = Array.isArray(settings?.strategySlots) ? settings.strategySlots : null;
     if (raw && raw.length) {
-      const active = raw
-        .filter((s) => s && s.enabled !== false && s.entryRules)
+      const enabledRaw = raw.filter((s) => s && s.enabled !== false);
+      const active = enabledRaw
+        .filter((s) => slotRawRules(s))
         .map((s, i) => ({
           id: s.id ?? i,
           name: s.name || `조건 ${i + 1}`,
-          rules: sanitizeEntryRules(s.entryRules),
+          rules: sanitizeEntryRules(slotRawRules(s)),
           exitRules: sanitizeExitRules(s.exitRules),
         }))
         .filter((s) => (s.rules.long.enabled && s.rules.long.conditions.length)
           || (s.rules.short.enabled && s.rules.short.conditions.length));
       if (active.length) return active;
 
-      // Slots carry entryRules but all are off or empty → honor explicit off state.
-      if (raw.some((s) => s?.entryRules)) return [];
+      // Every slot explicitly disabled — honor off state.
+      if (!enabledRaw.length) return [];
 
-      // Slot rows exist without rules (UI placeholder) — fall back to legacy entryRules.
+      // Enabled slot(s) exist but none produced a valid condition after
+      // sanitize (malformed GPT rules, wrong field names, etc.). Fall back
+      // instead of silently blocking all signals forever.
       if (settings?.entryRules && slotRulesHaveSignals(settings.entryRules)) {
         return [{
           id: null,
@@ -538,14 +554,18 @@ const StrategyEngine = (() => {
           exitRules: sanitizeExitRules(settings?.exitRules),
         }];
       }
-      return [];
+
+      // Top-level entryRules explicitly empty (user deleted strategy) — stay off.
+      const top = settings?.entryRules;
+      if (top && typeof top === 'object' && (top.long || top.short)
+        && !slotRulesHaveSignals(top)) {
+        return [];
+      }
+
+      // Placeholder slots or broken rules — use RSI / legacy preset.
+      return legacySlotFromSettings(settings);
     }
-    return [{
-      id: null,
-      name: null,
-      rules: normalizeRules(settings),
-      exitRules: sanitizeExitRules(settings?.exitRules),
-    }];
+    return legacySlotFromSettings(settings);
   }
 
   // Combined view of every slot's conditions — used for snapshots, indicator
