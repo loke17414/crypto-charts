@@ -230,7 +230,7 @@ async function openPosition(side, price, levels, candles, index) {
   let notional = margin * cfg.leverage;
   notional = Math.min(notional, available * cfg.leverage);
   if (notional < 5) {
-    log(`Skip entry — notional too small ($${notional.toFixed(2)})`, 'WARN');
+    log(`진입 생략 — 주문 금액이 너무 작음 ($${notional.toFixed(2)}, 최소 약 $5). 잔고·리스크 설정을 확인하세요.`, 'WARN');
     return;
   }
 
@@ -250,7 +250,7 @@ async function openPosition(side, price, levels, candles, index) {
       entryTime: new Date().toISOString(),
       entryBarTime: candles?.[index]?.time ?? null,
     };
-    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)}`);
+    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)} (실제 주문 없음)`, 'WARN');
     saveState();
     return;
   }
@@ -396,6 +396,9 @@ function logHoldReason(reason) {
 // ---- Runner -------------------------------------------------------------
 async function start() {
   log(`Starting Futures bot [${mode}] ${cfg.symbol} ${cfg.interval} | ${cfg.leverage}x ${cfg.marginType} | risk ${cfg.riskPerTradePct}%/trade | poll ${cfg.pollSeconds}s`);
+  if (cfg.dryRun) {
+    log('DRY_RUN=true — 시뮬레이션만 합니다. UI에서 봇 시작 시 live_trading으로 실제 테스트넷 주문 가능', 'WARN');
+  }
 
   if (!cfg.hasStrategyFile) {
     log('No strategy.json found — falling back to the RSI oversold/overbought preset. Export your UI strategy for full parity.', 'WARN');

@@ -120,6 +120,10 @@ class StrategySyncBody(BaseModel):
     strategy: dict[str, Any]
 
 
+class BotStartBody(BaseModel):
+    live_trading: bool = True
+
+
 class DisconnectBody(BaseModel):
     clear_saved_keys: bool = False
 
@@ -456,12 +460,13 @@ def get_bot_status() -> dict[str, Any]:
 
 
 @app.post("/api/bot/start")
-def bot_start() -> dict[str, Any]:
+def bot_start(body: BotStartBody | None = None) -> dict[str, Any]:
     if not _session:
         if not auto_connect_from_env():
             raise HTTPException(status_code=401, detail="API key not connected — connect testnet first")
+    live = body.live_trading if body else True
     try:
-        return start_bot()
+        return start_bot(live_trading=live)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

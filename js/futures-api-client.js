@@ -185,8 +185,11 @@ const FuturesApiClient = (() => {
     return request('/api/bot/status');
   }
 
-  async function startServerBot() {
-    return request('/api/bot/start', { method: 'POST' });
+  async function startServerBot({ liveTrading = true } = {}) {
+    return request('/api/bot/start', {
+      method: 'POST',
+      body: JSON.stringify({ live_trading: liveTrading }),
+    });
   }
 
   async function stopServerBot() {

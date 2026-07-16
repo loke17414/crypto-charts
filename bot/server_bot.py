@@ -20,6 +20,38 @@ STATE_FILE = ROOT / "web-bot-state.json"
 _bot_proc: subprocess.Popen | None = None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name, "").strip().lower()
+    if val:
+        return val in ("1", "true", "yes")
+    env_path = ROOT / ".env"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, raw = stripped.partition("=")
+            if key.strip() != name:
+                continue
+            cleaned = raw.strip().strip('"').strip("'").lower()
+            return cleaned in ("1", "true", "yes")
+    return default
+
+
+def _bot_trading_flags(state: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = state or _read_state()
+    env_dry = _env_bool("DRY_RUN", False)
+    live_trading = state.get("liveTrading")
+    if live_trading is None:
+        live_trading = not env_dry
+    effective_dry = not live_trading if is_running() else env_dry
+    return {
+        "dryRun": effective_dry,
+        "liveTrading": bool(live_trading),
+        "testnet": _env_bool("BINANCE_TESTNET", True),
+    }
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -83,11 +115,13 @@ def is_running() -> bool:
 def bot_status() -> dict[str, Any]:
     running = is_running()
     state = _read_state()
+    flags = _bot_trading_flags(state)
     return {
         "running": running,
         "pid": _bot_proc.pid if running and _bot_proc else state.get("pid"),
         "startedAt": state.get("startedAt"),
         "persisted": bool(state.get("shouldRun")),
+        **flags,
     }
 
 
@@ -98,7 +132,7 @@ def save_strategy_json(payload: dict[str, Any]) -> Path:
     return path
 
 
-def start_bot() -> dict[str, Any]:
+def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
     global _bot_proc
 
     if is_running():
@@ -122,6 +156,10 @@ def start_bot() -> dict[str, Any]:
 
     env = os.environ.copy()
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    if live_trading:
+        env["DRY_RUN"] = "false"
+    else:
+        env.setdefault("DRY_RUN", "true")
     _bot_proc = subprocess.Popen(
         [node, str(bot_script)],
         cwd=str(ROOT),
@@ -138,9 +176,22 @@ def start_bot() -> dict[str, Any]:
             output = _bot_proc.stdout.read(2000)
         _bot_proc = None
         raise RuntimeError(f"봇 프로세스가 바로 종료됨: {output.strip() or '출력 없음'}")
-    _write_state({"shouldRun": True, "startedAt": _now_iso(), "pid": _bot_proc.pid})
-    logger.info("Server bot started (pid=%s)", _bot_proc.pid)
-    return {"ok": True, "running": True, "pid": _bot_proc.pid, "message": "서버 봇 시작 — 브라우저를 닫아도 계속 실행됩니다."}
+    _write_state({
+        "shouldRun": True,
+        "liveTrading": live_trading,
+        "startedAt": _now_iso(),
+        "pid": _bot_proc.pid,
+    })
+    logger.info("Server bot started (pid=%s, live_trading=%s)", _bot_proc.pid, live_trading)
+    mode = "테스트넷 실거래" if live_trading else "DRY_RUN 시뮬레이션"
+    return {
+        "ok": True,
+        "running": True,
+        "pid": _bot_proc.pid,
+        "liveTrading": live_trading,
+        "dryRun": not live_trading,
+        "message": f"서버 봇 시작 ({mode}) — 브라우저를 닫아도 계속 실행됩니다.",
+    }
 
 
 def stop_bot() -> dict[str, Any]:
@@ -165,7 +216,7 @@ def restore_bot_if_needed() -> None:
     if not state.get("shouldRun"):
         return
     try:
-        start_bot()
+        start_bot(live_trading=bool(state.get("liveTrading", True)))
         logger.info("Restored server bot from web-bot-state.json")
     except Exception as exc:
         logger.warning("Could not restore server bot: %s", exc)

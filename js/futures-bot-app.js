@@ -19,6 +19,8 @@ const FuturesBotApp = (() => {
   let botTimer = null;
   let botRunning = false;
   let serverBotActive = false;
+  let serverBotLive = true;
+  let serverBotDryWarned = false;
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
@@ -1640,6 +1642,16 @@ const FuturesBotApp = (() => {
         await refreshTestnetStatus();
         if (serverBotActive) {
           const st = await FuturesApiClient.getBotStatus();
+          if (st) {
+            serverBotLive = st.liveTrading !== false && !st.dryRun;
+            if (st.dryRun && !serverBotDryWarned) {
+              serverBotDryWarned = true;
+              addLog(
+                '서버 봇이 DRY_RUN 모드입니다 — 신호만 잡히고 실제 테스트넷 주문은 없습니다. 봇을 정지한 뒤 다시 시작하면 실거래 모드로 실행됩니다.',
+                'warn',
+              );
+            }
+          }
           if (st && !st.running && botRunning) {
             serverBotActive = false;
             botRunning = false;
@@ -1710,10 +1722,13 @@ const FuturesBotApp = (() => {
 
     if (health.bot?.running) {
       serverBotActive = true;
+      serverBotLive = health.bot.liveTrading !== false && !health.bot.dryRun;
       botRunning = true;
       $('#startBotBtn').disabled = true;
       $('#stopBotBtn').disabled = false;
-      addLog('서버 봇 실행 중 — 브라우저를 닫아도 24/7 거래 계속', 'info');
+      const mode = serverBotLive ? '테스트넷 실거래' : 'DRY_RUN 시뮬레이션';
+      addLog(`서버 봇 실행 중 (${mode}) — 브라우저를 닫아도 24/7 계속`, 'info');
+      if (!serverBotLive) serverBotDryWarned = true;
     }
 
     if (health?.ok && health.apiVersion !== 2) {
@@ -2249,7 +2264,10 @@ const FuturesBotApp = (() => {
     const key = `${result.signal}:${barTime}`;
 
     if (serverBotActive) {
-      logEntrySkipOnce(`server:${key}`, `${result.signal} 신호 감지 — 서버 봇이 진입을 처리합니다.`);
+      const mode = serverBotLive
+        ? `${result.signal} 신호 — 서버 봇이 테스트넷 주문 처리 중`
+        : `${result.signal} 신호 — DRY_RUN 모드(시뮬레이션만, 실제 주문 없음). 봇 정지 후 다시 시작하세요`;
+      logEntrySkipOnce(`server:${key}`, mode);
       return;
     }
     if (autoEntryBusy || liveExitBusy) return;
@@ -2797,14 +2815,16 @@ const FuturesBotApp = (() => {
           symbol: state.symbol,
           tradeMarginUsdt: marginPreview,
         });
-        await FuturesApiClient.startServerBot();
+        await FuturesApiClient.startServerBot({ liveTrading: true });
         serverBotActive = true;
+        serverBotLive = true;
+        serverBotDryWarned = false;
         botRunning = true;
         $('#startBotBtn').disabled = true;
         $('#stopBotBtn').disabled = false;
         startStatusPolling();
         addLog(
-          `서버 봇 시작 — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x (브라우저 닫아도 계속 실행)`,
+          `서버 봇 시작 (테스트넷 실거래) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x`,
           'info',
         );
       } catch (err) {
