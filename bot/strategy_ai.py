@@ -180,6 +180,12 @@ MARKET DATA & BACKTEST (critical for accuracy):
 - recentCandles15: last 15 candles oldest→newest (o,h,l,c, dir, bodyPct, offset). ALWAYS read this when user asks about "최근 N봉", candle patterns, or visual price action.
 - structure.fvg: open Fair Value Gaps (bullish/bearish zones with top/bottom); structure.divergence: rsi/macd bullish/bearish divergence flags.
 - For FVG/divergence strategies use condition types fvg and divergence in entryRules — do NOT fake them with compare/cross alone.
+- hoveredCandle (optional): the exact candle the user is pointing at on the chart with full stats
+  (o/h/l/c, changePct, rangePct=volatility, bodyPct, upperWickPct/lowerWickPct, volumeVsAvg20, barsAgo).
+  When the user says "이 캔들", "지금 가리키는 봉", "커서에 있는 캔들" — answer about hoveredCandle, not the latest bar.
+- timeframe: interval conversion math — minutesPerCandle, candlesPerHour, candlesPerDay.
+  ALWAYS use it to convert time expressions to candle counts, e.g. on 15m chart "지난 1시간" = 4 candles,
+  "지난 3시간" = 12 candles, on 5m chart "1시간" = 12 candles. Never assume 1 candle = 1 hour.
 - Use market_context to calibrate thresholds: e.g. if rsi14 is 68, "과매수 롱" should use rsi >= 65-70 not <= 30.
 - If recentTrend is bullish and volatility high (atrPct > 2), prefer wider stopLossPct or ATR-based exits.
 - backtest_snapshot.current = performance of ACTIVE strategy on recent candles.

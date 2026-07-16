@@ -2320,6 +2320,7 @@ window.CryptoCharts = {
   }),
   getCandles: () => state.lastCandles,
   getCandleCount: () => state.lastCandles.length,
+  getChartApi: () => ({ chart, candleSeries }),
   getPrice: () => state.lastTickPrice || state.lastCandles.at(-1)?.close || null,
   setMarkers: (markers) => {
     if (candleSeries) candleSeries.setMarkers(markers || []);

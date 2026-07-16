@@ -407,7 +407,34 @@ const FuturesBotApp = (() => {
       };
     }
 
+    ctx.timeframe = timeframeInfoForAi(state.interval);
+
+    const hovered = window.CandleTooltip?.getLastHovered?.();
+    if (hovered && hovered.hoveredAgoSec <= 300) {
+      ctx.hoveredCandle = hovered;
+    }
+
     return ctx;
+  }
+
+  const INTERVAL_MINUTES = {
+    '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+    '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720,
+    '1d': 1440, '1w': 10080,
+  };
+
+  function timeframeInfoForAi(interval) {
+    const minutes = INTERVAL_MINUTES[interval] || null;
+    if (!minutes) return { interval };
+    const perHour = 60 / minutes;
+    const perDay = 1440 / minutes;
+    return {
+      interval,
+      minutesPerCandle: minutes,
+      candlesPerHour: perHour >= 1 ? Math.round(perHour * 100) / 100 : null,
+      candlesPerDay: perDay >= 1 ? Math.round(perDay * 100) / 100 : null,
+      note: `현재 차트는 ${interval}봉. 1시간=${perHour >= 1 ? Math.round(perHour) : '<1'}개, 1일=${perDay >= 1 ? Math.round(perDay) : '<1'}개 캔들. "지난 X시간" 요청은 X*${perHour >= 1 ? Math.round(perHour) : 1}개 캔들로 환산.`,
+    };
   }
 
   function getBacktestSnapshotForAi() {

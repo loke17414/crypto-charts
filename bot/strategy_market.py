@@ -63,6 +63,32 @@ def _round(v: float | None, d: int = 2) -> float | None:
     return round(v, d)
 
 
+_INTERVAL_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+    "1d": 1440, "1w": 10080,
+}
+
+
+def _timeframe_info(interval: str) -> dict[str, Any]:
+    minutes = _INTERVAL_MINUTES.get(interval)
+    if not minutes:
+        return {"interval": interval}
+    per_hour = 60 / minutes
+    per_day = 1440 / minutes
+    return {
+        "interval": interval,
+        "minutesPerCandle": minutes,
+        "candlesPerHour": round(per_hour, 2) if per_hour >= 1 else None,
+        "candlesPerDay": round(per_day, 2) if per_day >= 1 else None,
+        "note": (
+            f"Chart is on {interval} candles. 1 hour = {round(per_hour) if per_hour >= 1 else '<1'} candles, "
+            f"1 day = {round(per_day) if per_day >= 1 else '<1'} candles. "
+            f"'last X hours' = X*{round(per_hour) if per_hour >= 1 else 1} candles."
+        ),
+    }
+
+
 def _format_recent_candles(
     klines: list[list[Any]],
     count: int = 15,
@@ -314,5 +340,7 @@ def build_market_context(
         ctx["recentCandles15"] = _format_recent_candles(klines, 15)
     if not ctx.get("structure"):
         ctx["structure"] = _build_structure(klines, closes, highs, lows, rsi_vals, price)
+    if not ctx.get("timeframe"):
+        ctx["timeframe"] = _timeframe_info(interval)
 
     return ctx

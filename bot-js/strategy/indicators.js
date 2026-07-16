@@ -589,6 +589,24 @@ const IndicatorManager = (() => {
     };
   }
 
+  function subPaneSortKey(id) {
+    if (id === 'vol') return 0;
+    if (id === 'volma') return 1;
+    const idx = INDICATOR_REGISTRY.findIndex((d) => d.id === id);
+    return 100 + (idx >= 0 ? idx : 999);
+  }
+
+  function reorderSubPanes() {
+    if (!panesEl) return;
+    const subs = [...active].filter((id) => getDef(id)?.group === '서브');
+    subs.sort((a, b) => subPaneSortKey(a) - subPaneSortKey(b));
+    subs.forEach((id) => {
+      const wrap = subCharts[id]?.wrap;
+      if (wrap) panesEl.appendChild(wrap);
+    });
+    resizeMainChart();
+  }
+
   function createSubChart(id) {
     const def = getDef(id);
     const height = def?.subHeight || SUB_HEIGHT;
@@ -597,6 +615,7 @@ const IndicatorManager = (() => {
     if (subCharts[id]) {
       subCharts[id].el.style.height = `${height}px`;
       subCharts[id].chart.applyOptions({ height, ...chartOpts });
+      reorderSubPanes();
       return subCharts[id];
     }
 
@@ -627,6 +646,7 @@ const IndicatorManager = (() => {
 
     subCharts[id] = { chart: sub, el, wrap, series: {}, ro };
     syncTimeScale(sub);
+    reorderSubPanes();
     return subCharts[id];
   }
 
@@ -667,6 +687,7 @@ const IndicatorManager = (() => {
     sc.chart.remove();
     sc.wrap.remove();
     delete subCharts[id];
+    reorderSubPanes();
   }
 
   function applyOverlayLines(id, data, params, lines) {
@@ -902,13 +923,30 @@ const IndicatorManager = (() => {
     });
   }
 
+  function calcMainChartHeight(workspace) {
+    const embedded = panesEl?.classList.contains('indicator-panes--in-chart');
+    if (!embedded) return Math.min(workspace.clientHeight, MAIN_CHART_MAX);
+    const subH = panesEl?.clientHeight || 0;
+    return Math.max(180, workspace.clientHeight - subH);
+  }
+
   function resizeMainChart() {
     const area = document.getElementById('chartArea');
     const workspace = document.querySelector('.chart-workspace');
     if (!area || !mainChart || !workspace) return;
-    const h = Math.min(workspace.clientHeight, MAIN_CHART_MAX);
+    const h = calcMainChartHeight(workspace);
     mainChart.applyOptions({ height: h });
     area.style.height = `${h}px`;
+    if (panesEl?.classList.contains('indicator-panes--in-chart')) {
+      requestAnimationFrame(() => {
+        if (!mainChart || !workspace) return;
+        const next = calcMainChartHeight(workspace);
+        if (next !== h) {
+          mainChart.applyOptions({ height: next });
+          area.style.height = `${next}px`;
+        }
+      });
+    }
   }
 
   function openSettings(id) {
@@ -1047,6 +1085,7 @@ const IndicatorManager = (() => {
     resizeMainChart();
     if (window.__lastCandles?.length) update(window.__lastCandles);
     renderActiveTags();
+    reorderSubPanes();
     document.dispatchEvent(new CustomEvent('indicators-changed'));
   }
 
@@ -1247,6 +1286,7 @@ const IndicatorManager = (() => {
     });
     renderActiveTags();
     resizeMainChart();
+    reorderSubPanes();
   }
 
   function onResize() {
