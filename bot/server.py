@@ -139,6 +139,12 @@ class BotStartBody(BaseModel):
     live_trading: bool = True
 
 
+class CloseOrderBody(BaseModel):
+    manual: bool = False
+    bar_time: int | None = None
+    blocked_signal: str | None = None
+
+
 class DisconnectBody(BaseModel):
     clear_saved_keys: bool = False
 
@@ -524,7 +530,7 @@ def set_sl_tp_order(body: SlTpBody) -> dict[str, Any]:
 
 
 @app.post("/api/order/close")
-def close_order() -> dict[str, Any]:
+def close_order(body: CloseOrderBody = CloseOrderBody()) -> dict[str, Any]:
     session = _require_session()
     client = session.client
     pos = client.get_position()
@@ -546,8 +552,13 @@ def close_order() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to cancel open orders after close: %s", exc)
 
-    if is_running():
-        pause_bot_entry(manual=True, interval=_strategy_interval())
+    if is_running() and body.manual:
+        pause_bot_entry(
+            manual=True,
+            interval=_strategy_interval(),
+            bar_time=body.bar_time,
+            blocked_signal=body.blocked_signal or pos["side"],
+        )
 
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
 

@@ -188,22 +188,43 @@ function writeEntryGate(gate) {
   } catch { /* ignore */ }
 }
 
+function isManualReentryBlocked(result, barTime) {
+  const gate = readEntryGate();
+  if (!gate || gate.reason !== 'manual_close') return false;
+
+  const pausedUntil = Number(gate.pausedUntil) || 0;
+  if (Date.now() < pausedUntil) return true;
+
+  const blockedBar = Number(gate.blockedBarTime) || 0;
+  const blockedSignal = gate.blockedSignal;
+  if (
+    blockedBar > 0
+    && barTime === blockedBar
+    && blockedSignal
+    && result?.signal === blockedSignal
+  ) {
+    return true;
+  }
+
+  if (pausedUntil <= Date.now()) {
+    writeEntryGate(null);
+  }
+  return false;
+}
+
 /** Apply manual-close pause file; auto-expire when pausedUntil passes. */
 function syncEntryGate() {
   const gate = readEntryGate();
   if (!gate) return;
 
-  if (gate.blockUntilSignalClears) {
-    writeEntryGate(null);
-    return;
-  }
-
   const pausedUntil = Number(gate.pausedUntil) || 0;
-  if (pausedUntil <= Date.now()) {
+  if (pausedUntil <= Date.now() && gate.reason !== 'manual_close') {
     writeEntryGate(null);
     return;
   }
-  entryPausedUntil = Math.max(entryPausedUntil, pausedUntil);
+  if (pausedUntil > Date.now()) {
+    entryPausedUntil = Math.max(entryPausedUntil, pausedUntil);
+  }
 }
 
 function clearExpiredEntryGate() {
@@ -514,9 +535,14 @@ async function tick() {
   // Entry — evaluate the SAME analyze() the UI uses, on the same candle set.
   const posSide = position ? position.side : null;
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
+  const barTime = forming.time;
   syncEntryGate();
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
+    if (isManualReentryBlocked(result, barTime)) {
+      logHoldReason(`Signal ${result.signal} skipped — 수동 청산 후 같은 봉 재진입 보류`);
+      return;
+    }
     if (Date.now() < entryPausedUntil) {
       logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s after close`);
       return;

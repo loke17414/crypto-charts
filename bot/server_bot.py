@@ -141,22 +141,37 @@ def tail_bot_logs(n: int = 8) -> list[str]:
     return lines[-max(1, n) :]
 
 
-def pause_bot_entry(*, manual: bool = True, interval: str = "15m") -> dict[str, Any]:
-    """Pause server-bot re-entry for a short window after manual/UI close."""
+def pause_bot_entry(
+    *,
+    manual: bool = True,
+    interval: str = "15m",
+    bar_time: int | None = None,
+    blocked_signal: str | None = None,
+) -> dict[str, Any]:
+    """Pause server-bot re-entry after manual/UI close until the current bar ends."""
     seconds_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
     interval_sec = seconds_map.get(interval, 900)
     now_ms = int(time.time() * 1000)
-    paused_until = min(
-        max(now_ms + 30_000, now_ms + interval_sec * 1000),
-        now_ms + 15 * 60_000,
-    )
-    payload = {
+    if manual and bar_time:
+        bar_end_ms = (int(bar_time) + interval_sec) * 1000
+        paused_until = min(max(now_ms + 30_000, bar_end_ms), now_ms + 15 * 60_000)
+    else:
+        paused_until = min(
+            max(now_ms + 30_000, now_ms + interval_sec * 1000),
+            now_ms + 15 * 60_000,
+        )
+    payload: dict[str, Any] = {
         "pausedUntil": paused_until,
         "reason": "manual_close" if manual else "external_close",
         "updatedAt": _now_iso(),
     }
+    if manual:
+        if bar_time is not None:
+            payload["blockedBarTime"] = int(bar_time)
+        if blocked_signal in ("LONG", "SHORT"):
+            payload["blockedSignal"] = blocked_signal
     ENTRY_GATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    logger.info("Bot entry paused until %s", paused_until)
+    logger.info("Bot entry paused until %s (manual=%s)", paused_until, manual)
     return payload
 
 
@@ -166,10 +181,6 @@ def clear_expired_entry_gate() -> None:
     try:
         data = json.loads(ENTRY_GATE_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        ENTRY_GATE_FILE.unlink(missing_ok=True)
-        return
-    # Legacy gate from blockUntilSignalClears — never auto-cleared while signal held.
-    if data.get("blockUntilSignalClears"):
         ENTRY_GATE_FILE.unlink(missing_ok=True)
         return
     paused_until = int(data.get("pausedUntil") or 0)

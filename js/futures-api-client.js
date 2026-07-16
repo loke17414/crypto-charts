@@ -119,8 +119,15 @@ const FuturesApiClient = (() => {
     });
   }
 
-  async function closePosition() {
-    return request('/api/order/close', { method: 'POST' });
+  async function closePosition({ manual = false, barTime = null, blockedSignal = null } = {}) {
+    return request('/api/order/close', {
+      method: 'POST',
+      body: JSON.stringify({
+        manual,
+        bar_time: barTime,
+        blocked_signal: blockedSignal,
+      }),
+    });
   }
 
   // Replace exchange-side SL/TP trigger orders for the open position.
