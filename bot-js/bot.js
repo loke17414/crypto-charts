@@ -221,20 +221,42 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
   const settingsForLevels = levelSettings || cfg.settings;
   try {
   const equity = await getEquity(price);
-  const slPctForSizing = RiskSizing.resolveStopLossPctForSizing(levels, cfg.settings.stopLossPct);
-  const margin = RiskSizing.calcTradeMargin(equity, {
+  const sizingLevels = recalcLevelsAtEntry(
+    side,
+    price,
+    { ...levels, signalPrice: price },
+    settingsForLevels,
+    { candles, index },
+    FuturesStrategy.calcEntryLevels,
+  );
+  const riskSettings = {
     riskPerTradePct: cfg.riskPerTradePct,
     leverage: cfg.leverage,
-    stopLossPct: slPctForSizing,
-  });
+    stopLossPct: cfg.settings.stopLossPct,
+  };
+  const plan = RiskSizing.summarizeRiskPlan(equity, riskSettings, sizingLevels);
+  if (!plan.stopLossPct || plan.stopLossPct <= 0) {
+    log('진입 생략 — SL 거리 없음(손절 OFF) — 1회 리스크 기준 증거금을 계산할 수 없음', 'WARN');
+    return;
+  }
+  const margin = plan.margin;
   log(
-    `포지션 크기 — SL ${slPctForSizing != null ? `${slPctForSizing.toFixed(2)}%` : '없음'} · 증거금 $${margin.toFixed(2)} (원금 $${equity.toFixed(2)}의 ${cfg.riskPerTradePct}% 리스크)`,
+    `리스크 계획 — SL ${plan.stopLossPct != null ? `${plan.stopLossPct.toFixed(2)}%` : '없음'} · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 원금 ${plan.riskPerTradePct}%)`,
     'INFO',
   );
 
   const available = await getAvailableMargin();
-  let notional = margin * cfg.leverage;
-  notional = Math.min(notional, available * cfg.leverage);
+  let notional = plan.notional;
+  const maxNotional = available * cfg.leverage;
+  if (notional > maxNotional) {
+    notional = maxNotional;
+    const cappedMargin = notional / cfg.leverage;
+    const cappedLoss = RiskSizing.estimateLossAtSl(cappedMargin, cfg.leverage, plan.stopLossPct);
+    log(
+      `증거금 부족 — 계획 $${plan.margin.toFixed(2)} → 사용 $${cappedMargin.toFixed(2)} (SL손실 $${cappedLoss.toFixed(2)} < 목표 $${plan.targetLoss.toFixed(2)})`,
+      'WARN',
+    );
+  }
   if (notional < 5) {
     log(`진입 생략 — 주문 금액이 너무 작음 ($${notional.toFixed(2)}, 최소 약 $5). 잔고·리스크 설정을 확인하세요.`, 'WARN');
     return;
@@ -335,6 +357,16 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     }
   }
   saveState();
+
+  const actualMargin = (filledQty * entryPrice) / cfg.leverage;
+  const actualLoss = RiskSizing.estimateLossAtSl(actualMargin, cfg.leverage, adjusted.stopLossPct);
+  const targetLoss = RiskSizing.targetLossUsdt(equity, cfg.riskPerTradePct);
+  if (targetLoss > 0 && Math.abs(actualLoss - targetLoss) > Math.max(1, targetLoss * 0.08)) {
+    log(
+      `리스크 검증 — SL도달 예상 손실 $${actualLoss.toFixed(2)} (목표 $${targetLoss.toFixed(2)}). 수량 라운딩·잔고 부족 시 차이 날 수 있음`,
+      'WARN',
+    );
+  }
   } catch (err) {
     log(`진입 실패: ${err.message}`, 'ERROR');
     throw err;

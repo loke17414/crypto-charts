@@ -1,7 +1,7 @@
 'use strict';
 
 const { buildRuntime } = require('./strategy-runtime');
-const { RiskSizing } = buildRuntime();
+const RS = buildRuntime().RiskSizing;
 
 let failures = 0;
 function check(label, cond, detail = '') {
@@ -12,25 +12,23 @@ function check(label, cond, detail = '') {
   }
 }
 
-const equity = 10000;
-const risk = { riskPerTradePct: 1, leverage: 5 };
+// User examples (1회 리스크 2% 설정 시)
+const ex1 = RS.calcTradeMargin(5000, { riskPerTradePct: 2, leverage: 5, stopLossPct: 0.4 });
+check('ex1 margin $5000 @2% risk', ex1 === 5000, `got ${ex1}`);
+const loss1 = RS.estimateLossAtSl(ex1, 5, 0.4);
+check('ex1 loss $100 (2% of 5000)', Math.abs(loss1 - 100) < 0.01, `loss=${loss1}`);
 
-// Wider SL → smaller margin for same 1% account risk.
-const tight = { stopLossPct: 0.5 };
-const wide = { stopLossPct: 2.5 };
-const mTight = RiskSizing.calcTradeMarginForEntry(equity, risk, tight);
-const mWide = RiskSizing.calcTradeMarginForEntry(equity, risk, wide);
-check('tighter SL uses larger margin', mTight > mWide, `tight=${mTight} wide=${mWide}`);
+const ex2 = RS.calcTradeMargin(8000, { riskPerTradePct: 2, leverage: 5, stopLossPct: 0.8 });
+check('ex2 margin $4000 @2% risk', ex2 === 4000, `got ${ex2}`);
+const loss2 = RS.estimateLossAtSl(ex2, 5, 0.8);
+check('ex2 loss $160 (2% of 8000)', Math.abs(loss2 - 160) < 0.01, `loss=${loss2}`);
 
-// Entry levels win over global fallback.
-const levels = { stopLossPct: 0.8 };
-const mLevels = RiskSizing.calcTradeMarginForEntry(equity, { ...risk, stopLossPct: 1.5 }, levels);
-const mFallback = RiskSizing.calcTradeMargin(equity, { ...risk, stopLossPct: 1.5 });
-check('levels.stopLossPct overrides fallback', mLevels > mFallback, `levels=${mLevels} fallback=${mFallback}`);
+// 1% risk (UI 기본값)
+const ex1r1 = RS.calcTradeMargin(5000, { riskPerTradePct: 1, leverage: 5, stopLossPct: 0.4 });
+check('ex1 margin $2500 @1% risk', ex1r1 === 2500, `got ${ex1r1}`);
 
-// Loss at SL ≈ 1% of equity.
-const slPct = RiskSizing.resolveStopLossPctForSizing(levels, 1.5);
-const loss = RiskSizing.estimateLossAtSl(mLevels, risk.leverage, slPct);
-check('loss at SL near 1% equity', Math.abs(loss - 100) < 1, `loss=${loss}`);
+const plan = RS.summarizeRiskPlan(8000, { riskPerTradePct: 2, leverage: 5, stopLossPct: 1.5 }, { stopLossPct: 0.8 });
+check('summarize uses entry SL%', plan.margin === 4000, JSON.stringify(plan));
+check('summarize target loss', Math.abs(plan.targetLoss - 160) < 0.01, `target=${plan.targetLoss}`);
 
 process.exit(failures ? 1 : 0);

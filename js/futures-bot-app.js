@@ -2427,13 +2427,22 @@ const FuturesBotApp = (() => {
     const posEl = $('#positionInfo');
     readFormSettings();
     const equity = await getEquity();
-    const marginPreview = RiskSizing.calcTradeMargin(equity, getRiskSettings());
-    const lossAtSl = RiskSizing.estimateLossAtSl(marginPreview, state.leverage, state.stopLossPct);
+    const previewSide = lastPendingSide || 'LONG';
+    const previewPrice = state.lastPrice || lastCandles.at(-1)?.close;
+    const previewLevels = previewPrice ? calcEntryLevels(previewSide, previewPrice) : null;
+    const riskSettings = getRiskSettings();
+    const plan = previewLevels
+      ? RiskSizing.summarizeRiskPlan(equity, riskSettings, previewLevels)
+      : null;
+    const marginPreview = plan?.margin ?? RiskSizing.calcTradeMargin(equity, riskSettings);
+    const slPct = plan?.stopLossPct ?? state.stopLossPct;
+    const lossAtSl = plan?.lossAtSl ?? RiskSizing.estimateLossAtSl(marginPreview, state.leverage, slPct);
+    const targetLoss = plan?.targetLoss ?? RiskSizing.targetLossUsdt(equity, state.riskPerTradePct);
     const lossPctOfEquity = equity > 0 ? (lossAtSl / equity) * 100 : 0;
 
     $('#notionalInfo').innerHTML =
       `증거금 $${marginPreview.toFixed(0)} (${state.leverage}x) · ` +
-      `<span class="text-muted">손절 시 -$${lossAtSl.toFixed(2)} (${lossPctOfEquity.toFixed(2)}%)</span>`;
+      `<span class="text-muted">SL ${slPct != null ? slPct.toFixed(2) : '—'}% · 손절 시 -$${lossAtSl.toFixed(2)} (목표 -$${targetLoss.toFixed(2)}, ${lossPctOfEquity.toFixed(2)}%)</span>`;
 
     if (sessionStartEquity > 0) {
       const dd = ((sessionStartEquity - equity) / sessionStartEquity) * 100;

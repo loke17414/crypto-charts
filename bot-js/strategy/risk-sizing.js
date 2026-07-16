@@ -10,74 +10,70 @@ const RiskSizing = (() => {
     return null;
   }
 
+  function targetLossUsdt(equity, riskPerTradePct) {
+    if (!(equity > 0) || !(riskPerTradePct > 0)) return 0;
+    return equity * (riskPerTradePct / 100);
+  }
+
+  function calcTradeMargin(equity, settings) {
+    const {
+      riskPerTradePct,
+      leverage,
+      stopLossPct,
+      minMargin = 5,
+    } = settings;
+
+    if (equity <= 0 || stopLossPct <= 0 || leverage <= 0 || riskPerTradePct <= 0) {
+      return minMargin;
+    }
+
+    const margin = (equity * riskPerTradePct) / (leverage * stopLossPct);
+    return Math.max(Math.round(Math.min(margin, equity) * 100) / 100, minMargin);
+  }
+
   function calcTradeMarginForEntry(equity, riskSettings, entryLevels) {
     const stopLossPct = resolveStopLossPctForSizing(entryLevels, riskSettings.stopLossPct);
     return calcTradeMargin(equity, { ...riskSettings, stopLossPct });
   }
 
-  function calcTradeMargin(equity, settings) {
-
-    const {
-
-      riskPerTradePct,
-
-      leverage,
-
-      stopLossPct,
-
-      minMargin = 5,
-
-    } = settings;
-
-
-
-    if (equity <= 0 || stopLossPct <= 0 || leverage <= 0 || riskPerTradePct <= 0) {
-
-      return minMargin;
-
-    }
-
-
-
-    const margin = (equity * riskPerTradePct) / (leverage * stopLossPct);
-
-    return Math.max(Math.round(Math.min(margin, equity * 0.95) * 100) / 100, minMargin);
-
+  function estimateLossAtSl(margin, leverage, stopLossPct) {
+    if (!(margin > 0) || !(leverage > 0) || !(stopLossPct > 0)) return 0;
+    return margin * leverage * (stopLossPct / 100);
   }
 
-
+  function summarizeRiskPlan(equity, riskSettings, entryLevels) {
+    const stopLossPct = resolveStopLossPctForSizing(entryLevels, riskSettings.stopLossPct);
+    const margin = calcTradeMargin(equity, { ...riskSettings, stopLossPct });
+    const targetLoss = targetLossUsdt(equity, riskSettings.riskPerTradePct);
+    const lossAtSl = estimateLossAtSl(margin, riskSettings.leverage, stopLossPct);
+    return {
+      equity,
+      stopLossPct,
+      margin,
+      notional: margin * riskSettings.leverage,
+      targetLoss,
+      lossAtSl,
+      riskPerTradePct: riskSettings.riskPerTradePct,
+      leverage: riskSettings.leverage,
+    };
+  }
 
   function isAccountLossLimitHit(equity, referenceEquity, maxAccountLossPct) {
-
     if (referenceEquity <= 0 || maxAccountLossPct <= 0) return false;
-
     const drawdownPct = ((referenceEquity - equity) / referenceEquity) * 100;
-
     return drawdownPct >= maxAccountLossPct;
-
   }
-
-
-
-  function estimateLossAtSl(margin, leverage, stopLossPct) {
-
-    return margin * leverage * (stopLossPct / 100);
-
-  }
-
-
 
   return {
     calcTradeMargin,
     calcTradeMarginForEntry,
     resolveStopLossPctForSizing,
-    isAccountLossLimitHit,
+    targetLossUsdt,
     estimateLossAtSl,
+    summarizeRiskPlan,
+    isAccountLossLimitHit,
   };
 
 })();
 
-
-
 window.RiskSizing = RiskSizing;
-

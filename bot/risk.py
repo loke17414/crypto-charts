@@ -44,7 +44,7 @@ def calc_trade_margin(
 
     margin = equity * risk_per_trade_pct / (leverage * stop_loss_pct)
 
-    margin = min(margin, equity * 0.95)
+    margin = min(margin, equity)
 
     return max(round(margin, 2), min_margin)
 
