@@ -1416,12 +1416,21 @@ const FuturesBotApp = (() => {
     return FuturesPaper.getEquity(price);
   }
 
-  async function calcTradeMarginForTrade() {
+  async function calcTradeMarginForLevels(levels) {
     readFormSettings();
     const equity = await getEquity();
     // PnL mode sizes with a fixed margin (riskPerTrade% of equity) — the SL
     // PnL amount itself caps the loss, and the % conversion in
     // readSlTpSettings assumes exactly this margin.
+    if (state.slTpMode === 'pnl') {
+      return Math.max(5, Math.round(((equity * state.riskPerTradePct) / 100) * 100) / 100);
+    }
+    return RiskSizing.calcTradeMarginForEntry(equity, getRiskSettings(), levels);
+  }
+
+  async function calcTradeMarginForTrade() {
+    readFormSettings();
+    const equity = await getEquity();
     if (state.slTpMode === 'pnl') {
       return Math.max(5, Math.round(((equity * state.riskPerTradePct) / 100) * 100) / 100);
     }
@@ -2504,8 +2513,6 @@ const FuturesBotApp = (() => {
     if ((result.signal === 'LONG' || result.signal === 'SHORT')
       && await checkAccountLossLimit()) return;
 
-    const tradeMargin = await calcTradeMarginForTrade();
-
     if (isTestnetMode()) {
       const pos = testnetStatus?.position;
 
@@ -2540,6 +2547,7 @@ const FuturesBotApp = (() => {
             addLog('진입 실패: 손절/익절 계산 불가', 'loss');
             return;
           }
+          const tradeMargin = await calcTradeMarginForLevels(levels);
           await FuturesApiClient.setup({
             leverage: state.leverage,
             marginType: 'ISOLATED',
@@ -2583,6 +2591,7 @@ const FuturesBotApp = (() => {
         addLog('진입 실패: 손절/익절 계산 불가', 'loss');
         return;
       }
+      const tradeMargin = await calcTradeMarginForLevels(levels);
       const r = FuturesPaper.openPosition(
         side,
         price,
@@ -2892,12 +2901,12 @@ const FuturesBotApp = (() => {
     if (!requireSlTpConfirmedForEntry()) return;
 
     readFormSettings();
-    const tradeMargin = await calcTradeMarginForTrade();
     const levels = calcEntryLevels(side);
     if (!levels) {
       addLog('진입 실패: 손절/익절 계산 불가', 'loss');
       return;
     }
+    const tradeMargin = await calcTradeMarginForLevels(levels);
 
     try {
       await FuturesApiClient.setup({

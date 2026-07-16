@@ -219,11 +219,16 @@ async function openPosition(side, price, levels, candles, index) {
   if (position) return;
 
   const equity = await getEquity(price);
+  const slPctForSizing = RiskSizing.resolveStopLossPctForSizing(levels, cfg.settings.stopLossPct);
   const margin = RiskSizing.calcTradeMargin(equity, {
     riskPerTradePct: cfg.riskPerTradePct,
     leverage: cfg.leverage,
-    stopLossPct: cfg.settings.stopLossPct,
+    stopLossPct: slPctForSizing,
   });
+  log(
+    `포지션 크기 — SL ${slPctForSizing != null ? `${slPctForSizing.toFixed(2)}%` : '없음'} · 증거금 $${margin.toFixed(2)} (원금 $${equity.toFixed(2)}의 ${cfg.riskPerTradePct}% 리스크)`,
+    'INFO',
+  );
 
   const available = await getAvailableMargin();
   let notional = margin * cfg.leverage;

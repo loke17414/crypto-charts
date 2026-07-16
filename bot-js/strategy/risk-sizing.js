@@ -2,6 +2,19 @@
 
 const RiskSizing = (() => {
 
+  function resolveStopLossPctForSizing(entryLevels, fallbackStopLossPct) {
+    const fromLevels = parseFloat(entryLevels?.stopLossPct);
+    if (Number.isFinite(fromLevels) && fromLevels > 0) return fromLevels;
+    const fallback = parseFloat(fallbackStopLossPct);
+    if (Number.isFinite(fallback) && fallback > 0) return fallback;
+    return null;
+  }
+
+  function calcTradeMarginForEntry(equity, riskSettings, entryLevels) {
+    const stopLossPct = resolveStopLossPctForSizing(entryLevels, riskSettings.stopLossPct);
+    return calcTradeMargin(equity, { ...riskSettings, stopLossPct });
+  }
+
   function calcTradeMargin(equity, settings) {
 
     const {
@@ -54,7 +67,13 @@ const RiskSizing = (() => {
 
 
 
-  return { calcTradeMargin, isAccountLossLimitHit, estimateLossAtSl };
+  return {
+    calcTradeMargin,
+    calcTradeMarginForEntry,
+    resolveStopLossPctForSizing,
+    isAccountLossLimitHit,
+    estimateLossAtSl,
+  };
 
 })();
 
