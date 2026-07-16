@@ -136,6 +136,7 @@ Examples:
 - Engulfing bull long: { type:"candle_pattern", pattern:"engulfing_bull" }
 - Hammer + RSI: candle_pattern hammer AND rsi <= 30
 - Bullish candle: { type:"candle_pattern", pattern:"bullish" } or compare is_bullish == 1
+- Simple bullish long (양봉/캔들 상승 롱): entryRules.long = compare is_bullish == 1 OR close > open; set short.enabled=false
 - Body > 60%: compare candle.body_pct > 60
 - Bollinger lower re-entry long (볼린저 하단 이탈 후 재진입 롱):
   entryRules.long.conditions = [{ "type":"band_reentry", "side":"long", "indicator":"boll", "params":{"period":20,"mult":2} }]
@@ -170,13 +171,19 @@ MARKET DATA & BACKTEST (critical for accuracy):
 
 Respond with JSON only — extended shape:
 {
-  "settings": { /* changed fields only */ },
-  "changed_fields": ["stopLossPct"],
+  "settings": { /* changed fields only — NEVER empty when user asks to create/apply a strategy */ },
+  "changed_fields": ["entryRules"],
+  "chart_interval": "1m"|"5m"|"15m"|"1h"|"4h"|"1d"|null,
   "summary": "Korean 1-3 sentences — what changed and why",
   "rules": "Korean HTML bullets",
   "market_insight": "Korean 1 sentence on current market vs strategy fit",
   "backtest_insight": "Korean 1 sentence on backtest result / expected improvement"
 }
+
+TIMEFRAME (봉 주기):
+- If the user mentions 1분봉/5분봉/1시간봉 etc., set chart_interval to the matching id (1m, 5m, 15m, 1h, 4h, 1d).
+- The system switches the chart to that interval automatically — do NOT leave settings empty just because of timeframe.
+- ALWAYS return entryRules (and exitRules if needed) for strategy requests like "롱 진입", even when a timeframe is mentioned.
 
 WEB RESEARCH / QUESTION MODE:
 - You may receive web_research: a list of {title, url, content} scraped from the internet about trading strategies.
@@ -702,6 +709,91 @@ def _call_openai(
     return _extract_json(content)
 
 
+_VALID_CHART_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"})
+
+_INTERVAL_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("1m", ("1분봉", "1분", "1m")),
+    ("3m", ("3분봉", "3분", "3m")),
+    ("5m", ("5분봉", "5분", "5m")),
+    ("15m", ("15분봉", "15분", "15m")),
+    ("30m", ("30분봉", "30분", "30m")),
+    ("1h", ("1시간봉", "1시간", "한시간", "1h")),
+    ("4h", ("4시간봉", "4시간", "4h")),
+    ("1d", ("1일봉", "일봉", "1일", "1d")),
+)
+
+
+def _parse_chart_interval(prompt: str) -> str | None:
+    text = (prompt or "").lower()
+    for key, aliases in _INTERVAL_ALIASES:
+        if any(alias in text for alias in aliases):
+            return key
+    return None
+
+
+def _normalize_chart_interval(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().lower()
+    return cleaned if cleaned in _VALID_CHART_INTERVALS else None
+
+
+def _looks_like_strategy_apply_request(prompt: str) -> bool:
+    text = (prompt or "").lower()
+    apply_kw = ("진입", "롱", "숏", "long", "short", "매수", "매도", "전략", "조건", "설정")
+    return any(k in text for k in apply_kw)
+
+
+def _bullish_candle_long_patch() -> dict[str, Any]:
+    return {
+        "allowShort": False,
+        "entryRules": {
+            "long": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "compare",
+                    "left": {"source": "candle", "metric": "is_bullish", "offset": 0},
+                    "op": "==",
+                    "right": {"source": "value", "value": 1},
+                }],
+            },
+            "short": {"enabled": False, "logic": "all", "conditions": []},
+        },
+    }
+
+
+def _looks_like_bullish_candle_long(prompt: str) -> bool:
+    text = (prompt or "").lower()
+    long_side = any(k in text for k in ("롱", "long", "매수", "진입"))
+    candle_kw = any(k in text for k in ("캔들", "봉", "양봉", "상승", "bullish", "올라"))
+    return long_side and candle_kw
+
+
+def _has_bullish_entry(rules: Any) -> bool:
+    if not isinstance(rules, dict):
+        return False
+    long_group = rules.get("long")
+    if not isinstance(long_group, dict):
+        return False
+    for cond in long_group.get("conditions") or []:
+        if not isinstance(cond, dict):
+            continue
+        if cond.get("type") == "candle_pattern" and str(cond.get("pattern", "")).lower() in {
+            "bullish", "engulfing_bull",
+        }:
+            return True
+        left = cond.get("left")
+        if isinstance(left, dict) and left.get("metric") == "is_bullish":
+            return True
+        if cond.get("type") == "compare" and isinstance(left, dict):
+            if left.get("source") == "price" and left.get("field") == "close":
+                right = cond.get("right")
+                if isinstance(right, dict) and right.get("field") == "open":
+                    return True
+    return False
+
+
 def _bollinger_reentry_long_patch(ratio: float = 1.5) -> dict[str, Any]:
     return {
         "allowShort": False,
@@ -753,16 +845,25 @@ def _apply_rule_templates(
     patch: dict[str, Any],
     history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    merged = dict(patch)
+    follow_up = bool(history and _looks_like_follow_up_edit(prompt))
+
+    if _looks_like_bullish_candle_long(prompt) and not follow_up:
+        if not _has_bullish_entry(merged.get("entryRules")):
+            tmpl = _bullish_candle_long_patch()
+            merged["entryRules"] = tmpl["entryRules"]
+            if "allowShort" not in merged:
+                merged["allowShort"] = False
+
     if not _looks_like_bb_reentry_long(prompt):
-        return patch
-    if history and _looks_like_follow_up_edit(prompt):
-        return patch
+        return merged
+    if follow_up:
+        return merged
     ratio = 1.5
     match = re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", prompt)
     if match:
         ratio = 1.5
     tmpl = _bollinger_reentry_long_patch(ratio)
-    merged = dict(patch)
     if not _has_band_reentry(merged.get("entryRules")):
         merged["entryRules"] = tmpl["entryRules"]
     if not merged.get("exitRules"):
@@ -827,19 +928,22 @@ def interpret_strategy(
     if not isinstance(patch, dict):
         patch = {}
 
+    chart_interval = _normalize_chart_interval(raw.get("chart_interval")) or _parse_chart_interval(prompt.strip())
+
     changed_fields = raw.get("changed_fields")
     if not isinstance(changed_fields, list):
         changed_fields = list(patch.keys())
-    # GPT가 changed_fields만 채우고 settings를 비우면(이해 못함/질문 모드)
-    # 실제 변경 없이 프론트가 설정·백테스트를 건드리지 않게 한다.
+
+    # Rule templates also run on empty patches — e.g. "1분봉 캔들 상승시 롱 진입".
+    patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+    if patch and not changed_fields:
+        changed_fields = list(patch.keys())
     changed_fields = [f for f in changed_fields if isinstance(f, str) and f in patch]
 
-    # 질문·조사 모드(빈 patch)에는 BB 템플릿을 주입하지 않는다 — 키워드만
-    # 맞는 일반 질문에 전략이 바뀌어 백테스트가 깨지는 문제를 막는다.
     if patch:
-        patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
         merged = current.merged(patch)
-        changed_fields = [f for f in changed_fields if f in patch]
+        if not changed_fields:
+            changed_fields = list(patch.keys())
     else:
         merged = current
 
@@ -891,6 +995,7 @@ def interpret_strategy(
         "sources": sources,
         "model": chosen_model,
         "route_reason": route_reason,
+        "chart_interval": chart_interval,
     }
 
 

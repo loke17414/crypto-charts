@@ -568,3 +568,4 @@ class StrategyInterpretResponse(BaseModel):
     market_insight: str = ""
     backtest_insight: str = ""
     sources: list[str] = Field(default_factory=list)
+    chart_interval: str | None = None

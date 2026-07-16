@@ -264,6 +264,10 @@ const StrategyAI = (() => {
         backtestSnapshot,
       });
 
+      if (result.chart_interval && FuturesBotApp.applyChartInterval) {
+        await FuturesBotApp.applyChartInterval(result.chart_interval);
+      }
+
       const changedFields = result.changed_fields || result.changedFields || [];
       const patch = result.patch && typeof result.patch === 'object' ? result.patch : null;
       const patchKeys = patch ? Object.keys(patch) : [];

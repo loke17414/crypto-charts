@@ -209,6 +209,7 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
         market_insight=result.get("market_insight") or "",
         backtest_insight=result.get("backtest_insight") or "",
         sources=result.get("sources") or [],
+        chart_interval=result.get("chart_interval"),
     )
 
 

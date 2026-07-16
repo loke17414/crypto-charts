@@ -2711,6 +2711,25 @@ const FuturesBotApp = (() => {
 
   const BOT_INTERVAL_KEY = 'crypto-charts-bot-interval';
 
+  async function applyChartInterval(interval) {
+    if (!interval || !INTERVALS[interval]) return false;
+    if ((Chart.getState()?.interval || state.interval) === interval) {
+      state.interval = interval;
+      setBotIntervalSelection(interval);
+      return true;
+    }
+    addLog(`AI 봉 주기 ${INTERVALS[interval].label} — 차트 전환 중...`, 'info');
+    const ok = await Chart.setInterval(interval);
+    if (!ok) {
+      addLog(`${INTERVALS[interval].label} 차트 전환 실패`, 'warn');
+      return false;
+    }
+    syncFromChart();
+    state.interval = interval;
+    setBotIntervalSelection(interval);
+    return true;
+  }
+
   function getBotIntervalSelection() {
     const active = document.querySelector('#botIntervalPicker [data-bot-interval].active');
     const val = active?.dataset.botInterval
@@ -3240,6 +3259,7 @@ const FuturesBotApp = (() => {
     getMarketContextForAi,
     getBacktestSnapshotForAi,
     applyStrategySettings,
+    applyChartInterval,
     updateStrategyRulesDisplay,
     exportStrategyForServer,
     getStrategySlots,
