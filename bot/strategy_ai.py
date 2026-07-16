@@ -640,6 +640,7 @@ def _call_openai(
     web_research: list[dict[str, Any]] | None = None,
     *,
     model: str | None = None,
+    strategy_slot_target: str | None = None,
 ) -> dict[str, Any]:
     api_key, default_model, _complex_model = _openai_models()
     if not api_key:
@@ -657,6 +658,7 @@ def _call_openai(
     user_content = json.dumps(
         {
             "current_settings": current.model_dump(),
+            "strategy_slot_target": strategy_slot_target,
             "indicator_catalog": indicator_catalog,
             "market_context": market_context or {},
             "backtest_snapshot": backtest_snapshot or {},
@@ -782,7 +784,7 @@ def interpret_strategy(
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
-    raw_settings.pop("strategySlotTarget", None)
+    strategy_slot_target = raw_settings.pop("strategySlotTarget", None)
     current = StrategySettings.model_validate(raw_settings)
 
     merged_history = merge_histories(history, load_turns())
@@ -818,6 +820,7 @@ def interpret_strategy(
         backtest_snapshot,
         web_research,
         model=chosen_model,
+        strategy_slot_target=strategy_slot_target,
     )
 
     patch = raw.get("settings") or {}

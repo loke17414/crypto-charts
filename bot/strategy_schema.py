@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -327,6 +328,63 @@ def sanitize_exit_rules(rules: Any) -> dict[str, Any] | None:
     return out or None
 
 
+def _slot_dict(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        out = dict(item)
+    elif hasattr(item, "model_dump"):
+        out = item.model_dump()
+    else:
+        return None
+    if out.get("entryRules") is None and isinstance(out.get("rules"), dict):
+        out["entryRules"] = out["rules"]
+    return out
+
+
+def _deep_merge_strategy_slots(current: Any, patch: Any) -> list[dict[str, Any]] | None:
+    """Merge slot patches by id; append unknown ids. Never drop unmentioned slots."""
+    if not isinstance(patch, list):
+        return None
+
+    base: list[dict[str, Any]] = []
+    if isinstance(current, list):
+        for item in current:
+            slot = _slot_dict(item)
+            if slot:
+                base.append(slot)
+
+    index_by_id = {s["id"]: i for i, s in enumerate(base) if s.get("id")}
+
+    for raw in patch[:10]:
+        incoming = _slot_dict(raw)
+        if not incoming:
+            continue
+
+        sid = incoming.get("id")
+        if sid and sid in index_by_id:
+            idx = index_by_id[sid]
+            prev = base[idx]
+            merged_slot = dict(prev)
+            if incoming.get("name") is not None:
+                merged_slot["name"] = incoming["name"]
+            if incoming.get("enabled") is not None:
+                merged_slot["enabled"] = incoming["enabled"]
+            if incoming.get("entryRules") is not None:
+                merged_rules = _deep_merge_entry_rules(prev.get("entryRules"), incoming["entryRules"])
+                merged_slot["entryRules"] = sanitize_entry_rules(merged_rules) or merged_rules
+            if incoming.get("exitRules") is not None:
+                merged_exit = _deep_merge_exit_rules(prev.get("exitRules"), incoming["exitRules"])
+                merged_slot["exitRules"] = sanitize_exit_rules(merged_exit) or merged_exit
+            base[idx] = merged_slot
+            continue
+
+        if not sid:
+            incoming["id"] = f"slot-{uuid.uuid4().hex[:12]}"
+        base.append(incoming)
+        index_by_id[incoming["id"]] = len(base) - 1
+
+    return base or None
+
+
 def _deep_merge_exit_rules(current: Any, patch: Any) -> dict[str, Any] | None:
     if not isinstance(patch, dict):
         return current if isinstance(current, dict) else None
@@ -425,8 +483,9 @@ class StrategySettings(BaseModel):
             return None
         out: list[StrategySlot] = []
         for item in value[:10]:
-            if isinstance(item, dict):
-                out.append(StrategySlot.model_validate(item))
+            slot = _slot_dict(item)
+            if slot:
+                out.append(StrategySlot.model_validate(slot))
         return out or None
 
     def merged(self, patch: dict[str, Any]) -> StrategySettings:
@@ -441,7 +500,9 @@ class StrategySettings(BaseModel):
                 data["exitRules"] = sanitize_exit_rules(merged_exit) or merged_exit
                 continue
             if key == "strategySlots" and value is not None:
-                data["strategySlots"] = value
+                merged_slots = _deep_merge_strategy_slots(data.get("strategySlots"), value)
+                if merged_slots is not None:
+                    data["strategySlots"] = merged_slots
                 continue
             if key in data and value is not None:
                 data[key] = value

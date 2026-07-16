@@ -99,15 +99,18 @@ const FuturesBotApp = (() => {
       return parsed
         .filter((s) => s && typeof s === 'object')
         .slice(0, MAX_STRATEGY_SLOTS)
-        .map((s, i) => ({
-          id: s.id ?? `slot-${Date.now()}-${i}`,
-          name: String(s.name || `조건 ${i + 1}`).slice(0, 30),
-          enabled: s.enabled !== false,
-          entryRules: s.entryRules
-            ? (window.StrategyEngine?.sanitizeEntryRules?.(s.entryRules) ?? s.entryRules)
-            : null,
-          exitRules: s.exitRules ?? null,
-        }));
+        .map((s, i) => {
+          const rawEntry = s.entryRules ?? s.rules ?? null;
+          return {
+            id: s.id ?? `slot-${Date.now()}-${i}`,
+            name: String(s.name || `조건 ${i + 1}`).slice(0, 30),
+            enabled: s.enabled !== false,
+            entryRules: rawEntry
+              ? (window.StrategyEngine?.sanitizeEntryRules?.(rawEntry) ?? rawEntry)
+              : null,
+            exitRules: s.exitRules ?? null,
+          };
+        });
     } catch {
       return null;
     }
@@ -654,6 +657,51 @@ const FuturesBotApp = (() => {
     }
   }
 
+  function normalizeIncomingSlot(raw, index = 0) {
+    const rawEntry = raw?.entryRules ?? raw?.rules ?? null;
+    let entryRules = null;
+    if (rawEntry) {
+      entryRules = StrategyEngine.sanitizeEntryRules?.(rawEntry) ?? rawEntry;
+    }
+    return {
+      id: raw?.id || newSlotId(),
+      name: String(raw?.name || `조건 ${index + 1}`).slice(0, 30),
+      enabled: raw?.enabled !== false,
+      entryRules,
+      exitRules: raw?.exitRules ?? null,
+    };
+  }
+
+  function mergeStrategySlotsPatch(existingSlots, patchSlots) {
+    if (!Array.isArray(patchSlots) || !patchSlots.length) return existingSlots || [];
+    const merged = (existingSlots || []).map((s) => ({ ...s }));
+    const indexById = new Map(merged.map((s, i) => [s.id, i]));
+
+    patchSlots.forEach((raw, pi) => {
+      const incoming = normalizeIncomingSlot(raw, pi);
+      const idx = incoming.id && indexById.has(incoming.id) ? indexById.get(incoming.id) : -1;
+      if (idx >= 0) {
+        const prev = merged[idx];
+        const nextEntry = incoming.entryRules && entryRulesHaveSignals(incoming.entryRules)
+          ? incoming.entryRules
+          : prev.entryRules;
+        merged[idx] = {
+          ...prev,
+          name: incoming.name || prev.name,
+          enabled: incoming.enabled,
+          entryRules: nextEntry,
+          exitRules: incoming.exitRules != null ? incoming.exitRules : prev.exitRules,
+        };
+        return;
+      }
+      if (merged.length >= MAX_STRATEGY_SLOTS) return;
+      if (incoming.entryRules && !entryRulesHaveSignals(incoming.entryRules)) return;
+      merged.push(incoming);
+      indexById.set(incoming.id, merged.length - 1);
+    });
+    return merged;
+  }
+
   function resolveTargetStrategySlot(targetSlotId) {
     if (targetSlotId && targetSlotId !== '__new__') {
       return (state.strategySlots || []).find((s) => s.id === targetSlotId) || null;
@@ -729,7 +777,8 @@ const FuturesBotApp = (() => {
       const nextRules = settings.entryRules
         ? StrategyEngine.sanitizeEntryRules(settings.entryRules)
         : null;
-      if (settings.entryRules && !entryRulesHaveSignals(nextRules) && prevHadSignals) {
+      if (settings.entryRules && !entryRulesHaveSignals(nextRules)
+        && (prevHadSignals || targetSlotId === '__new__')) {
         entryRulesRejected = true;
         addLog('AI가 보낸 진입 조건이 비어 있거나 잘못되어 기존 조건을 유지합니다.', 'warn');
       } else {
@@ -755,34 +804,27 @@ const FuturesBotApp = (() => {
     }
     saveStrategyStorage(state.entryRules, state.exitRules);
 
-    if (touches('entryRules') && settings.entryRules && !entryRulesRejected) {
-      let slot = resolveTargetStrategySlot(targetSlotId);
-      if (!slot && targetSlotId === '__new__') slot = addStrategySlot();
-      else if (!slot && !state.strategySlots.length) slot = addStrategySlot();
-      if (slot) {
-        slot.entryRules = state.entryRules;
-        if (touches('exitRules')) slot.exitRules = state.exitRules;
-        slot.enabled = true;
-        addLog(`진입 조건 [${slot.name}]에 전략이 저장되었습니다.`, 'info');
-      }
+    if (touches('strategySlots') && Array.isArray(settings.strategySlots)) {
+      state.strategySlots = mergeStrategySlotsPatch(state.strategySlots, settings.strategySlots);
       saveStrategySlots();
       renderStrategySlotsPanel();
       updateStrategyAiSlotOptions();
     }
 
-    if (touches('strategySlots') && Array.isArray(settings.strategySlots)) {
-      state.strategySlots = settings.strategySlots.map((s, i) => ({
-        id: s.id ?? newSlotId(),
-        name: String(s.name || `조건 ${i + 1}`).slice(0, 30),
-        enabled: s.enabled !== false,
-        entryRules: s.entryRules
-          ? (StrategyEngine.sanitizeEntryRules?.(s.entryRules) ?? s.entryRules)
-          : null,
-        exitRules: s.exitRules ?? null,
-      }));
-      saveStrategySlots();
-      renderStrategySlotsPanel();
-      updateStrategyAiSlotOptions();
+    // entryRules-only patch: write into the target slot after slot merge so it wins.
+    if (touches('entryRules') && settings.entryRules && !entryRulesRejected) {
+      let slot = resolveTargetStrategySlot(targetSlotId);
+      if (!slot && targetSlotId === '__new__') slot = addStrategySlot();
+      else if (!slot && !state.strategySlots.length) slot = addStrategySlot();
+      if (slot && entryRulesHaveSignals(state.entryRules)) {
+        slot.entryRules = state.entryRules;
+        if (touches('exitRules')) slot.exitRules = state.exitRules;
+        slot.enabled = true;
+        addLog(`진입 조건 [${slot.name}]에 전략이 저장되었습니다.`, 'info');
+        saveStrategySlots();
+        renderStrategySlotsPanel();
+        updateStrategyAiSlotOptions();
+      }
     }
 
     syncStateEntryRulesFromSlots();
