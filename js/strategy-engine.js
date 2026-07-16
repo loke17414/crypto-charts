@@ -440,6 +440,40 @@ const StrategyEngine = (() => {
       };
     }
 
+    if (type === 'fvg') {
+      const state = ['present', 'in_zone', 'filled'].includes(cond.state) ? cond.state : 'present';
+      return {
+        type: 'fvg',
+        side: cond.side === 'bearish' ? 'bearish' : 'bullish',
+        state,
+        lookback: Math.max(5, parseInt(cond.lookback, 10) || 30),
+      };
+    }
+
+    if (type === 'divergence') {
+      return {
+        type: 'divergence',
+        kind: cond.kind === 'bearish' ? 'bearish' : 'bullish',
+        indicator: cond.indicator === 'macd' ? 'macd' : 'rsi',
+        lookback: Math.max(15, parseInt(cond.lookback, 10) || 40),
+        period: Math.max(2, parseInt(cond.period, 10) || 14),
+      };
+    }
+
+    if (type === 'swing_break' || type === 'swing_near') {
+      const pivotBars = Math.max(2, parseInt(cond.pivotBars, 10) || 5);
+      const out = {
+        type,
+        side: cond.side === 'short' ? 'short' : 'long',
+        pivotBars,
+        lookback: Math.max(pivotBars * 3, parseInt(cond.lookback, 10) || 60),
+      };
+      if (type === 'swing_near') {
+        out.tolerancePct = Math.max(0.05, parseFloat(cond.tolerancePct) || 0.5);
+      }
+      return out;
+    }
+
     if (cond.indicator && cond.op != null) {
       const right = cond.value != null ? cond.value : cond.right;
       return {
@@ -959,6 +993,14 @@ const StrategyEngine = (() => {
       return ChartStructure.evaluateDivergence(candles, index, condition);
     }
 
+    if (type === 'swing_break' && window.ChartStructure) {
+      return ChartStructure.evaluateSwingBreak(candles, index, condition);
+    }
+
+    if (type === 'swing_near' && window.ChartStructure) {
+      return ChartStructure.evaluateSwingNear(candles, index, condition);
+    }
+
     return false;
   }
 
@@ -1014,6 +1056,11 @@ const StrategyEngine = (() => {
           if (lb > maxPeriod) maxPeriod = lb;
           if (period + lb > maxPeriod) maxPeriod = period + lb;
         }
+        if (cond.type === 'swing_break' || cond.type === 'swing_near') {
+          const lb = parseInt(cond.lookback, 10) || 60;
+          const pb = parseInt(cond.pivotBars, 10) || 5;
+          if (lb + pb > maxPeriod) maxPeriod = lb + pb;
+        }
         if (cond.type === 'cross_above' || cond.type === 'cross_below' || cond.type === 'compare') {
           visit(cond.left);
           visit(cond.right);
@@ -1065,6 +1112,24 @@ const StrategyEngine = (() => {
       const label = window.CandlePatterns?.patternLabel(cond.pattern) || cond.pattern;
       const offset = cond.offset ? ` (${cond.offset}봉전)` : '';
       return `캔들 ${label}${offset}`;
+    }
+    if (type === 'fvg') {
+      const side = cond.side === 'bearish' ? '하락' : '상승';
+      const state = cond.state === 'in_zone' ? '갭 안 진입' : cond.state === 'filled' ? '갭 메움' : '갭 존재';
+      return `FVG ${side} ${state}`;
+    }
+    if (type === 'divergence') {
+      const kind = cond.kind === 'bearish' ? '하락' : '상승';
+      return `${(cond.indicator || 'rsi').toUpperCase()} ${kind} 다이버전스`;
+    }
+    if (type === 'swing_break') {
+      const pb = cond.pivotBars || 5;
+      return cond.side === 'short' ? `전 저점 하향 돌파 (피벗 ${pb}봉)` : `전 고점 상향 돌파 (피벗 ${pb}봉)`;
+    }
+    if (type === 'swing_near') {
+      const pb = cond.pivotBars || 5;
+      const tol = cond.tolerancePct || 0.5;
+      return cond.side === 'short' ? `전 고점 부근 ±${tol}% (피벗 ${pb}봉)` : `전 저점 부근 ±${tol}% (피벗 ${pb}봉)`;
     }
     const left = formatOperandLabel(cond.left);
     if (type === 'cross_above') return `${left} 골든크로스 ${formatOperandLabel(cond.right)}`;

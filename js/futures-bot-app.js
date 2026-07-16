@@ -386,6 +386,8 @@ const FuturesBotApp = (() => {
     const last20 = candles.slice(-20);
     const upBars = last20.filter((c, i, arr) => i > 0 && c.close > arr[i - 1].close).length;
 
+    const rangeHigh = Math.max(...candles.slice(-lookback).map((c) => c.high));
+    const rangeLow = Math.min(...candles.slice(-lookback).map((c) => c.low));
     const ctx = {
       symbol: state.symbol,
       interval: state.interval,
@@ -394,14 +396,17 @@ const FuturesBotApp = (() => {
       change24BarsPct: Math.round(changePct * 100) / 100,
       rsi14: rsi14 != null ? Math.round(rsi14 * 10) / 10 : null,
       last20Bars: { up: upBars, down: Math.max(0, last20.length - 1 - upBars) },
-      recentHigh: Math.max(...candles.slice(-lookback).map((c) => c.high)),
-      recentLow: Math.min(...candles.slice(-lookback).map((c) => c.low)),
+      // Range extremes of last N bars — NOT swing pivots. Use structure.swings for 전고점/전저점.
+      recentHigh: rangeHigh,
+      recentLow: rangeLow,
+      recentRangeNote: 'recentHigh/recentLow = simple max/min of last ~24 bars. NOT confirmed swing highs/lows. For 전고점/전저점 ALWAYS use structure.swings.',
     };
 
     if (window.ChartStructure?.analyzeForAi) {
       const structure = ChartStructure.analyzeForAi(candles, { recentCount: 15, fvgLookback: 30 });
       ctx.recentCandles15 = structure.recentCandles;
       ctx.structure = {
+        swings: structure.swings,
         fvg: structure.fvg,
         divergence: structure.divergence,
       };

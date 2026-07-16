@@ -232,6 +232,33 @@ def _sanitize_condition(cond: Any) -> dict[str, Any] | None:
             "period": max(2, period),
         }
 
+    if cond_type == "swing_break":
+        side = "short" if cond.get("side") == "short" else "long"
+        pivot_bars = max(2, int(cond.get("pivotBars") or 5))
+        lookback = max(pivot_bars * 3, int(cond.get("lookback") or 60))
+        return {
+            "type": "swing_break",
+            "side": side,
+            "pivotBars": pivot_bars,
+            "lookback": lookback,
+        }
+
+    if cond_type == "swing_near":
+        side = "short" if cond.get("side") == "short" else "long"
+        pivot_bars = max(2, int(cond.get("pivotBars") or 5))
+        lookback = max(pivot_bars * 3, int(cond.get("lookback") or 60))
+        try:
+            tolerance = float(cond.get("tolerancePct") or 0.5)
+        except (TypeError, ValueError):
+            tolerance = 0.5
+        return {
+            "type": "swing_near",
+            "side": side,
+            "pivotBars": pivot_bars,
+            "lookback": lookback,
+            "tolerancePct": max(0.05, tolerance),
+        }
+
     if cond.get("indicator") and cond.get("op") is not None:
         right_val = cond.get("value") if cond.get("value") is not None else cond.get("right")
         left = _sanitize_operand(

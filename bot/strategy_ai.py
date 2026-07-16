@@ -110,6 +110,26 @@ Condition types:
 7) divergence — price vs RSI/MACD pivot mismatch
    { "type":"divergence", "kind":"bullish"|"bearish", "indicator":"rsi"|"macd", "lookback":40, "period":14 }
    bullish = price lower low + indicator higher low; bearish = price higher high + indicator lower high
+8) swing_break — close breaks the last CONFIRMED swing high/low
+   { "type":"swing_break", "side":"long"|"short", "pivotBars":5, "lookback":60 }
+   long = close crosses above last confirmed swing high (전 고점 돌파); short = below last swing low (전 저점 이탈)
+9) swing_near — close within tolerancePct of the last confirmed swing level (support/resistance)
+   { "type":"swing_near", "side":"long"|"short", "pivotBars":5, "lookback":60, "tolerancePct":0.5 }
+   long = near swing low (전 저점 지지); short = near swing high (전 고점 저항)
+
+SWING HIGH/LOW (전 고점/전 저점) — CRITICAL (most common AI mistake):
+- WRONG: "이전 캔들이 더 낮으니 지금/직전 봉이 전고점" — NEVER do this.
+- RIGHT: candle[i] is a swing high ONLY if pivotBars (default 5) candles BEFORE and AFTER
+  all have strictly lower highs. Same for lows with higher lows. Both sides required.
+- The most recent pivotBars candles can NEVER be confirmed swings (right side incomplete).
+- market_context.recentHigh / recentLow are ONLY the max/min of the last ~24 bars —
+  they are NOT swing pivots. Do not call them 전고점/전저점.
+- market_context.structure.swings is the ONLY source of truth for 전고점/전저점:
+  lastSwingHigh, lastSwingLow, recentHighs/recentLows (price + barsAgo),
+  priceVsLastHighPct / priceVsLastLowPct, relation.aboveLastHigh / belowLastLow.
+- ALWAYS read structure.swings when the user mentions 전고점, 전저점, 지지, 저항, 돌파, 스윙.
+- Strategies: 전고점 돌파 / 전저점 이탈 → swing_break; 지지/저항 반등 → swing_near.
+  Prefer pivotBars:5 (not 1 or 2). Do NOT fake swings with compare high[offset:1].
 
 Operand:
 - overlay-band fields (boll/env/kc/dc): upper, middle, lower
@@ -149,6 +169,10 @@ Examples:
 - FVG bullish long: { type:"fvg", side:"bullish", state:"in_zone", lookback:30 }
 - RSI bullish divergence long: { type:"divergence", kind:"bullish", indicator:"rsi", lookback:40 }
 - FVG + divergence combo: logic "all" with fvg in_zone AND divergence bullish
+- 전고점 돌파 롱: { type:"swing_break", side:"long", pivotBars:5, lookback:60 }
+- 전저점 이탈 숏: { type:"swing_break", side:"short", pivotBars:5, lookback:60 }
+- 전저점 지지 롱: { type:"swing_near", side:"long", pivotBars:5, lookback:60, tolerancePct:0.5 }
+- 전고점 저항 숏: { type:"swing_near", side:"short", pivotBars:5, lookback:60, tolerancePct:0.5 }
 - Hammer + RSI: candle_pattern hammer AND rsi <= 30
 - Bullish candle: { type:"candle_pattern", pattern:"bullish" } or compare is_bullish == 1
 - Simple bullish long (양봉/캔들 상승 롱): entryRules.long = compare is_bullish == 1 OR close > open; set short.enabled=false
@@ -178,8 +202,10 @@ Rules:
 MARKET DATA & BACKTEST (critical for accuracy):
 - You receive market_context with OHLC candle tape and precomputed structure — NOT a chart image.
 - recentCandles15: last 15 candles oldest→newest (o,h,l,c, dir, bodyPct, offset). ALWAYS read this when user asks about "최근 N봉", candle patterns, or visual price action.
-- structure.fvg: open Fair Value Gaps (bullish/bearish zones with top/bottom); structure.divergence: rsi/macd bullish/bearish divergence flags.
-- For FVG/divergence strategies use condition types fvg and divergence in entryRules — do NOT fake them with compare/cross alone.
+- structure.swings: CONFIRMED 전고점/전저점 (pivotBars=5 both sides). Quote lastSwingHigh/lastSwingLow
+  prices and barsAgo in answers. Never invent swings from a single candle or from recentHigh/recentLow.
+- structure.fvg / structure.divergence: FVG zones and RSI/MACD divergence flags.
+- For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 - hoveredCandle (optional): the exact candle the user is pointing at on the chart with full stats
   (o/h/l/c, changePct, rangePct=volatility, bodyPct, upperWickPct/lowerWickPct, volumeVsAvg20, barsAgo).
   When the user says "이 캔들", "지금 가리키는 봉", "커서에 있는 캔들" — answer about hoveredCandle, not the latest bar.
@@ -930,6 +956,120 @@ def _has_band_reentry(rules: Any) -> bool:
     return False
 
 
+def _has_swing_entry(rules: Any) -> bool:
+    if not isinstance(rules, dict):
+        return False
+    for side in ("long", "short"):
+        group = rules.get(side)
+        if not isinstance(group, dict):
+            continue
+        for cond in group.get("conditions") or []:
+            if isinstance(cond, dict) and cond.get("type") in {"swing_break", "swing_near"}:
+                return True
+    return False
+
+
+def _looks_like_swing_strategy(prompt: str) -> bool:
+    text = (prompt or "").lower()
+    swing_kw = any(
+        k in text
+        for k in (
+            "전고점", "전저점", "전고", "전저", "스윙", "swing",
+            "지지", "저항", "돌파", "이탈", "피봇", "pivot",
+        )
+    )
+    apply_kw = any(
+        k in text
+        for k in ("롱", "숏", "진입", "전략", "조건", "long", "short", "매수", "매도", "적용")
+    )
+    return swing_kw and apply_kw
+
+
+def _looks_like_swing_breakout(prompt: str) -> bool:
+    text = (prompt or "").lower()
+    return any(k in text for k in ("돌파", "이탈", "breakout", "break", "깨", "뚫"))
+
+
+def _swing_breakout_patch() -> dict[str, Any]:
+    """전고점 돌파 롱 / 전저점 이탈 숏 — confirmed pivots only (pivotBars=5)."""
+    return {
+        "allowShort": True,
+        "entryRules": {
+            "long": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "swing_break",
+                    "side": "long",
+                    "pivotBars": 5,
+                    "lookback": 60,
+                }],
+            },
+            "short": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "swing_break",
+                    "side": "short",
+                    "pivotBars": 5,
+                    "lookback": 60,
+                }],
+            },
+        },
+        "exitRules": {
+            "long": {
+                "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+            "short": {
+                "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+        },
+    }
+
+
+def _swing_bounce_patch() -> dict[str, Any]:
+    """전저점 지지 롱 / 전고점 저항 숏 — touch confirmed swing within 0.5%."""
+    return {
+        "allowShort": True,
+        "entryRules": {
+            "long": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "swing_near",
+                    "side": "long",
+                    "pivotBars": 5,
+                    "lookback": 60,
+                    "tolerancePct": 0.5,
+                }],
+            },
+            "short": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "swing_near",
+                    "side": "short",
+                    "pivotBars": 5,
+                    "lookback": 60,
+                    "tolerancePct": 0.5,
+                }],
+            },
+        },
+        "exitRules": {
+            "long": {
+                "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+            "short": {
+                "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+        },
+    }
+
+
 def _apply_rule_templates(
     prompt: str,
     patch: dict[str, Any],
@@ -944,6 +1084,19 @@ def _apply_rule_templates(
             merged["entryRules"] = tmpl["entryRules"]
             if "allowShort" not in merged:
                 merged["allowShort"] = False
+
+    if _looks_like_swing_strategy(prompt) and not follow_up:
+        tmpl = (
+            _swing_breakout_patch()
+            if _looks_like_swing_breakout(prompt)
+            else _swing_bounce_patch()
+        )
+        if not _has_swing_entry(merged.get("entryRules")):
+            merged["entryRules"] = tmpl["entryRules"]
+            if not merged.get("exitRules"):
+                merged["exitRules"] = tmpl["exitRules"]
+            if "allowShort" not in merged:
+                merged["allowShort"] = tmpl.get("allowShort", True)
 
     if not _looks_like_bb_reentry_long(prompt):
         return merged

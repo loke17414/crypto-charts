@@ -192,6 +192,54 @@ def _find_pivots(values: list[float | None], kind: str, left: int = 2, right: in
     return pivots
 
 
+def _detect_swings(
+    highs: list[float],
+    lows: list[float],
+    *,
+    pivot_bars: int = 5,
+    lookback: int = 60,
+    max_points: int = 4,
+) -> dict[str, Any]:
+    """Confirmed pivots only: pivot_bars candles on BOTH sides must be lower/higher."""
+    n = len(highs)
+    result: dict[str, Any] = {
+        "pivotBars": pivot_bars,
+        "recentHighs": [],
+        "recentLows": [],
+        "lastSwingHigh": None,
+        "lastSwingLow": None,
+    }
+    if n < pivot_bars * 2 + 1:
+        return result
+
+    def is_pivot_high(i: int) -> bool:
+        level = highs[i]
+        return all(highs[j] < level for j in range(i - pivot_bars, i + pivot_bars + 1) if j != i)
+
+    def is_pivot_low(i: int) -> bool:
+        level = lows[i]
+        return all(lows[j] > level for j in range(i - pivot_bars, i + pivot_bars + 1) if j != i)
+
+    last_idx = n - 1
+    search_end = last_idx - pivot_bars
+    search_start = max(pivot_bars, last_idx - lookback)
+    r_highs: list[dict[str, Any]] = []
+    r_lows: list[dict[str, Any]] = []
+    for i in range(search_end, search_start - 1, -1):
+        if len(r_highs) < max_points and is_pivot_high(i):
+            r_highs.append({"price": _round(highs[i]), "barsAgo": last_idx - i})
+        if len(r_lows) < max_points and is_pivot_low(i):
+            r_lows.append({"price": _round(lows[i]), "barsAgo": last_idx - i})
+        if len(r_highs) >= max_points and len(r_lows) >= max_points:
+            break
+
+    result["recentHighs"] = r_highs
+    result["recentLows"] = r_lows
+    result["lastSwingHigh"] = r_highs[0] if r_highs else None
+    result["lastSwingLow"] = r_lows[0] if r_lows else None
+    return result
+
+
 def _detect_divergence(
     closes: list[float],
     rsi_vals: list[float | None],
@@ -253,7 +301,36 @@ def _build_structure(
         if z["bottom"] is not None and z["top"] is not None and z["bottom"] <= price <= z["top"]
     ]
     rsi_div = _detect_divergence(closes, rsi_vals)
+    swings = _detect_swings(highs, lows)
+    last_high = swings.get("lastSwingHigh")
+    last_low = swings.get("lastSwingLow")
+
+    def _dist_pct(level: float | None) -> float | None:
+        if level is None or not price:
+            return None
+        return round(((price - level) / level) * 100, 2)
+
+    high_price = last_high["price"] if isinstance(last_high, dict) else None
+    low_price = last_low["price"] if isinstance(last_low, dict) else None
     return {
+        "swings": {
+            **swings,
+            "note": (
+                f"CONFIRMED swings only: needs {swings['pivotBars']} bars on BOTH sides. "
+                "Never judge from one neighbor candle. Ignore recentHigh/recentLow range max/min."
+            ),
+            "priceVsLastHighPct": _dist_pct(high_price),
+            "priceVsLastLowPct": _dist_pct(low_price),
+            "relation": {
+                "aboveLastHigh": (price > high_price) if high_price is not None else None,
+                "belowLastLow": (price < low_price) if low_price is not None else None,
+                "betweenSwings": (
+                    high_price is not None
+                    and low_price is not None
+                    and low_price < price < high_price
+                ),
+            },
+        },
         "fvg": {
             "open": open_fvgs[-5:],
             "priceInZones": price_in_zones,
