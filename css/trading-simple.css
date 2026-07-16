@@ -35,6 +35,7 @@
   min-height: 0;
   background: var(--bg-primary);
   border-right: 1px solid var(--simple-border);
+  overflow: hidden;
 }
 
 .trading-page--simple .chart-top-bar {
@@ -130,8 +131,9 @@
 }
 
 .trading-page--simple .chart-container {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: 62vh;
   display: flex;
   flex-direction: column;
 }
@@ -184,15 +186,47 @@
 }
 
 .trading-page--simple .chart-ai-panel {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   padding: 0.65rem 0.75rem;
   border-top: 1px solid var(--simple-border);
   background: #151820;
-  min-height: 140px;
-  max-height: min(28vh, 240px);
+  min-height: 210px;
+  max-height: 38vh;
+  overflow: hidden;
+}
+
+.trading-page--simple .chart-ai-panel__composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+  align-items: end;
+}
+
+.trading-page--simple .chart-ai-panel__settings {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.trading-page--simple .chart-ai-panel__settings summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 0.25rem 0;
+}
+
+.trading-page--simple .chart-ai-panel__settings[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.trading-page--simple .bot-close-btn {
+  margin-top: 0.45rem;
 }
 
 .trading-page--simple .chart-advanced-panel .backtest-bar {
@@ -270,11 +304,25 @@
 }
 
 .trading-page--simple .chart-ai-panel__messages {
-  flex: 1;
-  min-height: 48px;
-  max-height: 90px;
+  flex: 1 1 auto;
+  min-height: 88px;
+  max-height: none;
   overflow-y: auto;
   font-size: 0.72rem;
+  background: #12151a;
+  border: 1px solid var(--simple-border);
+  border-radius: 6px;
+  padding: 0.45rem;
+}
+
+.trading-page--simple .chart-ai-panel__messages .ai-msg--user {
+  background: rgba(249, 115, 22, 0.15);
+  color: var(--text-primary);
+}
+
+.trading-page--simple .chart-ai-panel__messages .ai-msg--assistant {
+  background: #252830;
+  color: var(--text-secondary);
 }
 
 .trading-page--simple .chart-ai-panel .strategy-ai-details,

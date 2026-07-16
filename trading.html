@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718b">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718c">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -105,22 +105,14 @@
 
         <section class="chart-ai-panel">
           <div class="chart-ai-panel__head">
-            <h3 class="chart-ai-panel__title">AI 전략</h3>
+            <h3 class="chart-ai-panel__title">AI 대화</h3>
             <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
           </div>
-          <div id="strategyAiDetails" class="strategy-ai-details"></div>
-          <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-          <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
-            <label for="openaiApiKey">OpenAI Key</label>
-            <input type="password" id="openaiApiKey" autocomplete="off">
-          </div>
-          <div class="strategy-ai-actions chart-ai-panel__actions">
-            <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
-            <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
-            <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
-            <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">초기화</button>
-          </div>
           <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
+          <div class="strategy-ai-input chart-ai-panel__composer">
+            <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략 질문·설정 (예: RSI 30 이하 롱, SL 1.5% TP 3%)"></textarea>
+            <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">전송</button>
+          </div>
           <div class="strategy-ai-quick">
             <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
             <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
@@ -130,10 +122,21 @@
             <label for="strategyAiTargetSlot">슬롯</label>
             <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
           </div>
-          <div class="strategy-ai-input">
-            <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략을 설명하면 진입·SL/TP를 함께 설정합니다…"></textarea>
-            <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">적용</button>
-          </div>
+          <details class="chart-ai-panel__settings">
+            <summary>GPT 연결 설정</summary>
+            <div id="strategyAiDetails" class="strategy-ai-details"></div>
+            <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
+            <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
+              <label for="openaiApiKey">OpenAI Key</label>
+              <input type="password" id="openaiApiKey" autocomplete="off">
+            </div>
+            <div class="strategy-ai-actions chart-ai-panel__actions">
+              <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
+              <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
+              <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
+              <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
+            </div>
+          </details>
         </section>
 
         <details class="chart-advanced-panel">
@@ -190,6 +193,7 @@
             <button type="button" id="startBotBtn" class="btn btn--simple-primary">봇 시작</button>
             <button type="button" id="stopBotBtn" class="btn btn--simple-ghost" disabled>봇 정지</button>
           </div>
+          <button type="button" id="closeBtn" class="btn btn--simple-ghost btn--block btn--sm bot-close-btn">수동 청산</button>
         </div>
 
         <div class="control-section">
@@ -243,7 +247,6 @@
               <button type="button" id="shortBtn" class="btn btn--short">SHORT</button>
             </div>
             <div class="trading-actions">
-              <button type="button" id="closeBtn" class="btn btn--ghost btn--block">청산</button>
               <button type="button" id="resetBtn" class="btn btn--ghost btn--block">모의 초기화</button>
             </div>
           </div>
@@ -280,13 +283,13 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260718b"></script>
+  <script src="js/indicators.js?v=20260718c"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/strategy-engine.js?v=20260717c"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
-  <script src="js/app.js?v=20260717d"></script>
+  <script src="js/app.js?v=20260718b"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260717e"></script>
   <script src="js/backtest-loader.js?v=20260716e"></script>
@@ -296,6 +299,6 @@
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/futures-bot-app.js?v=20260718a"></script>
-  <script src="js/strategy-ai.js?v=20260717d"></script>
+  <script src="js/strategy-ai.js?v=20260718b"></script>
 </body>
 </html>

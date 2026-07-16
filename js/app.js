@@ -626,6 +626,17 @@ const TV_COLORS = {
   line: '#f0b90b',
 };
 
+function usesEmbeddedIndicatorPanes() {
+  return isTradingPage && Boolean(document.querySelector('.indicator-panes--in-chart'));
+}
+
+function resolveMainChartHeight() {
+  if (usesEmbeddedIndicatorPanes()) return null;
+  const workspace = document.querySelector('.chart-workspace');
+  const mainEl = document.querySelector('#chartArea')?.parentElement;
+  return Math.max(workspace?.clientHeight || mainEl?.clientHeight || 280, 200);
+}
+
 function initChart(container) {
   if (chart) {
     chart.remove();
@@ -684,7 +695,7 @@ function initChart(container) {
     },
     kineticScroll: { mouse: true, touch: true },
     width: container.clientWidth,
-    height: Math.max(document.querySelector('.chart-workspace')?.clientHeight || 280, 200),
+    height: resolveMainChartHeight() || Math.max(document.querySelector('.chart-main')?.clientHeight || 280, 200),
   });
 
   candleSeries = chart.addCandlestickSeries({
@@ -724,8 +735,13 @@ function initChart(container) {
   resizeObserver = new ResizeObserver(() => {
     if (chart && container.clientWidth > 0) {
       if (typeof IndicatorManager !== 'undefined') IndicatorManager.onResize();
-      const h = workspace?.clientHeight || mainEl?.clientHeight || 280;
-      chart.applyOptions({ width: container.clientWidth, height: h });
+      const embedded = usesEmbeddedIndicatorPanes();
+      if (embedded) {
+        chart.applyOptions({ width: container.clientWidth });
+      } else {
+        const h = resolveMainChartHeight() || 280;
+        chart.applyOptions({ width: container.clientWidth, height: h });
+      }
       if (typeof DrawingManager !== 'undefined') DrawingManager.redraw();
       updatePositionOverlayLabels();
     }

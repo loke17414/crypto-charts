@@ -256,8 +256,14 @@ const StrategyAI = (() => {
     if (!trimmed) return;
 
     const priorHistory = conversationHistory.slice(-20);
+    const wantsStrategyApply = looksLikeStrategyApply(trimmed);
     addMessage('user', trimmed, { persist: true });
-    setThinking(true, '차트·백테스트 데이터 분석 후 GPT 전략 적용 중...');
+    setThinking(
+      true,
+      wantsStrategyApply
+        ? '차트·백테스트 분석 후 전략 적용 중...'
+        : 'GPT와 대화 중...',
+    );
 
     try {
       const serverOk = await FuturesApiClient.checkServer();
@@ -288,8 +294,8 @@ const StrategyAI = (() => {
       const patch = result.patch && typeof result.patch === 'object' ? result.patch : null;
       const patchKeys = patch ? Object.keys(patch) : [];
 
-      if (!patchKeys.length && looksLikeStrategyApply(trimmed)) {
-        addMessage('assistant', formatAiError(STRATEGY_APPLY_HINT), { persist: true });
+      if (!patchKeys.length && wantsStrategyApply) {
+        addMessage('assistant', formatAiError(result.summary || STRATEGY_APPLY_HINT), { persist: true });
         return;
       }
 
@@ -314,7 +320,7 @@ const StrategyAI = (() => {
       }
 
       const changed = changedFields.join(', ');
-      const parts = [result.summary];
+      const parts = [result.summary || '응답을 받았습니다.'];
       if (result.model) {
         parts.push(`🤖 ${result.model}${result.route_reason ? ` (${result.route_reason})` : ''}`);
       }
@@ -325,7 +331,7 @@ const StrategyAI = (() => {
         parts.push(`🔗 출처:\n${result.sources.map((u) => `· ${u}`).join('\n')}`);
       }
 
-      const reply = parts.join('\n');
+      const reply = parts.filter(Boolean).join('\n');
       addMessage('assistant', reply, {
         persist: true,
         meta: {
@@ -491,8 +497,8 @@ const StrategyAI = (() => {
     } else {
       addMessage(
         'assistant',
-        '1) OpenAI API Key 입력 → 2) 검증 후 저장 (서버 .env에 1회 저장) → 3) 전략을 자연어로 설명하세요.\n이후에는 키를 다시 입력할 필요 없습니다.',
-        { persist: true },
+        '아래 입력창에 전략을 질문하거나 설명하세요. GPT 연결 설정은 "GPT 연결 설정"을 펼쳐 OpenAI Key를 저장하면 됩니다.',
+        { persist: false },
       );
     }
   }
