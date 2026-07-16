@@ -644,6 +644,28 @@ const FuturesBotApp = (() => {
       || (s.short.enabled && s.short.conditions.length > 0);
   }
 
+  // getSettings() returns live state.strategySlots by reference — compare keys
+  // only after a deep snapshot or in-place slot edits look unchanged.
+  function snapshotSettingsForCacheKey(settings) {
+    try {
+      return JSON.parse(JSON.stringify(settings));
+    } catch {
+      return settings;
+    }
+  }
+
+  function resolveTargetStrategySlot(targetSlotId) {
+    if (targetSlotId && targetSlotId !== '__new__') {
+      return (state.strategySlots || []).find((s) => s.id === targetSlotId) || null;
+    }
+    if (state.strategySlots.length === 1) return state.strategySlots[0];
+    const selected = $('#strategyAiTargetSlot')?.value;
+    if (selected && selected !== '__new__') {
+      return state.strategySlots.find((s) => s.id === selected) || null;
+    }
+    return state.strategySlots.find((s) => s.enabled !== false) || state.strategySlots[0] || null;
+  }
+
   function applyStrategySettings(settings, {
     rulesHtml = null, summary = null, changedFields = [], targetSlotId = null, patch = null,
   } = {}) {
@@ -665,7 +687,7 @@ const FuturesBotApp = (() => {
     }
 
     readFormSettings();
-    const prevSettings = getSettings();
+    const prevCacheKey = getBacktestCacheKey(snapshotSettingsForCacheKey(getSettings()));
 
     if (touches('rsiPeriod')) setFieldValue('rsiPeriod', settings.rsiPeriod);
     if (touches('rsiOversold')) setFieldValue('rsiOversold', settings.rsiOversold);
@@ -719,6 +741,11 @@ const FuturesBotApp = (() => {
           ? StrategyEngine.sanitizeExitRules(settings.exitRules)
           : settings.exitRules)
         : null;
+      const exitSlot = resolveTargetStrategySlot(targetSlotId);
+      if (exitSlot) {
+        exitSlot.exitRules = state.exitRules;
+        saveStrategySlots();
+      }
     }
 
     if (state.entryRules && StrategyEngine.validateEntryRules) {
@@ -728,13 +755,9 @@ const FuturesBotApp = (() => {
     saveStrategyStorage(state.entryRules, state.exitRules);
 
     if (touches('entryRules') && settings.entryRules && !entryRulesRejected) {
-      let slot = targetSlotId && targetSlotId !== '__new__'
-        ? state.strategySlots.find((s) => s.id === targetSlotId)
-        : null;
-      if (!slot && targetSlotId !== '__new__' && state.strategySlots.length === 1) {
-        slot = state.strategySlots[0];
-      }
-      if (!slot) slot = addStrategySlot();
+      let slot = resolveTargetStrategySlot(targetSlotId);
+      if (!slot && targetSlotId === '__new__') slot = addStrategySlot();
+      else if (!slot && !state.strategySlots.length) slot = addStrategySlot();
       if (slot) {
         slot.entryRules = state.entryRules;
         if (touches('exitRules')) slot.exitRules = state.exitRules;
@@ -764,13 +787,16 @@ const FuturesBotApp = (() => {
     syncStateEntryRulesFromSlots();
 
     readFormSettings();
-    const nextSettings = getSettings();
-    const strategyChanged = getBacktestCacheKey(nextSettings) !== getBacktestCacheKey(prevSettings);
+    const nextCacheKey = getBacktestCacheKey(getSettings());
+    const entryRulesTouched = touches('entryRules') && !entryRulesRejected;
+    const rulesTouched = entryRulesTouched || touches('exitRules') || touches('strategySlots');
+    const strategyChanged = nextCacheKey !== prevCacheKey || rulesTouched;
 
     updateStrategyRulesDisplay(settings, rulesHtml);
     updateChartIndicatorButtons();
 
     if (strategyChanged) {
+      BacktestRunner.clearHistoryCache();
       invalidateBacktestChart(lastCandles, { message: '백테스트: 진입 조건 변경 — 재계산 중...' });
       applyBacktest(lastCandles, { force: true, focusChart: true });
     }
@@ -1849,6 +1875,7 @@ const FuturesBotApp = (() => {
     if (Array.isArray(settings.strategySlots)) {
       keyed = {
         ...settings,
+        entryRules: undefined,
         strategySlots: settings.strategySlots.map((s) => ({
           enabled: s.enabled !== false,
           entryRules: s.entryRules,
