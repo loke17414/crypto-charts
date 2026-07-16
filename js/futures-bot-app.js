@@ -687,7 +687,8 @@ const FuturesBotApp = (() => {
     }
 
     readFormSettings();
-    const prevCacheKey = getBacktestCacheKey(snapshotSettingsForCacheKey(getSettings()));
+    const prevSnapshot = snapshotSettingsForCacheKey(getSettings());
+    const prevCacheKey = getBacktestCacheKey(prevSnapshot);
 
     if (touches('rsiPeriod')) setFieldValue('rsiPeriod', settings.rsiPeriod);
     if (touches('rsiOversold')) setFieldValue('rsiOversold', settings.rsiOversold);
@@ -722,8 +723,8 @@ const FuturesBotApp = (() => {
 
     let entryRulesRejected = false;
     if (touches('entryRules')) {
-      const prevHadSignals = entryRulesHaveSignals(prevSettings.entryRules)
-        || (state.strategySlots || []).some((slot) => slot.enabled !== false
+      const prevHadSignals = entryRulesHaveSignals(prevSnapshot.entryRules)
+        || (prevSnapshot.strategySlots || []).some((slot) => slot.enabled !== false
           && entryRulesHaveSignals(slot.entryRules));
       const nextRules = settings.entryRules
         ? StrategyEngine.sanitizeEntryRules(settings.entryRules)
