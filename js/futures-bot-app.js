@@ -22,6 +22,8 @@ const FuturesBotApp = (() => {
   let serverBotLive = true;
   let serverBotDryWarned = false;
   let lastServerBotLogLine = '';
+  let seenServerBotLogs = new Set();
+  let serverEntryGate = null;
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
@@ -1561,6 +1563,28 @@ const FuturesBotApp = (() => {
     return EntryPause.isBlocked(result?.signal, lastCandles.at(-1)?.time);
   }
 
+  function stripServerLogLine(line) {
+    return line.replace(/^\S+\s+\[(INFO|WARN|ERROR|DEBUG)\]\s*/, '');
+  }
+
+  const SERVER_BOT_LOG_RE = /SIGNAL |OPEN |진입|Entry |skipped|최소 주문|증거금|Quantity |Margin |리스크 계획|SL\/TP/;
+
+  function forwardServerBotLogs(logs) {
+    if (!Array.isArray(logs)) return;
+    for (const line of logs) {
+      if (!line || seenServerBotLogs.has(line)) continue;
+      seenServerBotLogs.add(line);
+      if (seenServerBotLogs.size > 120) {
+        const drop = [...seenServerBotLogs].slice(0, 40);
+        drop.forEach((k) => seenServerBotLogs.delete(k));
+      }
+      if (!SERVER_BOT_LOG_RE.test(line)) continue;
+      const msg = stripServerLogLine(line);
+      const level = /\[ERROR\]/.test(line) ? 'loss' : (/\[WARN\]/.test(line) ? 'warn' : 'info');
+      addLog(`[서버 봇] ${msg}`, level);
+      lastServerBotLogLine = line;
+    }
+  }
   function logManualCloseBlockOnce(result) {
     const block = EntryPause.getBlock();
     const key = `manual:${block?.barTime}:${block?.signal}`;
@@ -1585,6 +1609,7 @@ const FuturesBotApp = (() => {
           const st = await FuturesApiClient.getBotStatus();
           if (st) {
             serverBotLive = st.liveTrading !== false && !st.dryRun;
+            serverEntryGate = st.entryGate || null;
             if (st.dryRun && !serverBotDryWarned) {
               serverBotDryWarned = true;
               addLog(
@@ -1593,15 +1618,7 @@ const FuturesBotApp = (() => {
               );
             }
             const logs = st.recentLogs;
-            if (Array.isArray(logs) && logs.length) {
-              const last = logs[logs.length - 1];
-              if (last && last !== lastServerBotLogLine) {
-                if (/SIGNAL |OPEN |진입 실패|Entry skipped|진입 생략/.test(last)) {
-                  addLog(`[서버 봇] ${last.replace(/^\S+\s+\[INFO\]\s*/, '').replace(/^\S+\s+\[WARN\]\s*/, '').replace(/^\S+\s+\[ERROR\]\s*/, '')}`, 'info');
-                }
-                lastServerBotLogLine = last;
-              }
-            }
+            forwardServerBotLogs(logs);
           }
           if (st && !st.running && botRunning) {
             serverBotActive = false;
@@ -2209,6 +2226,13 @@ const FuturesBotApp = (() => {
 
     if (serverBotActive) {
       const secs = 3;
+      if (serverEntryGate?.active) {
+        const reason = serverEntryGate.reason === 'manual_close'
+          ? '수동 청산 후 재진입 보류'
+          : '진입 일시정지';
+        logEntrySkipOnce(`gate:${key}`, `${result.signal} 신호 — 서버 ${reason} (게이트 활성)`);
+        return;
+      }
       const mode = serverBotLive
         ? `${result.signal} 신호 — 서버 봇이 ${secs}초마다 진입 확인 중`
         : `${result.signal} 신호 — DRY_RUN(시뮬레이션). 봇 정지 후 다시 시작하세요`;
@@ -2774,6 +2798,7 @@ const FuturesBotApp = (() => {
           tradeMarginUsdt: marginPreview,
         });
         await FuturesApiClient.clearBotEntryPause();
+        seenServerBotLogs.clear();
         await FuturesApiClient.startServerBot({ liveTrading: true });
         serverBotActive = true;
         serverBotLive = true;

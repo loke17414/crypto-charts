@@ -181,6 +181,13 @@ class BinanceFuturesClient {
     return Number(rounded.toFixed(precision));
   }
 
+  /** Smallest notional that satisfies LOT_SIZE minQty and MIN_NOTIONAL at this price. */
+  async minViableNotional(price) {
+    const f = await this.getSymbolFilters();
+    const fromQty = f.minQty * price;
+    return Math.max(f.minNotional, fromQty);
+  }
+
   async calcQuantity(notionalUsdt, price) {
     const f = await this.getSymbolFilters();
     const qty = BinanceFuturesClient._roundStep(notionalUsdt / price, f.stepSize);

@@ -137,7 +137,7 @@ def bot_status() -> dict[str, Any]:
         "pid": _bot_proc.pid if running and _bot_proc else state.get("pid"),
         "startedAt": state.get("startedAt"),
         "persisted": bool(state.get("shouldRun")),
-        "recentLogs": tail_bot_logs(8),
+        "recentLogs": tail_bot_logs(20),
         "entryGate": _entry_gate_status(),
         **flags,
     }
@@ -253,6 +253,14 @@ def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
         env["DRY_RUN"] = "false"
     else:
         env.setdefault("DRY_RUN", "true")
+    # Bot subprocess must use the same keys as the connected UI session.
+    from bot.credentials import load_binance_credentials
+
+    creds = load_binance_credentials()
+    if creds:
+        env["BINANCE_API_KEY"] = creds[0]
+        env["BINANCE_API_SECRET"] = creds[1]
+    env.setdefault("BINANCE_TESTNET", "true")
     _bot_proc = subprocess.Popen(
         [node, str(bot_script)],
         cwd=str(ROOT),

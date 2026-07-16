@@ -231,7 +231,14 @@ function intervalSeconds(iv) {
 
 // ---- Orders -------------------------------------------------------------
 async function openPosition(side, price, levels, candles, index, levelSettings = null) {
-  if (position || entryInFlight) return;
+  if (position) {
+    log(`진입 생략 — 로컬 ${position.side} 포지션 상태 (거래소 동기화 대기)`, 'WARN');
+    return;
+  }
+  if (entryInFlight) {
+    log('진입 생략 — 이전 주문 시도 진행 중', 'WARN');
+    return;
+  }
   entryInFlight = true;
   const settingsForLevels = levelSettings || cfg.settings;
   try {
@@ -276,9 +283,21 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
       'WARN',
     );
   }
-  if (notional < 5) {
-    log(`진입 생략 — 주문 금액이 너무 작음 ($${notional.toFixed(2)}, 최소 약 $5). 잔고·리스크 설정을 확인하세요.`, 'WARN');
-    return;
+  const minNotional = cfg.dryRun ? 5 : await client.minViableNotional(price);
+  if (notional < minNotional) {
+    if (maxNotional >= minNotional) {
+      log(
+        `주문 최소 수량 맞춤 — $${notional.toFixed(2)} → $${minNotional.toFixed(2)} (거래소 LOT_SIZE/MIN_NOTIONAL)`,
+        'WARN',
+      );
+      notional = minNotional;
+    } else {
+      log(
+        `진입 생략 — 최소 주문 약 $${minNotional.toFixed(0)} 필요, 사용 가능 $${maxNotional.toFixed(2)} (잔고 $${available.toFixed(2)} × ${cfg.leverage}x). 리스크%·레버리지·잔고를 확인하세요.`,
+        'WARN',
+      );
+      return;
+    }
   }
 
   if (cfg.dryRun) {
@@ -479,12 +498,15 @@ async function tick() {
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
     if (entryGate.isManualReentryBlocked(result.signal, barTime)) {
-      logHoldReason(`Signal ${result.signal} skipped — 수동 청산 후 같은 봉 재진입 보류`);
+      log(`Signal ${result.signal} skipped — 수동 청산 후 같은 봉 재진입 보류`, 'WARN');
       return;
     }
     const pauseUntil = Math.max(entryPausedUntil, entryGate.pausedUntil());
     if (Date.now() < pauseUntil) {
-      logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((pauseUntil - Date.now()) / 1000)}s after close`);
+      log(
+        `Signal ${result.signal} skipped — 청산 후 ${Math.ceil((pauseUntil - Date.now()) / 1000)}s 대기`,
+        'WARN',
+      );
       return;
     }
     if (entryInFlight) return;
