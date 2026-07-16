@@ -199,6 +199,10 @@ const FuturesApiClient = (() => {
     return request('/api/bot/stop', { method: 'POST' });
   }
 
+  async function pauseBotEntry() {
+    return request('/api/bot/pause-entry', { method: 'POST' });
+  }
+
   function isConnected() {
     return connected;
   }
@@ -229,6 +233,7 @@ const FuturesApiClient = (() => {
     getBotStatus,
     startServerBot,
     stopServerBot,
+    pauseBotEntry,
     isConnected,
     setConnected,
   };

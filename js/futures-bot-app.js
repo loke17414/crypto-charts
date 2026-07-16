@@ -1630,7 +1630,12 @@ const FuturesBotApp = (() => {
       }
       resetSlTpConfirm();
       slTpPreviewTouchedAt = 0;
-      if (botRunning && !serverBotActive && !isAutoEntryPaused()) {
+      if (botRunning && serverBotActive) {
+        try {
+          await FuturesApiClient.pauseBotEntry();
+        } catch { /* ignore */ }
+        pauseAutoEntryAfterManualClose('포지션 종료');
+      } else if (botRunning && !isAutoEntryPaused()) {
         pauseAutoEntryAfterManualClose('포지션 종료');
       }
     }
@@ -2994,6 +2999,9 @@ const FuturesBotApp = (() => {
           await FuturesApiClient.closePosition();
           clearPositionStop();
           if (botRunning) pauseAutoEntryAfterManualClose();
+          if (serverBotActive) {
+            try { await FuturesApiClient.pauseBotEntry(); } catch { /* close API also pauses */ }
+          }
           addLog(`${side} 수동 청산 @ $${price.toFixed(2)}`, 'info');
           await refreshTestnetStatus();
           updateUI();

@@ -15,7 +15,17 @@ from pydantic import BaseModel, Field
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.exchange import BinanceFuturesClient
-from bot.server_bot import bot_diagnostics, bot_status, restore_bot_if_needed, save_strategy_json, start_bot, stop_bot
+from bot.server_bot import (
+    bot_diagnostics,
+    bot_status,
+    is_running,
+    pause_bot_entry,
+    restore_bot_if_needed,
+    save_strategy_json,
+    start_bot,
+    stop_bot,
+    _strategy_interval,
+)
 from bot.strategy_ai import ai_available, configure_openai_api_key, interpret_strategy, test_openai_api_key
 from bot.strategy_ai_memory import clear_memory, load_turns
 from bot.strategy_schema import StrategyInterpretRequest, StrategyInterpretResponse, StrategySettings
@@ -534,6 +544,9 @@ def close_order() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to cancel open orders after close: %s", exc)
 
+    if is_running():
+        pause_bot_entry(manual=True, interval=_strategy_interval())
+
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
 
 
@@ -543,6 +556,14 @@ def strategy_sync(body: StrategySyncBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="strategy payload required")
     path = save_strategy_json(body.strategy)
     return {"ok": True, "path": str(path)}
+
+
+@app.post("/api/bot/pause-entry")
+def bot_pause_entry() -> dict[str, Any]:
+    if not is_running():
+        return {"ok": True, "running": False, "message": "서버 봇이 실행 중이 아닙니다."}
+    gate = pause_bot_entry(manual=True, interval=_strategy_interval())
+    return {"ok": True, "running": True, "gate": gate}
 
 
 @app.get("/api/bot/status")

@@ -28,6 +28,7 @@ const brain = buildRuntime();
 const { FuturesStrategy, StrategyEngine, RiskSizing } = brain;
 
 const STATE_FILE = path.join(cfg.rootDir, 'bot-js-state.json');
+const ENTRY_GATE_FILE = path.join(cfg.rootDir, 'bot-entry-gate.json');
 const LOG_DIR = path.join(cfg.rootDir, 'logs');
 
 function log(msg, level = 'INFO') {
@@ -144,16 +145,76 @@ async function syncPositionFromExchange() {
     };
     log(`Synced position from exchange: ${position.side} ${position.quantity} @ $${position.entryPrice}`);
   } else if (!live && position) {
-    log('Exchange position closed (SL/TP 체결 또는 수동 청산) — 로컬 상태 초기화');
+    const wasBotClose = closeInitiatedByBot;
+    const wasExchangeSlTp = position.exchangeSlTp;
+    closeInitiatedByBot = false;
+    log(wasBotClose
+      ? '봇 청산 완료 — 로컬 상태 초기화'
+      : wasExchangeSlTp
+        ? '거래소 SL/TP 체결 — 로컬 상태 초기화'
+        : '외부/수동 청산 감지 — 로컬 상태 초기화');
     position = null;
-    entryPausedUntil = Date.now() + cfg.entryCooldownSeconds * 1000;
+    if (!readEntryGate()?.blockUntilSignalClears) {
+      if (wasBotClose || wasExchangeSlTp) {
+        entryPausedUntil = Date.now() + cfg.entryCooldownSeconds * 1000;
+      } else {
+        entryPausedUntil = Date.now() + Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
+        blockEntryUntilSignalClears = true;
+      }
+    }
     saveState();
   }
 }
 
 let entryPausedUntil = 0;
+let blockEntryUntilSignalClears = false;
+let closeInitiatedByBot = false;
 let entryInFlight = false;
 let tickInFlight = false;
+
+function readEntryGate() {
+  try {
+    if (!fs.existsSync(ENTRY_GATE_FILE)) return null;
+    return JSON.parse(fs.readFileSync(ENTRY_GATE_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeEntryGate(gate) {
+  try {
+    if (!gate) {
+      if (fs.existsSync(ENTRY_GATE_FILE)) fs.unlinkSync(ENTRY_GATE_FILE);
+      return;
+    }
+    fs.writeFileSync(ENTRY_GATE_FILE, JSON.stringify(gate, null, 2));
+  } catch { /* ignore */ }
+}
+
+/** Apply UI/manual close pause file; clear block when the entry signal goes away. */
+function syncEntryGate(result) {
+  const gate = readEntryGate();
+  if (!gate) return;
+
+  if (gate.pausedUntil && gate.pausedUntil > Date.now()) {
+    entryPausedUntil = Math.max(entryPausedUntil, gate.pausedUntil);
+  }
+  if (gate.blockUntilSignalClears) {
+    blockEntryUntilSignalClears = true;
+  }
+
+  if (gate.blockUntilSignalClears && result.signal !== 'LONG' && result.signal !== 'SHORT') {
+    blockEntryUntilSignalClears = false;
+    const next = { ...gate };
+    delete next.blockUntilSignalClears;
+    if (!next.pausedUntil || next.pausedUntil <= Date.now()) {
+      writeEntryGate(null);
+    } else {
+      writeEntryGate(next);
+    }
+    log('진입 신호 해제됨 — 수동 청산 후 재진입 가능', 'INFO');
+  }
+}
 
 // ---- Strategy hot reload --------------------------------------------------
 // The UI rewrites strategy.json when GPT or the user changes SL/TP or entry
@@ -377,6 +438,7 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
 
 async function closePosition(price, reason) {
   if (!position) return;
+  closeInitiatedByBot = true;
   const { side, entryPrice, quantity } = position;
   const pnlPct = FuturesStrategy.calcPnlPct(side, entryPrice, price) * cfg.leverage;
 
@@ -458,8 +520,17 @@ async function tick() {
   // Entry — evaluate the SAME analyze() the UI uses, on the same candle set.
   const posSide = position ? position.side : null;
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
+  syncEntryGate(result);
+
+  if (blockEntryUntilSignalClears && result.signal !== 'LONG' && result.signal !== 'SHORT') {
+    blockEntryUntilSignalClears = false;
+  }
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
+    if (blockEntryUntilSignalClears) {
+      logHoldReason(`Signal ${result.signal} skipped — 수동/외부 청산 후 같은 신호 재진입 보류`);
+      return;
+    }
     if (Date.now() < entryPausedUntil) {
       logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s after close`);
       return;

@@ -17,6 +17,7 @@ from bot.config import ROOT
 logger = logging.getLogger(__name__)
 
 STATE_FILE = ROOT / "web-bot-state.json"
+ENTRY_GATE_FILE = ROOT / "bot-entry-gate.json"
 _bot_proc: subprocess.Popen | None = None
 
 
@@ -138,6 +139,35 @@ def tail_bot_logs(n: int = 8) -> list[str]:
     except OSError:
         return []
     return lines[-max(1, n) :]
+
+
+def pause_bot_entry(*, manual: bool = True, interval: str = "15m") -> dict[str, Any]:
+    """Block server-bot re-entry after manual/UI close until signal clears."""
+    seconds_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+    interval_sec = seconds_map.get(interval, 900)
+    now_ms = int(time.time() * 1000)
+    paused_until = min(
+        max(now_ms + 30_000, now_ms + interval_sec * 1000),
+        now_ms + 15 * 60_000,
+    )
+    payload = {
+        "pausedUntil": paused_until,
+        "blockUntilSignalClears": bool(manual),
+        "reason": "manual_close",
+        "updatedAt": _now_iso(),
+    }
+    ENTRY_GATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    logger.info("Bot entry paused until %s (blockUntilSignalClears=%s)", paused_until, manual)
+    return payload
+
+
+def _strategy_interval() -> str:
+    path = ROOT / "strategy.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return str(data.get("interval") or "15m")
+    except (OSError, json.JSONDecodeError, TypeError):
+        return "15m"
 
 
 def save_strategy_json(payload: dict[str, Any]) -> Path:
