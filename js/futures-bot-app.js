@@ -3,6 +3,9 @@
  * 차트 코드 오류는 포트에서 격리되어 이 모듈은 절대 중단되지 않는다. */
 const FuturesBotApp = (() => {
   const Chart = ModuleBridge.chart;
+  const BACKTEST_TRADES_MIN = 1;
+  const BACKTEST_TRADES_MAX = 100;
+  const BACKTEST_TRADES_DEFAULT = 100;
 
   const INTERVALS = {
     '1m': { label: '1분' },
@@ -24,6 +27,10 @@ const FuturesBotApp = (() => {
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
+  let showBacktest = true;
+  let backtestUnsub = null;
+  let lastBacktestScheduleAt = 0;
+  let lastBacktestMeta = { interval: '', symbol: '', lastTime: 0, count: 0 };
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
   let positionStopPrice = null;
@@ -79,6 +86,7 @@ const FuturesBotApp = (() => {
     useStopLoss: true,
     slTpMode: 'pct',
     pollSeconds: 60,
+    backtestTradeCount: BACKTEST_TRADES_DEFAULT,
     lastPrice: 0,
     entryRules: null,
     exitRules: null,
@@ -438,7 +446,29 @@ const FuturesBotApp = (() => {
   }
 
   function getBacktestSnapshotForAi() {
-    return { current: null, disabled: true, note: '백테스트 재구축 중' };
+    const result = window.BacktestClient?.getLastResult?.();
+    const targetTrades = state.backtestTradeCount || BACKTEST_TRADES_DEFAULT;
+    if (!result?.ok || !result.stats) {
+      return { current: null, targetTrades, candlesUsed: 0 };
+    }
+    const s = result.stats;
+    return {
+      current: {
+        trades: s.trades,
+        totalTrades: s.totalTrades,
+        wins: s.wins,
+        losses: s.losses,
+        winRate: Math.round((s.winRate || 0) * 10) / 10,
+        totalPnlPct: Math.round((s.totalPnlPct || 0) * 100) / 100,
+        candlesUsed: s.candlesUsed,
+        targetTrades: s.targetTrades,
+        targetReached: s.targetReached,
+      },
+      targetTrades,
+      candlesUsed: s.candlesUsed,
+      interval: state.interval,
+      symbol: state.symbol,
+    };
   }
 
   function setFieldValue(id, value) {
@@ -539,16 +569,26 @@ const FuturesBotApp = (() => {
   function refreshChartMarkers() {
     if (!Chart.available()) return;
     const candles = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
-    Chart.setMarkers(getSwingPivotMarkers(candles));
-    Chart.clearBacktestTradeOverlays?.();
-    Chart.pinBacktestChartView?.(false);
+    if (!showBacktest) {
+      Chart.setMarkers(getSwingPivotMarkers(candles));
+      Chart.clearBacktestTradeOverlays?.();
+      Chart.pinBacktestChartView?.(false);
+      return;
+    }
+    const result = window.BacktestClient?.getLastResult?.();
+    if (result?.ok && result.markers?.length) {
+      applyBacktestMarkers(result.markers, result.trades, candles);
+    } else {
+      Chart.setMarkers(getSwingPivotMarkers(candles));
+      Chart.clearBacktestTradeOverlays?.();
+    }
   }
 
   function recomputeAfterSlotsChange() {
     readFormSettings();
     updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
-    refreshChartMarkers();
+    scheduleBacktest({ force: true });
     updateSignalDisplay();
     scheduleServerStrategySync();
     updateUI();
@@ -877,7 +917,7 @@ const FuturesBotApp = (() => {
     updateChartIndicatorButtons();
 
     if (strategyChanged) {
-      refreshChartMarkers();
+      scheduleBacktest({ force: true });
     }
 
     updateSignalDisplay();
@@ -1516,7 +1556,14 @@ const FuturesBotApp = (() => {
     state.rsiPeriod = parseInt($('#rsiPeriod')?.value, 10) || 14;
     readSlTpSettings();
     state.pollSeconds = parseInt($('#pollSeconds').value, 10) || 60;
+    state.backtestTradeCount = clampBacktestTradeCount($('#backtestTradeCount')?.value);
     syncFromChart();
+  }
+
+  function clampBacktestTradeCount(raw) {
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return BACKTEST_TRADES_DEFAULT;
+    return Math.min(BACKTEST_TRADES_MAX, Math.max(BACKTEST_TRADES_MIN, n));
   }
 
   // SL/TP can be entered two ways; everything downstream (strategy, preview,
@@ -1887,10 +1934,228 @@ const FuturesBotApp = (() => {
     syncChartIndicators();
   }
 
+  // ── Backtest (Worker + live-engine replay + progress stream) ─────────
+
+  function backtestCacheKey(settings = getSettings()) {
+    const interval = Chart.getState()?.interval || state.interval;
+    const slots = Array.isArray(settings.strategySlots)
+      ? settings.strategySlots.map((s) => ({
+        enabled: s.enabled !== false,
+        entryRules: s.entryRules,
+        exitRules: s.exitRules,
+      }))
+      : null;
+    const keyed = {
+      entryRules: slots ? undefined : settings.entryRules,
+      exitRules: settings.exitRules,
+      strategySlots: slots,
+      stopLossPct: settings.stopLossPct,
+      takeProfitPct: settings.takeProfitPct,
+      useStopLoss: settings.useStopLoss !== false,
+      allowShort: settings.allowShort,
+    };
+    return `${state.symbol}:${interval}:${state.backtestTradeCount}:${JSON.stringify(keyed)}`;
+  }
+
+  function formatBacktestRange(stats) {
+    const bars = stats.candlesUsed ?? 0;
+    if (!stats.rangeFromTime || !stats.rangeToTime) return `${bars}봉`;
+    const fmt = (t) => new Date(t * 1000).toLocaleString('ko-KR', {
+      year: '2-digit',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return `${bars}봉 · 선물 · ${fmt(stats.rangeFromTime)} ~ ${fmt(stats.rangeToTime)}`;
+  }
+
+  function formatBacktestStats(stats, interval) {
+    const pnlCls = stats.totalPnlPct >= 0 ? 'positive' : 'negative';
+    const pnlSign = stats.totalPnlPct >= 0 ? '+' : '';
+    const intervalLabel = INTERVALS[interval]?.label || interval || '—';
+    let countLabel = stats.targetTrades
+      ? `${stats.trades}/${stats.targetTrades}회`
+      : `${stats.trades}회`;
+    if (stats.targetTrades && !stats.targetReached) {
+      countLabel += stats.historyExhausted
+        ? ` · 선물 히스토리 끝 (${(stats.candlesUsed || 0).toLocaleString()}봉)`
+        : ` · ${(stats.candlesUsed || 0).toLocaleString()}봉`;
+    }
+    if (stats.chartVisibleTrades != null && stats.chartVisibleTrades < stats.trades) {
+      countLabel += ` (차트 ${stats.chartVisibleTrades}/${stats.trades}회)`;
+    }
+    return (
+      `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
+      `(${stats.wins}W ${stats.losses}L) | ` +
+      `<span class="${pnlCls}">누적 ${pnlSign}${stats.totalPnlPct.toFixed(2)}%</span>`
+    );
+  }
+
+  function filterByChartTime(items, chartCandles, timeKey) {
+    if (!chartCandles?.length || !items?.length) return items || [];
+    const minTime = chartCandles[0].time;
+    const maxTime = chartCandles.at(-1).time;
+    return items.filter((item) => {
+      const t = item[timeKey] ?? item.time;
+      return t >= minTime && t <= maxTime;
+    });
+  }
+
+  function applyBacktestMarkers(markers, trades, chartCandles) {
+    if (!Chart.available()) return;
+    const swing = getSwingPivotMarkers(chartCandles);
+    const scoped = filterByChartTime(markers, chartCandles, 'time');
+    Chart.setMarkers([...scoped, ...swing].sort((a, b) => a.time - b.time));
+    const visibleTrades = filterByChartTime(trades, chartCandles, 'entryTime');
+    Chart.setBacktestTradeOverlays?.(visibleTrades, chartCandles);
+  }
+
+  function renderBacktestProgress(progress) {
+    const statsEl = $('#backtestStats');
+    if (!statsEl || !progress) return;
+    if (progress.phase === 'loading' || progress.phase === 'fetch') {
+      const page = progress.page != null ? ` · ${progress.page}/${progress.maxPages || '?'}페이지` : '';
+      statsEl.textContent =
+        `백테스트: 과거 데이터 로딩... (${progress.trades || 0}/${progress.target || state.backtestTradeCount}회, ` +
+        `${(progress.candles || 0).toLocaleString()}봉${page})`;
+      return;
+    }
+    if (progress.phase === 'compute') {
+      const pct = progress.barsTotal
+        ? Math.min(99, Math.round((progress.barsDone / progress.barsTotal) * 100))
+        : 0;
+      statsEl.textContent =
+        `백테스트: 계산 중... ${pct}% (${progress.trades || 0}/${progress.target || state.backtestTradeCount}회)`;
+    }
+  }
+
+  function renderBacktestResult(result) {
+    const statsEl = $('#backtestStats');
+    if (!result?.ok) {
+      if (result?.cancelled) return;
+      if (statsEl) {
+        statsEl.textContent = result?.error
+          ? `백테스트 실패: ${result.error}`
+          : `백테스트: — (${result?.reason || '실패'})`;
+      }
+      refreshChartMarkers();
+      return;
+    }
+
+    const chartCandles = Chart.getCandles() || lastCandles;
+    const visibleTrades = filterByChartTime(result.trades, chartCandles, 'entryTime');
+    const stats = {
+      ...result.stats,
+      chartVisibleTrades: visibleTrades.length,
+    };
+    if (showBacktest) {
+      applyBacktestMarkers(result.markers, result.trades, chartCandles);
+    } else {
+      Chart.setMarkers(getSwingPivotMarkers(chartCandles));
+      Chart.clearBacktestTradeOverlays?.();
+    }
+    if (statsEl) statsEl.innerHTML = formatBacktestStats(stats, result.interval || state.interval);
+  }
+
+  function shouldScheduleOnCandleUpdate(candles) {
+    if (!candles?.length) return false;
+    const interval = Chart.getState()?.interval || state.interval;
+    const lastTime = candles.at(-1)?.time ?? 0;
+    const count = candles.length;
+    const m = lastBacktestMeta;
+    if (interval !== m.interval || state.symbol !== m.symbol) return true;
+    if (!m.count) return true;
+    if (lastTime !== m.lastTime) return true;
+    if (count > m.count * 1.05) return true;
+    return false;
+  }
+
+  function scheduleBacktest({ force = false } = {}) {
+    if (!window.BacktestClient) return;
+    if (!showBacktest && !force && !BacktestClient.isRunning()) return;
+
+    readFormSettings();
+    const candles = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
+    if (!candles.length) {
+      const statsEl = $('#backtestStats');
+      if (statsEl) statsEl.textContent = '백테스트: 차트 데이터 로딩 중...';
+      return;
+    }
+
+    const settings = getSettings();
+    const cacheKey = backtestCacheKey(settings);
+    const now = Date.now();
+    if (!force && now - lastBacktestScheduleAt < 800) return;
+    lastBacktestScheduleAt = now;
+
+    lastBacktestMeta = {
+      interval: Chart.getState()?.interval || state.interval,
+      symbol: state.symbol,
+      lastTime: candles.at(-1)?.time ?? 0,
+      count: candles.length,
+    };
+
+    const statsEl = $('#backtestStats');
+    if (statsEl && !BacktestClient.isRunning()) {
+      statsEl.textContent = '백테스트: 대기 중...';
+    }
+
+    BacktestClient.run({
+      candles,
+      settings,
+      symbol: state.symbol,
+      interval: Chart.getState()?.interval || state.interval,
+      maxTrades: state.backtestTradeCount || BACKTEST_TRADES_DEFAULT,
+      expand: true,
+    }, { cacheKey, force }).then((result) => {
+      if (result?.cancelled) return;
+      renderBacktestResult(result);
+    });
+  }
+
+  async function runBacktest() {
+    const btn = $('#runBacktestBtn');
+    if (btn) btn.disabled = true;
+    try {
+      if (!Chart.available()) {
+        const statsEl = $('#backtestStats');
+        if (statsEl) statsEl.textContent = '백테스트: — (차트 미연동)';
+        return;
+      }
+      syncFromChart();
+      let chartCandles = Chart.getCandles() || lastCandles;
+      if (!chartCandles.length) {
+        await Chart.reloadChart();
+        syncFromChart();
+        chartCandles = Chart.getCandles() || lastCandles;
+      }
+      lastCandles = chartCandles;
+      scheduleBacktest({ force: true });
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function bindBacktestClient() {
+    if (!window.BacktestClient || backtestUnsub) return;
+    backtestUnsub = BacktestClient.subscribe((event) => {
+      if (event.type === 'progress') renderBacktestProgress(event.progress);
+      if (event.type === 'done' && event.result) renderBacktestResult(event.result);
+      if (event.type === 'error') {
+        const statsEl = $('#backtestStats');
+        if (statsEl) statsEl.textContent = `백테스트 실패: ${event.error}`;
+      }
+    });
+  }
+
   function onChartCandlesUpdated(e) {
     lastCandles = e.detail?.candles || Chart.getCandles() || [];
     state.interval = e.detail?.interval || Chart.getState()?.interval || state.interval;
     state.lastPrice = lastCandles.at(-1)?.close || Chart.getPrice() || 0;
+    if (showBacktest && shouldScheduleOnCandleUpdate(lastCandles)) {
+      scheduleBacktest({ force: false });
+    }
     updateSignalDisplay();
     ensurePositionSlTpOverlay();
     updateUI();
@@ -2734,6 +2999,7 @@ const FuturesBotApp = (() => {
       evaluateLiveExit();
     }
     if (e.detail?.newBar) {
+      if (showBacktest) scheduleBacktest({ force: false });
       updateUI();
     }
   }
@@ -2766,9 +3032,35 @@ const FuturesBotApp = (() => {
         }
       });
     }
+
+    $('#showBacktest')?.addEventListener('change', (e) => {
+      showBacktest = e.target.checked;
+      if (!showBacktest) {
+        Chart.pinBacktestChartView?.(false);
+        refreshChartMarkers();
+        const statsEl = $('#backtestStats');
+        if (statsEl) statsEl.textContent = '백테스트: 꺼짐';
+        return;
+      }
+      scheduleBacktest({ force: true });
+    });
+
+    $('#runBacktestBtn')?.addEventListener('click', () => { runBacktest(); });
+
+    const backtestCountEl = $('#backtestTradeCount');
+    if (backtestCountEl) {
+      const onCount = () => {
+        readFormSettings();
+        backtestCountEl.value = String(state.backtestTradeCount);
+        scheduleBacktest({ force: true });
+      };
+      backtestCountEl.addEventListener('change', onCount);
+      backtestCountEl.addEventListener('input', onCount);
+    }
   }
 
   async function init() {
+    bindBacktestClient();
     bindUiEvents();
 
     readFormSettings();
@@ -2798,6 +3090,7 @@ const FuturesBotApp = (() => {
 
     if ((Chart.getCandles() || []).length) {
       onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
+      if (showBacktest) scheduleBacktest({ force: true });
     }
 
     addLog('CryptoCharts 차트 연동됨', 'info');

@@ -870,6 +870,28 @@ const StrategyEngine = (() => {
     };
   }
 
+  // Stateful session for backtest replay — same matchEntrySlotsAt path as live
+  // evaluateEntry, but with a single warmed indicator/structure cache.
+  function createSession(candles, settings) {
+    const prepared = prepareBacktest(candles, settings);
+    return {
+      candles,
+      slots: prepared.slots,
+      rules: prepared.rules,
+      cache: prepared.cache,
+      startIdx: prepared.startIdx,
+      evaluateAt(index, currentSide = null) {
+        return matchEntrySlotsAt(
+          candles,
+          index,
+          prepared.slots,
+          prepared.cache,
+          currentSide,
+        );
+      },
+    };
+  }
+
   function matchEntryAt(candles, index, rules, cache, currentSide = null) {
     if (currentSide === 'LONG' || currentSide === 'SHORT') return null;
     if (index < 1) return null;
@@ -1384,6 +1406,7 @@ const StrategyEngine = (() => {
     evaluateEntry,
     matchEntryAt,
     prepareBacktest,
+    createSession,
     createOperandCache,
     warmupCache,
     rulesSummary,

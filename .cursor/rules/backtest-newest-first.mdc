@@ -1,6 +1,6 @@
 ---
 description: 백테스트는 항상 최신 날짜부터 과거 방향으로 계산·확장한다
-globs: js/backtest-loader.js,js/futures-strategy.js,js/futures-bot-app.js
+globs: js/backtest-engine.js,js/backtest.worker.js,js/backtest-client.js,js/futures-strategy.js,js/futures-bot-app.js
 alwaysApply: false
 ---
 
@@ -10,11 +10,13 @@ alwaysApply: false
 
 1. **데이터 확장은 최신 → 과거 방향만.** 차트의 최신 봉을 시드로 두고,
    `endTime` 페이지네이션으로 과거를 이어 받는다. 최신 봉이 빠지는 병합·슬라이스 금지.
-2. **결과는 가장 최근 거래 N건.** `FuturesStrategy.backtest`의
+2. **결과는 가장 최근 거래 N건.** `FuturesStrategy.runReplay`의
    `kept = trades.slice(-maxTrades)` — 목표 횟수보다 많이 찾으면 오래된 것을 버린다.
-3. **부분 로딩은 캐시에 보존.** 취소·실패 시에도 받아둔 캔들은
-   `backtestHistoryCache`에 남겨 다음 실행이 이어서 로드하게 한다 (처음부터 재로드 금지).
-4. **소진(exhausted) 판정은 정상 완료된 실행에서만.** 취소로 봉이 늘지 않은
-   것을 히스토리 소진으로 오판하면 로딩이 영영 멈춘다.
+3. **부분 로딩은 보존.** 취소·실패 시에도 받아둔 캔들은 다음 실행이 이어서
+   로드하게 한다 (처음부터 재로드 금지). 취소된 실행을 exhausted로 오판하지 않는다.
+4. **소진(exhausted) 판정은 정상 완료된 실행에서만.** API 끝이거나 no-gain이
+   충분히 반복된 경우만. 취소로 봉이 늘지 않은 것은 소진이 아니다.
 5. **기간 표시는 연도 포함.** 1년 넘는 범위에서 연도가 없으면 날짜가 거꾸로
    보이는 착시가 생긴다.
+6. **계산은 Worker + live engine.** UI 스레드에서 무거운 리플레이를 돌리지 않는다.
+   진입/청산은 `createSession` / `checkExitBar` 경로를 재사용한다.

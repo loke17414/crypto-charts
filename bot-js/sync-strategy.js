@@ -29,7 +29,7 @@ function log(msg) {
 
 // ---- Validation gate ------------------------------------------------------
 // Exercises the code paths the bot actually uses (analyze / checkExit /
-// checkExitBar / checkExitBar), including the configurations that broke before
+// checkExitBar / runReplay), including the configurations that broke before
 // (stop-loss disabled, entry slots with dynamic exit rules).
 function makeCandles(n) {
   const out = [];
@@ -95,6 +95,14 @@ function validate(dir) {
       FuturesStrategy.checkExitBar('LONG', 100, { time: 1, open: 100, high: 103.4, low: 95, close: 101 }, settings);
     } catch (err) {
       errors.push(`[${name}] exit check threw: ${err.message}`);
+    }
+    if (typeof FuturesStrategy.runReplay === 'function') {
+      try {
+        const bt = FuturesStrategy.runReplay(candles, settings, { maxTrades: 20, skipMarkers: true });
+        if (!bt || !bt.stats) errors.push(`[${name}] runReplay returned invalid result`);
+      } catch (err) {
+        errors.push(`[${name}] runReplay threw: ${err.message}`);
+      }
     }
   }
 

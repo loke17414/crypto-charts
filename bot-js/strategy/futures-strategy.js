@@ -297,10 +297,229 @@ const FuturesStrategy = (() => {
       : ((entryPrice - exitPrice) / entryPrice) * 100;
   }
 
+  // Replay uses the same entry/exit functions as the live bot
+  // (matchEntrySlotsAt via createSession + checkExitBar). Segments are
+  // absolute-time buckets so expanding history does not rewrite recent trades.
+  // When maxTrades is set, newest segments run first and older ones are skipped
+  // once N closed trades are collected.
+  const SEGMENT_BARS = 5000;
+
+  function segmentSpanSec(candles) {
+    const deltas = [];
+    for (let i = 1; i < Math.min(candles.length, 30); i++) {
+      deltas.push(candles[i].time - candles[i - 1].time);
+    }
+    deltas.sort((a, b) => a - b);
+    const dt = deltas[Math.floor(deltas.length / 2)] || 60;
+    return SEGMENT_BARS * dt;
+  }
+
+  function runReplay(candles, settings, options = {}) {
+    const {
+      maxTrades = null,
+      skipMarkers = false,
+      onProgress = null,
+      shouldStop = null,
+    } = options;
+
+    const empty = () => ({
+      trades: [],
+      markers: [],
+      stats: {
+        trades: 0,
+        totalTrades: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        totalPnlPct: 0,
+        candlesUsed: candles?.length || 0,
+        rangeFromTime: null,
+        rangeToTime: candles?.at?.(-1)?.time ?? null,
+        targetTrades: maxTrades,
+        targetReached: false,
+        cancelled: false,
+      },
+    });
+
+    if (!window.StrategyEngine?.createSession || !candles?.length) return empty();
+
+    const minStart = minBars(settings);
+    const warmupBars = Math.max(300, minStart * 3);
+    const span = segmentSpanSec(candles);
+    const segments = [];
+    if (candles.length) {
+      let segStart = 0;
+      let bucket = Math.floor(candles[0].time / span);
+      for (let i = 1; i <= candles.length; i++) {
+        const b = i < candles.length ? Math.floor(candles[i].time / span) : null;
+        if (b !== bucket) {
+          segments.push([segStart, i]);
+          segStart = i;
+          bucket = b;
+        }
+      }
+    }
+
+    const segmentOrder = maxTrades != null ? segments.slice().reverse() : segments;
+    let trades = [];
+    let cancelled = false;
+    let barsDone = 0;
+    const totalBars = candles.length;
+
+    for (const [from, to] of segmentOrder) {
+      if (shouldStop?.()) {
+        cancelled = true;
+        break;
+      }
+      const ctxStart = Math.max(0, from - warmupBars);
+      const ctx = candles.slice(ctxStart, to);
+      const session = StrategyEngine.createSession(ctx, settings);
+      const startLocal = Math.max(from - ctxStart, session.startIdx, minStart);
+      let position = null;
+      const segTrades = [];
+
+      for (let i = startLocal; i < ctx.length; i++) {
+        if (shouldStop?.()) {
+          cancelled = true;
+          break;
+        }
+        const candle = ctx[i];
+        barsDone += 1;
+
+        if (position) {
+          const slTp = checkExitBar(position.side, position.entryPrice, candle, settings, {
+            stopPrice: position.stopPrice,
+            takeProfitPrice: position.takeProfitPrice,
+            stopLossPct: position.stopLossPct,
+            takeProfitPct: position.takeProfitPct,
+          });
+          if (slTp) {
+            const exitPrice = slTp.exitPrice ?? candle.close;
+            segTrades.push({
+              side: position.side,
+              entryTime: position.entryTime,
+              entryPrice: position.entryPrice,
+              exitTime: candle.time,
+              exitPrice,
+              stopPrice: position.stopPrice,
+              takeProfitPrice: position.takeProfitPrice,
+              pnlPct: calcPnlPct(position.side, position.entryPrice, exitPrice),
+              reason: slTp.reason,
+              slotName: position.slotName ?? null,
+            });
+            position = null;
+            continue;
+          }
+        }
+
+        if (!position) {
+          const hit = session.evaluateAt(i, null);
+          if (hit?.side === 'LONG' || hit?.side === 'SHORT') {
+            const levelSettings = hit.slot?.exitRules
+              ? { ...settings, exitRules: hit.slot.exitRules }
+              : settings;
+            const levels = calcEntryLevels(hit.side, candle.close, levelSettings, {
+              candles: ctx,
+              index: i,
+            });
+            if (levels) {
+              position = {
+                side: hit.side,
+                entryPrice: candle.close,
+                entryTime: candle.time,
+                stopPrice: levels.stopPrice,
+                takeProfitPrice: levels.takeProfitPrice,
+                stopLossPct: levels.stopLossPct,
+                takeProfitPct: levels.takeProfitPct,
+                slotName: hit.slot?.name ?? null,
+              };
+            }
+          }
+        }
+
+        if (onProgress && barsDone % 800 === 0) {
+          onProgress({
+            phase: 'compute',
+            barsDone,
+            barsTotal: totalBars,
+            trades: trades.length + segTrades.length,
+            target: maxTrades,
+          });
+        }
+      }
+
+      if (cancelled) break;
+      // Open positions at segment end are discarded — same policy as before.
+      if (maxTrades != null) {
+        trades = segTrades.concat(trades);
+        if (trades.length >= maxTrades) break;
+      } else {
+        trades.push(...segTrades);
+      }
+    }
+
+    const totalTrades = trades.length;
+    const kept = maxTrades != null && trades.length > maxTrades
+      ? trades.slice(-maxTrades)
+      : trades;
+
+    const markers = [];
+    if (!skipMarkers) {
+      for (const t of kept) {
+        const prefix = t.side === 'LONG' ? 'L' : 'S';
+        markers.push({
+          time: t.entryTime,
+          position: t.side === 'LONG' ? 'belowBar' : 'aboveBar',
+          color: t.side === 'LONG' ? '#26a69a' : '#ef5350',
+          shape: t.side === 'LONG' ? 'arrowUp' : 'arrowDown',
+          text: t.side,
+        });
+        markers.push({
+          time: t.exitTime,
+          position: 'aboveBar',
+          color: t.pnlPct >= 0 ? '#26a69a' : '#ef5350',
+          shape: 'circle',
+          text: `${prefix}청산 ${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(1)}%`,
+        });
+      }
+    }
+
+    const wins = kept.filter((t) => t.pnlPct >= 0).length;
+    const totalPnl = kept.reduce((s, t) => s + t.pnlPct, 0);
+    onProgress?.({
+      phase: 'compute',
+      barsDone: totalBars,
+      barsTotal: totalBars,
+      trades: kept.length,
+      target: maxTrades,
+      done: true,
+    });
+
+    return {
+      trades: kept,
+      markers,
+      stats: {
+        trades: kept.length,
+        totalTrades,
+        wins,
+        losses: kept.length - wins,
+        winRate: kept.length ? (wins / kept.length) * 100 : 0,
+        totalPnlPct: totalPnl,
+        candlesUsed: candles.length,
+        rangeFromTime: kept[0]?.entryTime ?? candles[0]?.time ?? null,
+        rangeToTime: kept.at(-1)?.exitTime ?? candles.at(-1)?.time ?? null,
+        targetTrades: maxTrades,
+        targetReached: maxTrades != null && totalTrades >= maxTrades,
+        cancelled,
+      },
+    };
+  }
+
   return {
     analyze,
     checkExit,
     checkExitBar,
+    runReplay,
     calcPnlPct,
     calcEntryLevels,
     calcDynamicEntryLevels,

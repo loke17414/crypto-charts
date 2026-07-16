@@ -1,34 +1,27 @@
----
-description: 백테스팅·차트 코드는 안정화 완료 — 수정을 최대한 피한다
-alwaysApply: true
----
-
 # 백테스팅·차트 코드 보호
 
-백테스팅과 차트는 검증을 마치고 안정화된 상태다. 사용자가 명시적으로
+백테스트는 Worker + live-engine replay로 재구축됐다. 사용자가 명시적으로
 요청하지 않는 한, 아래 파일·로직에 영향을 주는 수정은 최대한 피한다.
 
 ## 보호 대상
 
-- `js/futures-strategy.js` — 세그먼트 백테스트 엔진
-- `js/backtest-loader.js` — 과거 데이터 로더 (취소/재개, 예산 확장)
-- `js/strategy-engine.js` — 진입 조건 평가
+- `js/futures-strategy.js` — `runReplay` (세그먼트 리플레이, checkExitBar)
+- `js/strategy-engine.js` — `createSession` / `prepareBacktest`
+- `js/backtest-engine.js` — 히스토리 확장 + job orchestration
+- `js/backtest.worker.js` / `js/backtest-client.js` — Worker·진행 스트림
+- `js/backtest-loader.js` — (삭제됨, 재추가 금지 — engine이 대체)
 - `js/app.js` — 차트 렌더링·히스토리 로딩 (`window.CryptoCharts`)
-- `js/futures-bot-app.js`의 백테스트 관련 함수:
-  `resolveBacktestCandles`, `applyBacktest`, `runBacktest`,
-  `formatBacktestStats`, `backtestCacheKey`, 캐시/마커/오버레이 로직
+- `js/futures-bot-app.js`의 백테스트 표시: `scheduleBacktest`, `renderBacktestResult`,
+  `formatBacktestStats`, 마커/오버레이
 
 ## 다른 기능을 작업할 때
 
 - 위 파일을 건드리지 않고 해결할 방법을 먼저 찾는다.
-- 다른 모듈은 `ModuleBridge` 포트와 DOM CustomEvent로만 차트·백테스트와
-  통신한다 — 직접 내부 함수를 수정하거나 호출을 추가하지 않는다.
-- 불가피하게 수정해야 하면: 변경 범위를 최소화하고, 수정 후 반드시
-  브라우저에서 백테스트(1시간·15분봉, 100회 도달)와 차트 마커 표시를
+- 다른 모듈은 `ModuleBridge` / `BacktestClient` / DOM CustomEvent로만 통신한다.
+- 불가피하게 수정하면: 브라우저에서 백테스트(1시간·15분봉, 100회)와 차트 마커를
   검증한 뒤 커밋한다.
 
 ## 수정이 허용되는 경우
 
 - 사용자가 백테스트·차트 버그를 직접 보고하거나 변경을 요청한 경우
-- 이때도 `.cursor/rules/backtest-newest-first.mdc`의 불변 규칙
-  (최신 → 과거 방향, 부분 로딩 캐시 보존 등)을 지킨다.
+- 이때도 `.cursor/rules/backtest-newest-first.mdc`의 불변 규칙을 지킨다.

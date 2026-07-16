@@ -10,7 +10,9 @@ $files = @(
   "js\app.js", "js\ta-math.js", "js\ta-extended.js", "js\indicator-catalog.js",
   "js\indicators.js", "js\drawings.js", "js\kline-loader.js",
   "js\futures-paper.js", "js\futures-strategy.js", "js\futures-api-client.js",
-  "js\risk-sizing.js", "js\swing-levels.js", "js\futures-bot-app.js"
+  "js\risk-sizing.js", "js\swing-levels.js",
+  "js\backtest-engine.js", "js\backtest-client.js", "js\backtest.worker.js",
+  "js\futures-bot-app.js"
 )
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem

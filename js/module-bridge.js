@@ -5,6 +5,7 @@
  *   [1] 차트 + 백테스팅 표시
  *       app.js (window.CryptoCharts) — 캔들/오버레이/마커 렌더링
  *       futures-bot-app.js — 전략 UI·봇·GPT (차트는 ModuleBridge.chart 포트)
+ *       backtest-client.js / backtest.worker.js — 백테스트 (Worker 격리)
  *   [2] API 서버 + 키 저장
  *       futures-api-client.js (window.FuturesApiClient) — 서버 통신, 키는 서버에만 저장
  *   [3] 전략 설정 + 봇 + GPT + 리스크 관리 + 진입조건 목록
