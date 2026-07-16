@@ -76,14 +76,14 @@ function makeCandles(n) {
 }
 
 try {
-  const result = FuturesStrategy.backtest(makeCandles(300), {
+  const result = FuturesStrategy.analyze(makeCandles(300), {
     ...settings,
     emaFast: 5,
     emaSlow: 20,
   });
-  check('SL off: backtest completes', result && result.stats != null, JSON.stringify(result?.stats));
+  check('SL off: analyze completes', result && typeof result.signal === 'string', JSON.stringify(result?.signal));
 } catch (e) {
-  check('SL off: backtest completes', false, e.message);
+  check('SL off: analyze completes', false, e.message);
 }
 
 process.exit(failures ? 1 : 0);

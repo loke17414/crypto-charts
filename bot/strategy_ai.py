@@ -216,10 +216,8 @@ MARKET DATA & BACKTEST (critical for accuracy):
   "지난 3시간" = 12 candles, on 5m chart "1시간" = 12 candles. Never assume 1 candle = 1 hour.
 - Use market_context to calibrate thresholds: e.g. if rsi14 is 68, "과매수 롱" should use rsi >= 65-70 not <= 30.
 - If recentTrend is bullish and volatility high (atrPct > 2), prefer wider stopLossPct or ATR-based exits.
-- backtest_snapshot.current = performance of ACTIVE strategy on recent candles.
-- If winRate < 40% with trades >= 10, suggest tightening entry filters (add AND conditions, raise RSI thresholds).
-- If trades < 5, strategy may be too strict — suggest loosening one filter.
-- Mention market_insight (1 sentence on current market) and backtest_insight (1 sentence on backtest) in JSON response.
+- backtest_snapshot is currently disabled (rebuild in progress) — omit backtest_insight unless snapshot.current exists.
+- Mention market_insight (1 sentence on current market) in JSON response.
 
 Respond with JSON only — extended shape:
 {

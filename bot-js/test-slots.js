@@ -110,13 +110,7 @@ const r5 = FuturesStrategy.analyze(candles, settings5, null);
 check('analyze fires with slot', r5.signal === 'LONG');
 check('slot exitRules produce dynamic levels', Boolean(r5.entryLevels?.dynamic));
 
-// 6. Backtest runs across slots and tags trades with slot names.
-const bt = FuturesStrategy.backtest(candles, settings1, {});
-check('backtest completes with slots', Number.isFinite(bt.stats.trades));
-const named = bt.trades.every((t) => t.slotName === 'RSI 딥' || t.slotName === 'EMA 크로스');
-check(`backtest trades carry slot names (${bt.trades.length} trades)`, bt.trades.length === 0 || named);
-
-// 7. Empty slot rows + legacy entryRules still fire (localStorage desync fix).
+// 6. Empty slot rows + legacy entryRules still fire (localStorage desync fix).
 const settings7 = {
   stopLossPct: 1.5,
   takeProfitPct: 3,

@@ -1,4 +1,4 @@
-/* Smoke test: wick (high/low) handling in backtest exits.
+/* Smoke test: wick (high/low) handling in bar exits.
  * Run: node bot-js/test-wicks.js ? deletable after verification. */
 const { buildRuntime } = require('./strategy-runtime');
 
@@ -67,52 +67,5 @@ exit = FuturesStrategy.checkExitBar('LONG', entry, {
   time: 8, open: 100, high: 101, low: 99.5, close: 100.5,
 }, settings);
 check('no touch -> null', exit === null);
-
-// 9. End-to-end backtest: a wick bar whose CLOSE stays above the stop must
-// still stop the trade out at the stop price (intrabar wick detection).
-function candle(time, open, high, low, close) {
-  return { time, open, high, low, close, volume: 100 };
-}
-const candles = [];
-let price = 100;
-for (let i = 0; i < 70; i++) {
-  const drop = i >= 55 && i < 62 ? 1.0 : 0;
-  const next = price - drop + (i % 2 === 0 ? 0.05 : -0.05);
-  candles.push(candle(1700000000 + i * 3600, price, Math.max(price, next) + 0.1, Math.min(price, next) - 0.1, next));
-  price = next;
-}
-// Bar 62 fires RSI<=40 entry at close; bar 63 wicks down 2% then closes back up.
-const entryClose = candles[62].close;
-candles[63] = candle(candles[63].time, entryClose, entryClose + 0.2, entryClose * 0.975, entryClose + 0.1);
-
-const btSettings = {
-  stopLossPct: 1.5,
-  takeProfitPct: 3,
-  entryRules: {
-    long: {
-      enabled: true,
-      logic: 'all',
-      conditions: [{
-        type: 'compare',
-        left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-        op: '<=',
-        right: { source: 'value', value: 40 },
-      }],
-    },
-    short: { enabled: false, logic: 'all', conditions: [] },
-  },
-};
-const bt = FuturesStrategy.backtest(candles, btSettings, {});
-// The wick bar must close a trade at its stop price even though its close is
-// above the stop (wick-only touch).
-const wickTrade = bt.trades.find((t) => t.exitTime === candles[63].time);
-check('backtest catches wick stop-out on the wick bar', Boolean(wickTrade), JSON.stringify(bt.trades));
-if (wickTrade) {
-  check(
-    'wick exit fills at the stop price, not the close',
-    approx(wickTrade.exitPrice, wickTrade.stopPrice),
-    `exit=${wickTrade.exitPrice} stop=${wickTrade.stopPrice}`,
-  );
-}
 
 process.exit(failures ? 1 : 0);

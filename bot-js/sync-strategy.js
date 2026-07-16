@@ -29,7 +29,7 @@ function log(msg) {
 
 // ---- Validation gate ------------------------------------------------------
 // Exercises the code paths the bot actually uses (analyze / checkExit /
-// checkExitBar / backtest), including the configurations that broke before
+// checkExitBar / checkExitBar), including the configurations that broke before
 // (stop-loss disabled, entry slots with dynamic exit rules).
 function makeCandles(n) {
   const out = [];
@@ -89,12 +89,6 @@ function validate(dir) {
       if (!r || typeof r.signal !== 'string') errors.push(`[${name}] analyze returned invalid result`);
     } catch (err) {
       errors.push(`[${name}] analyze threw: ${err.message}`);
-    }
-    try {
-      const bt = FuturesStrategy.backtest(candles, settings);
-      if (!bt || !bt.stats) errors.push(`[${name}] backtest returned invalid result`);
-    } catch (err) {
-      errors.push(`[${name}] backtest threw: ${err.message}`);
     }
     try {
       FuturesStrategy.checkExit('LONG', 100, 103.5, settings);
