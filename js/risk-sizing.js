@@ -49,12 +49,20 @@ const RiskSizing = (() => {
 
   function summarizeRiskPlan(equity, riskSettings, entryLevels) {
     const stopLossPct = resolveStopLossPctForSizing(entryLevels, riskSettings.stopLossPct);
-    const margin = calcTradeMargin(equity, { ...riskSettings, stopLossPct });
+    // No SL distance (손절 OFF / SL 0%): risk-based sizing is impossible, so
+    // fall back to margin = equity × risk% — the same convention the UI uses
+    // in PnL mode (see futures-bot-app calcTradeMarginForLevels). Entry must
+    // NOT be skipped just because SL is off.
+    const sizedWithoutSl = stopLossPct == null;
+    const margin = sizedWithoutSl
+      ? Math.max(5, Math.round(((equity * (riskSettings.riskPerTradePct || 0)) / 100) * 100) / 100)
+      : calcTradeMargin(equity, { ...riskSettings, stopLossPct });
     const targetLoss = targetLossUsdt(equity, riskSettings.riskPerTradePct);
     const lossAtSl = estimateLossAtSl(margin, riskSettings.leverage, stopLossPct);
     return {
       equity,
       stopLossPct,
+      sizedWithoutSl,
       margin,
       notional: margin * riskSettings.leverage,
       targetLoss,

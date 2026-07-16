@@ -216,7 +216,6 @@ const FuturesStrategy = (() => {
       reason: `${entry.reason} · SL ${slLabel} · TP ${tpLabel}`,
       snapshot,
       entryLevels: levels,
-      levelSettings,
     };
   }
 

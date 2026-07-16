@@ -22,6 +22,7 @@ const { loadConfig } = require('./config');
 const { buildRuntime } = require('./strategy-runtime');
 const { BinanceFuturesClient } = require('./binance');
 const { shiftLevelsToFill, recalcLevelsAtEntry, validateSlTp } = require('./sl-tp-utils');
+const { createEntryGate } = require('./entry-gate');
 
 const cfg = loadConfig();
 const brain = buildRuntime();
@@ -30,6 +31,7 @@ const { FuturesStrategy, StrategyEngine, RiskSizing } = brain;
 const STATE_FILE = path.join(cfg.rootDir, 'bot-js-state.json');
 const ENTRY_GATE_FILE = path.join(cfg.rootDir, 'bot-entry-gate.json');
 const LOG_DIR = path.join(cfg.rootDir, 'logs');
+const entryGate = createEntryGate({ gateFile: ENTRY_GATE_FILE, log: (m, l) => log(m, l) });
 
 function log(msg, level = 'INFO') {
   const line = `${new Date().toISOString()} [${level}] ${msg}`;
@@ -154,7 +156,7 @@ async function syncPositionFromExchange() {
         ? '거래소 SL/TP 체결 — 로컬 상태 초기화'
         : '외부/수동 청산 감지 — 로컬 상태 초기화');
     position = null;
-    if (!readEntryGate()) {
+    if (!entryGate.read()) {
       const cooldownMs = (wasBotClose || wasExchangeSlTp)
         ? cfg.entryCooldownSeconds * 1000
         : Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
@@ -168,68 +170,7 @@ let entryPausedUntil = 0;
 let closeInitiatedByBot = false;
 let entryInFlight = false;
 let tickInFlight = false;
-
-function readEntryGate() {
-  try {
-    if (!fs.existsSync(ENTRY_GATE_FILE)) return null;
-    return JSON.parse(fs.readFileSync(ENTRY_GATE_FILE, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function writeEntryGate(gate) {
-  try {
-    if (!gate) {
-      if (fs.existsSync(ENTRY_GATE_FILE)) fs.unlinkSync(ENTRY_GATE_FILE);
-      return;
-    }
-    fs.writeFileSync(ENTRY_GATE_FILE, JSON.stringify(gate, null, 2));
-  } catch { /* ignore */ }
-}
-
-function isManualReentryBlocked(result, barTime) {
-  const gate = readEntryGate();
-  if (!gate || gate.reason !== 'manual_close') return false;
-
-  const pausedUntil = Number(gate.pausedUntil) || 0;
-  if (Date.now() < pausedUntil) return true;
-
-  const blockedBar = Number(gate.blockedBarTime) || 0;
-  const blockedSignal = gate.blockedSignal;
-  if (
-    blockedBar > 0
-    && barTime === blockedBar
-    && blockedSignal
-    && result?.signal === blockedSignal
-  ) {
-    return true;
-  }
-
-  if (pausedUntil <= Date.now()) {
-    writeEntryGate(null);
-  }
-  return false;
-}
-
-/** Apply manual-close pause file; auto-expire when pausedUntil passes. */
-function syncEntryGate() {
-  const gate = readEntryGate();
-  if (!gate) return;
-
-  const pausedUntil = Number(gate.pausedUntil) || 0;
-  if (pausedUntil <= Date.now() && gate.reason !== 'manual_close') {
-    writeEntryGate(null);
-    return;
-  }
-  if (pausedUntil > Date.now()) {
-    entryPausedUntil = Math.max(entryPausedUntil, pausedUntil);
-  }
-}
-
-function clearExpiredEntryGate() {
-  syncEntryGate();
-}
+let lastLossCheckAt = 0;
 
 // ---- Strategy hot reload --------------------------------------------------
 // The UI rewrites strategy.json when GPT or the user changes SL/TP or entry
@@ -311,15 +252,19 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
     stopLossPct: cfg.settings.stopLossPct,
   };
   const plan = RiskSizing.summarizeRiskPlan(equity, riskSettings, sizingLevels);
-  if (!plan.stopLossPct || plan.stopLossPct <= 0) {
-    log('진입 생략 — SL 거리 없음(손절 OFF) — 1회 리스크 기준 증거금을 계산할 수 없음', 'WARN');
-    return;
+  if (plan.sizedWithoutSl) {
+    // SL off — risk-based sizing impossible; entry proceeds with the UI's
+    // PnL-mode convention: margin = equity × risk%. Never skip the entry.
+    log(
+      `리스크 계획 — SL 없음(손절 OFF) → 증거금 = 원금 ${plan.riskPerTradePct}% = $${plan.margin.toFixed(2)}`,
+      'INFO',
+    );
+  } else {
+    log(
+      `리스크 계획 — SL ${plan.stopLossPct.toFixed(2)}% · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 원금 ${plan.riskPerTradePct}%)`,
+      'INFO',
+    );
   }
-  const margin = plan.margin;
-  log(
-    `리스크 계획 — SL ${plan.stopLossPct != null ? `${plan.stopLossPct.toFixed(2)}%` : '없음'} · 증거금 $${plan.margin.toFixed(2)} · SL도달 손실 $${plan.lossAtSl.toFixed(2)} (목표 $${plan.targetLoss.toFixed(2)} = 원금 ${plan.riskPerTradePct}%)`,
-    'INFO',
-  );
 
   const available = await getAvailableMargin();
   let notional = plan.notional;
@@ -341,14 +286,8 @@ async function openPosition(side, price, levels, candles, index, levelSettings =
   if (cfg.dryRun) {
     const qty = Number((notional / price).toFixed(3));
     const usedMargin = (qty * price) / cfg.leverage;
-    const adjusted = recalcLevelsAtEntry(
-      side,
-      price,
-      { ...levels, signalPrice: price },
-      settingsForLevels,
-      { candles, index },
-      FuturesStrategy.calcEntryLevels,
-    );
+    // Same fill price as the sizing calc — reuse instead of recomputing.
+    const adjusted = sizingLevels;
     dryCash -= usedMargin;
     position = {
       side,
@@ -492,7 +431,10 @@ async function tick() {
   const price = forming.close;
 
   // Account loss limit — stop trading (do not auto-close) like the UI.
-  if (sessionStartEquity > 0) {
+  // Throttled to every 30s: the equity call hits the account endpoint and the
+  // 3s tick cadence would otherwise burn API rate limit for a slow-moving check.
+  if (sessionStartEquity > 0 && Date.now() - lastLossCheckAt >= 30_000) {
+    lastLossCheckAt = Date.now();
     const equity = await getEquity(price);
     if (RiskSizing.isAccountLossLimitHit(equity, sessionStartEquity, cfg.maxAccountLossPct)) {
       log(`Account loss limit hit (-${cfg.maxAccountLossPct}% from session start) — stopping bot`, 'WARN');
@@ -536,15 +478,15 @@ async function tick() {
   const posSide = position ? position.side : null;
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
   const barTime = forming.time;
-  syncEntryGate();
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
-    if (isManualReentryBlocked(result, barTime)) {
+    if (entryGate.isManualReentryBlocked(result.signal, barTime)) {
       logHoldReason(`Signal ${result.signal} skipped — 수동 청산 후 같은 봉 재진입 보류`);
       return;
     }
-    if (Date.now() < entryPausedUntil) {
-      logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s after close`);
+    const pauseUntil = Math.max(entryPausedUntil, entryGate.pausedUntil());
+    if (Date.now() < pauseUntil) {
+      logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((pauseUntil - Date.now()) / 1000)}s after close`);
       return;
     }
     if (entryInFlight) return;
@@ -626,7 +568,7 @@ async function start() {
   }
 
   loadState();
-  clearExpiredEntryGate();
+  entryGate.pausedUntil(); // drop already-expired gate file left from a previous run
   if (!cfg.dryRun) {
     await syncPositionFromExchange();
     if (position) {

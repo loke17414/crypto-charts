@@ -37,8 +37,7 @@ const FuturesBotApp = (() => {
   let lastAutoEntryKey = null;
   let autoEntryRetryAt = 0;
   let lastSkipLogKey = null;
-  let autoEntryPausedUntil = 0;
-  let manualCloseBlock = null;
+  // Pause/manual-close block state lives in the EntryPause module (js/entry-pause.js).
   let manualCloseBusy = false;
   let slTpConfirmed = false;
   let lastPendingSide = 'LONG';
@@ -1645,29 +1644,13 @@ const FuturesBotApp = (() => {
   }
 
   function isManualCloseBlocked(result) {
-    if (!manualCloseBlock) return false;
-    const barTime = lastCandles.at(-1)?.time;
-    const now = Date.now();
-    if (now >= manualCloseBlock.until && barTime !== manualCloseBlock.barTime) {
-      manualCloseBlock = null;
-      return false;
-    }
-    if (now < manualCloseBlock.until) return true;
-    if (
-      result
-      && (result.signal === 'LONG' || result.signal === 'SHORT')
-      && result.signal === manualCloseBlock.signal
-      && barTime === manualCloseBlock.barTime
-    ) {
-      return true;
-    }
-    manualCloseBlock = null;
-    return false;
+    return EntryPause.isBlocked(result?.signal, lastCandles.at(-1)?.time);
   }
 
   function logManualCloseBlockOnce(result) {
-    const key = `manual:${manualCloseBlock?.barTime}:${manualCloseBlock?.signal}`;
-    const sig = result?.signal || manualCloseBlock?.signal || '';
+    const block = EntryPause.getBlock();
+    const key = `manual:${block?.barTime}:${block?.signal}`;
+    const sig = result?.signal || block?.signal || '';
     logEntrySkipOnce(key, `${sig} — 수동 청산 직후 같은 봉 재진입을 보류합니다.`);
   }
 
@@ -3009,21 +2992,20 @@ const FuturesBotApp = (() => {
   function pauseAutoEntryAfterManualClose(reason = '수동 청산', closedSide = null) {
     const side = closedSide || testnetStatus?.position?.side || lastPendingSide || null;
     if (side) {
-      manualCloseBlock = buildManualCloseBlock(side);
-      autoEntryPausedUntil = Math.max(autoEntryPausedUntil, manualCloseBlock.until);
+      EntryPause.blockManualClose(buildManualCloseBlock(side));
     } else {
       const secondsMap = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
       const intervalSec = secondsMap[state.interval] || 60;
       const nowSec = Math.floor(Date.now() / 1000);
       const barEndSec = lastCandles.at(-1) ? lastCandles.at(-1).time + intervalSec : nowSec + 60;
       const pausedUntil = Math.min(barEndSec * 1000, Date.now() + 15 * 60_000);
-      autoEntryPausedUntil = Math.max(Date.now() + 30_000, pausedUntil);
+      EntryPause.pauseUntil(Math.max(Date.now() + 30_000, pausedUntil));
     }
     addLog(`${reason} — 같은 신호로 바로 재진입하지 않도록 자동 진입을 잠시 멈춥니다.`, 'info');
   }
 
   function isAutoEntryPaused() {
-    return Date.now() < autoEntryPausedUntil;
+    return EntryPause.isPaused();
   }
 
   async function manualClose() {
@@ -3048,7 +3030,7 @@ const FuturesBotApp = (() => {
         try {
           const side = testnetStatus?.position?.side || '';
           const barTime = lastCandles.at(-1)?.time ?? null;
-          manualCloseBlock = side ? buildManualCloseBlock(side) : null;
+          if (side) EntryPause.blockManualClose(buildManualCloseBlock(side));
           resetSlTpConfirm();
           await FuturesApiClient.closePosition({
             manual: true,

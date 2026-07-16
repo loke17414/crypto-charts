@@ -113,6 +113,21 @@ def is_running() -> bool:
     return _bot_proc is not None and _bot_proc.poll() is None
 
 
+def _entry_gate_status() -> dict[str, Any] | None:
+    """Read-only view of the entry pause gate for status displays."""
+    if not ENTRY_GATE_FILE.exists():
+        return None
+    try:
+        data = json.loads(ENTRY_GATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {
+        "pausedUntil": int(data.get("pausedUntil") or 0),
+        "reason": data.get("reason"),
+        "active": int(data.get("pausedUntil") or 0) > int(time.time() * 1000),
+    }
+
+
 def bot_status() -> dict[str, Any]:
     running = is_running()
     state = _read_state()
@@ -123,6 +138,7 @@ def bot_status() -> dict[str, Any]:
         "startedAt": state.get("startedAt"),
         "persisted": bool(state.get("shouldRun")),
         "recentLogs": tail_bot_logs(8),
+        "entryGate": _entry_gate_status(),
         **flags,
     }
 

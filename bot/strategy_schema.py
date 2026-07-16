@@ -456,14 +456,43 @@ class StrategySlot(BaseModel):
         return sanitize_exit_rules(value)
 
 
+# Numeric bounds — kept identical to the trading.html form limits so a GPT
+# strategy is CLAMPED to what the UI itself allows instead of being rejected
+# by schema validation (the user's strategy must apply as-is whenever legal).
+NUMERIC_BOUNDS: dict[str, tuple[float, float]] = {
+    "rsiPeriod": (2, 100),
+    "rsiOversold": (1, 99),
+    "rsiOverbought": (1, 99),
+    "stopLossPct": (0.1, 50),
+    "takeProfitPct": (0.1, 100),
+    "leverage": (1, 125),
+    "riskPerTradePct": (0.1, 10),
+    "maxAccountLossPct": (1, 50),
+    "pollSeconds": (10, 600),
+}
+
+
+def clamp_numeric_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Clamp numeric strategy fields to UI form limits (never reject)."""
+    for key, (lo, hi) in NUMERIC_BOUNDS.items():
+        if key not in data or data[key] is None:
+            continue
+        try:
+            num = float(data[key])
+        except (TypeError, ValueError):
+            continue
+        data[key] = min(hi, max(lo, num))
+    return data
+
+
 class StrategySettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    rsiPeriod: int = Field(default=14, ge=5, le=50)
-    rsiOversold: float = Field(default=25, ge=10, le=50)
-    rsiOverbought: float = Field(default=70, ge=50, le=90)
-    stopLossPct: float = Field(default=1.5, ge=0.5, le=15)
-    takeProfitPct: float = Field(default=3.0, ge=0.5, le=30)
+    rsiPeriod: int = Field(default=14, ge=2, le=100)
+    rsiOversold: float = Field(default=25, ge=1, le=99)
+    rsiOverbought: float = Field(default=70, ge=1, le=99)
+    stopLossPct: float = Field(default=1.5, ge=0.1, le=50)
+    takeProfitPct: float = Field(default=3.0, ge=0.1, le=100)
     useStopLoss: bool = True
     allowShort: bool = True
     leverage: int = Field(default=5, ge=1, le=125)
@@ -530,7 +559,10 @@ class StrategySettings(BaseModel):
                 continue
             if key in data and value is not None:
                 data[key] = value
-        merged = StrategySettings.model_validate(data)
+        # Clamp instead of raising: an out-of-range number from GPT (e.g. SL
+        # 0.05%) must not reject the whole strategy — apply the closest legal
+        # value, exactly like typing it into the form would.
+        merged = StrategySettings.model_validate(clamp_numeric_fields(data))
         if not merged.entryRules and merged.rsiOversold >= merged.rsiOverbought:
             raise ValueError("과매도(롱) 기준은 과매수(숏) 기준보다 낮아야 합니다.")
         return merged

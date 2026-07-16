@@ -17,7 +17,12 @@ from bot.config import ROOT
 from bot.strategy_ai_memory import append_turn, clear_memory, load_turns, merge_histories
 from bot.strategy_market import build_market_context
 from bot.strategy_research import looks_like_research_request, research_strategies
-from bot.strategy_schema import StrategySettings, entry_rules_have_signals, strategy_slots_have_signals
+from bot.strategy_schema import (
+    StrategySettings,
+    clamp_numeric_fields,
+    entry_rules_have_signals,
+    strategy_slots_have_signals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +71,7 @@ Settings keys:
 - entryRules: { long: RuleGroup, short: RuleGroup }  — rules for the TARGET slot being edited (see strategySlotTarget); also legacy single-strategy mode when strategySlots omitted
 - exitRules: { long: ExitRule, short: ExitRule } — dynamic SL/TP (overrides stopLossPct/takeProfitPct when set)
 - rsiPeriod, rsiOversold, rsiOverbought — legacy RSI preset (used only if entryRules omitted AND no strategySlots)
-- stopLossPct (0.5-15), takeProfitPct (0.5-30), useStopLoss (bool, default true), allowShort (bool)
+- stopLossPct (0.1-50), takeProfitPct (0.1-100), useStopLoss (bool, default true), allowShort (bool)
 - leverage (1-125), riskPerTradePct, maxAccountLossPct, pollSeconds
 
 ExitRule:
@@ -952,7 +957,7 @@ def interpret_strategy(
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
     strategy_slot_target = raw_settings.pop("strategySlotTarget", None)
-    current = StrategySettings.model_validate(raw_settings)
+    current = StrategySettings.model_validate(clamp_numeric_fields(raw_settings))
 
     merged_history = merge_histories(history, load_turns())
     market = build_market_context(
