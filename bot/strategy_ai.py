@@ -208,6 +208,16 @@ MARKET DATA & BACKTEST (critical for accuracy):
 - structure.trend: direction (bullish/bearish/sideways), HH/HL structure, EMA7/25/99 stack, ADX14.
   Use trend.direction + structure for trend questions — not recentHigh/recentLow alone.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
+
+CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common GPT mistake):
+- NEVER auto-apply structure.fvg or structure.divergence from market_context unless the user EXPLICITLY asks for FVG/갭/페어밸류 or divergence/다이버전스.
+- 볼린저/Bollinger/BB/밴드/Envelope/Keltner/Donchian + 진입/재진입/이탈/터치/하단/상단
+  → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg".
+- FVG/페어밸류/갭/gap/imbalance mentioned by user → type:"fvg" ONLY. NEVER band_reentry or swing for FVG requests.
+- divergence/다이버전스 mentioned by user → type:"divergence" ONLY.
+- 전고점/전저점/스윙/지지/저항/돌파 (swing pivots, NOT band touch) → swing_break or swing_near. NOT fvg, NOT band_reentry.
+- RSI/과매수/과매도/MACD/EMA cross → compare/cross_above/cross_below. NOT fvg unless user also asks for FVG.
+- "이탈" alone does NOT mean swing — 볼린저 하단 이탈 = band_reentry long, 전저점 이탈 = swing_break short.
 - hoveredCandle (optional): the exact candle the user is pointing at on the chart with full stats
   (o/h/l/c, changePct, rangePct=volatility, bodyPct, upperWickPct/lowerWickPct, volumeVsAvg20, barsAgo).
   When the user says "이 캔들", "지금 가리키는 봉", "커서에 있는 캔들" — answer about hoveredCandle, not the latest bar.
@@ -615,6 +625,7 @@ _STRATEGY_RULE_MARKERS = (
     "candle", "봉", "지표", "indicator", "슬롯", "전략", "strategy",
     "과매수", "과매도", "골든", "데드", "다이버", "삭제", "제거", "비활성",
     "kdj", "cci", "atr", "adx", "envelope", "keltner", "donchian", "해머", "장악",
+    "fvg", "갭", "페어밸류", "다이버",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -856,10 +867,112 @@ def _normalize_chart_interval(value: Any) -> str | None:
     return cleaned if cleaned in _VALID_CHART_INTERVALS else None
 
 
-def _looks_like_strategy_apply_request(prompt: str) -> bool:
-    text = (prompt or "").lower()
-    apply_kw = ("진입", "롱", "숏", "long", "short", "매수", "매도", "전략", "조건", "설정")
-    return any(k in text for k in apply_kw)
+_BAND_INDICATOR_MARKERS: tuple[tuple[str, str], ...] = (
+    ("boll", ("볼린저", "bollinger", "boll", "bb", "볼밴")),
+    ("env", ("envelope", "엔벨로프", "엔벨")),
+    ("kc", ("keltner", "켈트너", "켈트")),
+    ("dc", ("donchian", "돈치안", "돈치")),
+)
+_FVG_MARKERS = ("fvg", "페어밸류", "fair value", "fairvalue", "갭", "gap", "공정가치", "imbalance")
+_DIVERGENCE_MARKERS = ("다이버", "divergence", "diver")
+_SWING_MARKERS = (
+    "전고점", "전저점", "전고", "전저", "스윙", "swing",
+    "지지", "저항", "돌파", "피봇", "pivot",
+)
+_STRATEGY_CONTEXT_MARKERS = (
+    "진입", "롱", "숏", "long", "short", "매수", "매도", "전략", "조건",
+    "재진입", "이탈", "터치", "밴드", "하단", "상단", "들어", "안으로", "적용", "설정",
+)
+
+
+def _prompt_text(prompt: str) -> str:
+    return (prompt or "").lower()
+
+
+def _prompt_mentions_band(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    return any(k in text for markers in _BAND_INDICATOR_MARKERS for k in markers[1])
+
+
+def _prompt_band_indicator(prompt: str) -> str:
+    text = _prompt_text(prompt)
+    for indicator, markers in _BAND_INDICATOR_MARKERS:
+        if any(k in text for k in markers):
+            return indicator
+    return "boll"
+
+
+def _prompt_wants_band_strategy(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if not _prompt_mentions_band(prompt):
+        return False
+    return any(k in text for k in _STRATEGY_CONTEXT_MARKERS)
+
+
+def _prompt_wants_fvg(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    return any(k in text for k in _FVG_MARKERS)
+
+
+def _prompt_wants_divergence(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    return any(k in text for k in _DIVERGENCE_MARKERS)
+
+
+def _prompt_wants_swing(prompt: str) -> bool:
+    if _prompt_wants_band_strategy(prompt) or _prompt_wants_fvg(prompt) or _prompt_wants_divergence(prompt):
+        return False
+    text = _prompt_text(prompt)
+    swing_kw = any(k in text for k in _SWING_MARKERS)
+    apply_kw = any(k in text for k in _STRATEGY_CONTEXT_MARKERS)
+    return swing_kw and apply_kw
+
+
+def _prompt_side(prompt: str) -> str | None:
+    text = _prompt_text(prompt)
+    long_kw = any(k in text for k in ("롱", "long", "매수"))
+    short_kw = any(k in text for k in ("숏", "short", "매도"))
+    if long_kw and not short_kw:
+        return "long"
+    if short_kw and not long_kw:
+        return "short"
+    return None
+
+
+def _parse_risk_reward_ratio(prompt: str, default: float = 1.5) -> float:
+    text = _prompt_text(prompt)
+    if re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", text):
+        return 1.5
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:배|:1|r\b)", text)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return default
+
+
+def _entry_condition_types(rules: Any) -> set[str]:
+    types: set[str] = set()
+    if not isinstance(rules, dict):
+        return types
+    for side in ("long", "short"):
+        group = rules.get(side)
+        if not isinstance(group, dict):
+            continue
+        for cond in group.get("conditions") or []:
+            if isinstance(cond, dict) and cond.get("type"):
+                types.add(str(cond["type"]))
+    return types
+
+
+def _has_condition_type(rules: Any, cond_type: str) -> bool:
+    return cond_type in _entry_condition_types(rules)
+
+
+def _looks_like_strategy_type_change(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    return any(k in text for k in ("으로 바꿔", "로 바꿔", "전략으로", "진입 조건", "새 전략", "처음부터"))
 
 
 def _bullish_candle_long_patch() -> dict[str, Any]:
@@ -912,50 +1025,177 @@ def _has_bullish_entry(rules: Any) -> bool:
     return False
 
 
-def _bollinger_reentry_long_patch(ratio: float = 1.5) -> dict[str, Any]:
-    return {
-        "allowShort": False,
+def _band_reentry_patch(
+    *,
+    side: str = "long",
+    indicator: str = "boll",
+    ratio: float = 1.5,
+    long_only: bool | None = None,
+) -> dict[str, Any]:
+    side = "short" if side == "short" else "long"
+    indicator = indicator if indicator in {"boll", "env", "kc", "dc"} else "boll"
+    params: dict[str, Any] = {"period": 20, "mult": 2}
+    if indicator == "env":
+        params = {"period": 20, "pct": 0.1}
+    elif indicator == "dc":
+        params = {"period": 20}
+
+    if long_only is True:
+        enable_long, enable_short = True, False
+    elif side == "short":
+        enable_long, enable_short = False, True
+    else:
+        enable_long, enable_short = True, False
+
+    patch: dict[str, Any] = {
+        "allowShort": enable_short,
         "entryRules": {
             "long": {
-                "enabled": True,
+                "enabled": enable_long,
                 "logic": "all",
                 "conditions": [{
                     "type": "band_reentry",
                     "side": "long",
-                    "indicator": "boll",
-                    "params": {"period": 20, "mult": 2},
-                }],
+                    "indicator": indicator,
+                    "params": params,
+                }] if enable_long else [],
             },
-            "short": {"enabled": False, "logic": "all", "conditions": []},
+            "short": {
+                "enabled": enable_short,
+                "logic": "all",
+                "conditions": [{
+                    "type": "band_reentry",
+                    "side": "short",
+                    "indicator": indicator,
+                    "params": params,
+                }] if enable_short else [],
+            },
+        },
+        "exitRules": {},
+    }
+
+    if enable_long:
+        patch["exitRules"]["long"] = {
+            "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+            "takeProfit": {"type": "risk_reward", "ratio": ratio},
+        }
+    if enable_short:
+        patch["exitRules"]["short"] = {
+            "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+            "takeProfit": {"type": "risk_reward", "ratio": ratio},
+        }
+    return patch
+
+
+def _bollinger_reentry_long_patch(ratio: float = 1.5) -> dict[str, Any]:
+    return _band_reentry_patch(side="long", indicator="boll", ratio=ratio, long_only=True)
+
+
+def _fvg_entry_patch(prompt: str) -> dict[str, Any]:
+    side = _prompt_side(prompt)
+    long_enabled = side != "short"
+    short_enabled = side != "long"
+    state = "in_zone"
+    text = _prompt_text(prompt)
+    if any(k in text for k in ("채워", "filled", "메움")):
+        state = "filled"
+    elif any(k in text for k in ("존재", "present", "있을")):
+        state = "present"
+
+    return {
+        "allowShort": short_enabled,
+        "entryRules": {
+            "long": {
+                "enabled": long_enabled,
+                "logic": "all",
+                "conditions": [{
+                    "type": "fvg",
+                    "side": "bullish" if long_enabled else "bearish",
+                    "state": state,
+                    "lookback": 30,
+                }] if long_enabled else [],
+            },
+            "short": {
+                "enabled": short_enabled,
+                "logic": "all",
+                "conditions": [{
+                    "type": "fvg",
+                    "side": "bearish" if short_enabled else "bullish",
+                    "state": state,
+                    "lookback": 30,
+                }] if short_enabled else [],
+            },
         },
         "exitRules": {
             "long": {
                 "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
-                "takeProfit": {"type": "risk_reward", "ratio": ratio},
-            }
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+            "short": {
+                "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+        },
+    }
+
+
+def _divergence_entry_patch(prompt: str) -> dict[str, Any]:
+    side = _prompt_side(prompt)
+    long_enabled = side != "short"
+    short_enabled = side != "long"
+    text = _prompt_text(prompt)
+    kind = "bearish" if "bear" in text or "숏" in text or "하락" in text else "bullish"
+    if side == "short":
+        kind = "bearish"
+    elif side == "long":
+        kind = "bullish"
+    indicator = "macd" if "macd" in text else "rsi"
+
+    return {
+        "allowShort": short_enabled,
+        "entryRules": {
+            "long": {
+                "enabled": long_enabled,
+                "logic": "all",
+                "conditions": [{
+                    "type": "divergence",
+                    "kind": "bullish",
+                    "indicator": indicator,
+                    "lookback": 40,
+                    "period": 14,
+                }] if long_enabled else [],
+            },
+            "short": {
+                "enabled": short_enabled,
+                "logic": "all",
+                "conditions": [{
+                    "type": "divergence",
+                    "kind": "bearish",
+                    "indicator": indicator,
+                    "lookback": 40,
+                    "period": 14,
+                }] if short_enabled else [],
+            },
+        },
+        "exitRules": {
+            "long": {
+                "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
+            "short": {
+                "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": 1.5},
+            },
         },
     }
 
 
 def _looks_like_bb_reentry_long(prompt: str) -> bool:
-    text = prompt.lower()
-    bb = any(k in text for k in ("볼린저", "bollinger", "boll", "bb", "볼밴"))
-    reentry = any(k in text for k in ("재진입", "들어", "이탈", "안으로", "밴드"))
-    long_only = any(k in text for k in ("롱", "long", "매수"))
-    return bb and reentry and long_only
+    return _prompt_wants_band_strategy(prompt)
 
 
 def _has_band_reentry(rules: Any) -> bool:
-    if not isinstance(rules, dict):
-        return False
-    for side in ("long", "short"):
-        group = rules.get(side)
-        if not isinstance(group, dict):
-            continue
-        for cond in group.get("conditions") or []:
-            if isinstance(cond, dict) and cond.get("type") == "band_reentry":
-                return True
-    return False
+    return _has_condition_type(rules, "band_reentry")
 
 
 def _has_swing_entry(rules: Any) -> bool:
@@ -972,24 +1212,12 @@ def _has_swing_entry(rules: Any) -> bool:
 
 
 def _looks_like_swing_strategy(prompt: str) -> bool:
-    text = (prompt or "").lower()
-    swing_kw = any(
-        k in text
-        for k in (
-            "전고점", "전저점", "전고", "전저", "스윙", "swing",
-            "지지", "저항", "돌파", "이탈", "피봇", "pivot",
-        )
-    )
-    apply_kw = any(
-        k in text
-        for k in ("롱", "숏", "진입", "전략", "조건", "long", "short", "매수", "매도", "적용")
-    )
-    return swing_kw and apply_kw
+    return _prompt_wants_swing(prompt)
 
 
 def _looks_like_swing_breakout(prompt: str) -> bool:
-    text = (prompt or "").lower()
-    return any(k in text for k in ("돌파", "이탈", "breakout", "break", "깨", "뚫"))
+    text = _prompt_text(prompt)
+    return any(k in text for k in ("돌파", "breakout", "break", "깨", "뚫", "이탈"))
 
 
 def _swing_breakout_patch() -> dict[str, Any]:
@@ -1072,6 +1300,91 @@ def _swing_bounce_patch() -> dict[str, Any]:
     }
 
 
+def _merge_template_patch(
+    merged: dict[str, Any],
+    tmpl: dict[str, Any],
+    *,
+    overwrite_exit: bool = False,
+) -> dict[str, Any]:
+    out = dict(merged)
+    if tmpl.get("entryRules"):
+        out["entryRules"] = tmpl["entryRules"]
+    if tmpl.get("exitRules") and (overwrite_exit or not out.get("exitRules")):
+        out["exitRules"] = tmpl["exitRules"]
+    if "allowShort" in tmpl:
+        out["allowShort"] = tmpl["allowShort"]
+    return out
+
+
+def _reconcile_patch_intent(
+    prompt: str,
+    patch: dict[str, Any],
+    *,
+    follow_up: bool,
+) -> dict[str, Any]:
+    """Replace GPT output when user intent clearly conflicts with condition types."""
+    if follow_up and not _looks_like_strategy_type_change(prompt):
+        return patch
+
+    entry_rules = patch.get("entryRules")
+    types = _entry_condition_types(entry_rules)
+    ratio = _parse_risk_reward_ratio(prompt)
+
+    if _prompt_wants_band_strategy(prompt):
+        indicator = _prompt_band_indicator(prompt)
+        side = _prompt_side(prompt) or "long"
+        long_only = _prompt_side(prompt) == "long" or (
+            _prompt_side(prompt) is None and any(k in _prompt_text(prompt) for k in ("롱", "long", "매수"))
+        )
+        wrong = types & {"fvg", "divergence", "swing_break", "swing_near"}
+        if wrong or not _has_band_reentry(entry_rules):
+            tmpl = _band_reentry_patch(
+                side=side,
+                indicator=indicator,
+                ratio=ratio,
+                long_only=True if long_only else None,
+            )
+            logger.info(
+                "Intent reconcile: band strategy requested but GPT returned %s — applying band_reentry",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, tmpl, overwrite_exit=True)
+
+    if _prompt_wants_fvg(prompt):
+        wrong = types & {"band_reentry", "divergence", "swing_break", "swing_near"}
+        if wrong or not _has_condition_type(entry_rules, "fvg"):
+            logger.info(
+                "Intent reconcile: FVG requested but GPT returned %s — applying fvg",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, _fvg_entry_patch(prompt), overwrite_exit=True)
+
+    if _prompt_wants_divergence(prompt):
+        wrong = types & {"band_reentry", "fvg", "swing_break", "swing_near"}
+        if wrong or not _has_condition_type(entry_rules, "divergence"):
+            logger.info(
+                "Intent reconcile: divergence requested but GPT returned %s — applying divergence",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, _divergence_entry_patch(prompt), overwrite_exit=True)
+
+    if _prompt_wants_swing(prompt):
+        wrong = types & {"fvg", "divergence", "band_reentry"}
+        if wrong or not _has_swing_entry(entry_rules):
+            tmpl = (
+                _swing_breakout_patch()
+                if _looks_like_swing_breakout(prompt)
+                else _swing_bounce_patch()
+            )
+            logger.info(
+                "Intent reconcile: swing requested but GPT returned %s — applying swing template",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, tmpl, overwrite_exit=True)
+
+    return patch
+
+
 def _apply_rule_templates(
     prompt: str,
     patch: dict[str, Any],
@@ -1079,15 +1392,38 @@ def _apply_rule_templates(
 ) -> dict[str, Any]:
     merged = dict(patch)
     follow_up = bool(history and _looks_like_follow_up_edit(prompt))
+    type_change = _looks_like_strategy_type_change(prompt)
 
-    if _looks_like_bullish_candle_long(prompt) and not follow_up:
+    if _looks_like_bullish_candle_long(prompt) and (not follow_up or type_change):
         if not _has_bullish_entry(merged.get("entryRules")):
             tmpl = _bullish_candle_long_patch()
             merged["entryRules"] = tmpl["entryRules"]
             if "allowShort" not in merged:
                 merged["allowShort"] = False
 
-    if _looks_like_swing_strategy(prompt) and not follow_up:
+    if _looks_like_bb_reentry_long(prompt) and (not follow_up or type_change):
+        ratio = _parse_risk_reward_ratio(prompt)
+        side = _prompt_side(prompt) or "long"
+        indicator = _prompt_band_indicator(prompt)
+        long_only = _prompt_side(prompt) == "long" or (
+            _prompt_side(prompt) is None
+            and any(k in _prompt_text(prompt) for k in ("롱", "long", "매수"))
+            and not any(k in _prompt_text(prompt) for k in ("숏", "short", "매도"))
+        )
+        tmpl = _band_reentry_patch(
+            side=side,
+            indicator=indicator,
+            ratio=ratio,
+            long_only=True if long_only else None,
+        )
+        if not _has_band_reentry(merged.get("entryRules")):
+            merged["entryRules"] = tmpl["entryRules"]
+        if not merged.get("exitRules"):
+            merged["exitRules"] = tmpl["exitRules"]
+        if "allowShort" not in merged:
+            merged["allowShort"] = tmpl.get("allowShort", False)
+
+    if _looks_like_swing_strategy(prompt) and (not follow_up or type_change):
         tmpl = (
             _swing_breakout_patch()
             if _looks_like_swing_breakout(prompt)
@@ -1100,22 +1436,15 @@ def _apply_rule_templates(
             if "allowShort" not in merged:
                 merged["allowShort"] = tmpl.get("allowShort", True)
 
-    if not _looks_like_bb_reentry_long(prompt):
-        return merged
-    if follow_up:
-        return merged
-    ratio = 1.5
-    match = re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", prompt)
-    if match:
-        ratio = 1.5
-    tmpl = _bollinger_reentry_long_patch(ratio)
-    if not _has_band_reentry(merged.get("entryRules")):
-        merged["entryRules"] = tmpl["entryRules"]
-    if not merged.get("exitRules"):
-        merged["exitRules"] = tmpl["exitRules"]
-    if "allowShort" not in merged:
-        merged["allowShort"] = False
-    return merged
+    if _prompt_wants_fvg(prompt) and (not follow_up or type_change):
+        if not _has_condition_type(merged.get("entryRules"), "fvg"):
+            merged = _merge_template_patch(merged, _fvg_entry_patch(prompt))
+
+    if _prompt_wants_divergence(prompt) and (not follow_up or type_change):
+        if not _has_condition_type(merged.get("entryRules"), "divergence"):
+            merged = _merge_template_patch(merged, _divergence_entry_patch(prompt))
+
+    return _reconcile_patch_intent(prompt, merged, follow_up=follow_up)
 
 
 def interpret_strategy(
