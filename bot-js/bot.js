@@ -146,14 +146,14 @@ async function syncPositionFromExchange() {
   } else if (!live && position) {
     log('Exchange position closed (SL/TP 체결 또는 수동 청산) — 로컬 상태 초기화');
     position = null;
-    entryPausedUntil = Date.now() + Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
-    blockEntryUntilSignalClears = true;
+    entryPausedUntil = Date.now() + cfg.entryCooldownSeconds * 1000;
     saveState();
   }
 }
 
 let entryPausedUntil = 0;
-let blockEntryUntilSignalClears = false;
+let entryInFlight = false;
+let tickInFlight = false;
 
 // ---- Strategy hot reload --------------------------------------------------
 // The UI rewrites strategy.json when GPT or the user changes SL/TP or entry
@@ -216,8 +216,9 @@ function intervalSeconds(iv) {
 
 // ---- Orders -------------------------------------------------------------
 async function openPosition(side, price, levels, candles, index) {
-  if (position) return;
-
+  if (position || entryInFlight) return;
+  entryInFlight = true;
+  try {
   const equity = await getEquity(price);
   const slPctForSizing = RiskSizing.resolveStopLossPctForSizing(levels, cfg.settings.stopLossPct);
   const margin = RiskSizing.calcTradeMargin(equity, {
@@ -317,6 +318,12 @@ async function openPosition(side, price, levels, candles, index) {
     }
   }
   saveState();
+  } catch (err) {
+    log(`진입 실패: ${err.message}`, 'ERROR');
+    throw err;
+  } finally {
+    entryInFlight = false;
+  }
 }
 
 async function closePosition(price, reason) {
@@ -347,6 +354,9 @@ async function closePosition(price, reason) {
 
 // ---- Main tick ----------------------------------------------------------
 async function tick() {
+  if (tickInFlight) return;
+  tickInFlight = true;
+  try {
   maybeReloadStrategy();
   const raw = await client.getKlines(200);
   const candles = toCandles(raw);
@@ -400,22 +410,12 @@ async function tick() {
   const posSide = position ? position.side : null;
   const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
 
-  // A manual close blocks re-entry until the entry signal goes away at least
-  // once; the flag clears on any non-entry tick so the next fresh signal works.
-  if (blockEntryUntilSignalClears && result.signal !== 'LONG' && result.signal !== 'SHORT') {
-    blockEntryUntilSignalClears = false;
-    log('Entry signal cleared — new signals can enter again');
-  }
-
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
-    if (blockEntryUntilSignalClears) {
-      logHoldReason(`Signal ${result.signal} skipped — waiting for signal to clear after manual close`);
-      return;
-    }
     if (Date.now() < entryPausedUntil) {
-      logHoldReason(`Signal ${result.signal} skipped — cooldown after external close`);
+      logHoldReason(`Signal ${result.signal} skipped — cooldown ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s after close`);
       return;
     }
+    if (entryInFlight) return;
     if (result.signal === 'SHORT' && !cfg.settings.allowShort) {
       log(`Signal SHORT ignored (allowShort=false) — ${result.reason}`);
       return;
@@ -426,9 +426,16 @@ async function tick() {
       return;
     }
     log(`SIGNAL ${result.signal} @ $${price.toFixed(2)} — ${result.reason}`);
-    await openPosition(result.signal, price, levels, candles, candles.length - 1);
+    try {
+      await openPosition(result.signal, price, levels, candles, candles.length - 1);
+    } catch (err) {
+      log(`Entry attempt failed — will retry on next check: ${err.message}`, 'WARN');
+    }
   } else {
     logHoldReason(result.reason);
+  }
+  } finally {
+    tickInFlight = false;
   }
 }
 
@@ -496,10 +503,8 @@ async function start() {
   const balance = await getAvailableMargin();
   log(`Equity $${sessionStartEquity.toFixed(2)} | Available $${balance.toFixed(2)} | Position: ${position ? `${position.side} ${position.quantity} @ $${position.entryPrice}` : 'none'}`);
 
-  // Fast tick so edge-triggered entry signals (fresh crossovers that appear
-  // and disappear within one poll window) are caught, and wick SL/TP exits
-  // react quickly. Klines fetch is cheap (weight 2), so 10s is safe.
-  const tickSeconds = Math.min(cfg.pollSeconds, 10);
+  // Check signals every few seconds so entries fire soon after they appear.
+  const tickSeconds = Math.max(1, Math.min(cfg.pollSeconds, cfg.signalCheckSeconds));
   log(`Signal check every ${tickSeconds}s (pollSeconds=${cfg.pollSeconds})`);
   while (running) {
     try {

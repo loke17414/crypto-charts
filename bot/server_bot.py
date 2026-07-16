@@ -121,8 +121,23 @@ def bot_status() -> dict[str, Any]:
         "pid": _bot_proc.pid if running and _bot_proc else state.get("pid"),
         "startedAt": state.get("startedAt"),
         "persisted": bool(state.get("shouldRun")),
+        "recentLogs": tail_bot_logs(8),
         **flags,
     }
+
+
+def tail_bot_logs(n: int = 8) -> list[str]:
+    log_dir = ROOT / "logs"
+    if not log_dir.is_dir():
+        return []
+    files = sorted(log_dir.glob("bot-js-*.log"), reverse=True)
+    if not files:
+        return []
+    try:
+        lines = files[0].read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return lines[-max(1, n) :]
 
 
 def save_strategy_json(payload: dict[str, Any]) -> Path:

@@ -122,6 +122,8 @@ function loadConfig() {
     riskPerTradePct: num(s.riskPerTradePct ?? process.env.RISK_PER_TRADE_PCT, 1.0),
     maxAccountLossPct: num(s.maxAccountLossPct ?? process.env.MAX_ACCOUNT_LOSS_PCT, 5.0),
     pollSeconds: int(s.pollSeconds ?? process.env.POLL_SECONDS, 60),
+    signalCheckSeconds: int(s.signalCheckSeconds ?? process.env.SIGNAL_CHECK_SECONDS, 3),
+    entryCooldownSeconds: int(s.entryCooldownSeconds ?? process.env.ENTRY_COOLDOWN_SECONDS, 5),
     dryCash: num(process.env.DRY_CASH, 10000),
     strategyPath,
     hasStrategyFile: Boolean(strategyFile),

@@ -21,6 +21,7 @@ const FuturesBotApp = (() => {
   let serverBotActive = false;
   let serverBotLive = true;
   let serverBotDryWarned = false;
+  let lastServerBotLogLine = '';
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
@@ -1660,6 +1661,16 @@ const FuturesBotApp = (() => {
                 'warn',
               );
             }
+            const logs = st.recentLogs;
+            if (Array.isArray(logs) && logs.length) {
+              const last = logs[logs.length - 1];
+              if (last && last !== lastServerBotLogLine) {
+                if (/SIGNAL |OPEN |진입 실패|Entry skipped|진입 생략/.test(last)) {
+                  addLog(`[서버 봇] ${last.replace(/^\S+\s+\[INFO\]\s*/, '').replace(/^\S+\s+\[WARN\]\s*/, '').replace(/^\S+\s+\[ERROR\]\s*/, '')}`, 'info');
+                }
+                lastServerBotLogLine = last;
+              }
+            }
           }
           if (st && !st.running && botRunning) {
             serverBotActive = false;
@@ -2273,9 +2284,10 @@ const FuturesBotApp = (() => {
     const key = `${result.signal}:${barTime}`;
 
     if (serverBotActive) {
+      const secs = 3;
       const mode = serverBotLive
-        ? `${result.signal} 신호 — 서버 봇이 테스트넷 주문 처리 중`
-        : `${result.signal} 신호 — DRY_RUN 모드(시뮬레이션만, 실제 주문 없음). 봇 정지 후 다시 시작하세요`;
+        ? `${result.signal} 신호 — 서버 봇이 ${secs}초마다 진입 확인 중`
+        : `${result.signal} 신호 — DRY_RUN(시뮬레이션). 봇 정지 후 다시 시작하세요`;
       logEntrySkipOnce(`server:${key}`, mode);
       return;
     }
