@@ -386,7 +386,7 @@ const FuturesBotApp = (() => {
     const last20 = candles.slice(-20);
     const upBars = last20.filter((c, i, arr) => i > 0 && c.close > arr[i - 1].close).length;
 
-    return {
+    const ctx = {
       symbol: state.symbol,
       interval: state.interval,
       candleCount: candles.length,
@@ -397,6 +397,17 @@ const FuturesBotApp = (() => {
       recentHigh: Math.max(...candles.slice(-lookback).map((c) => c.high)),
       recentLow: Math.min(...candles.slice(-lookback).map((c) => c.low)),
     };
+
+    if (window.ChartStructure?.analyzeForAi) {
+      const structure = ChartStructure.analyzeForAi(candles, { recentCount: 15, fvgLookback: 30 });
+      ctx.recentCandles15 = structure.recentCandles;
+      ctx.structure = {
+        fvg: structure.fvg,
+        divergence: structure.divergence,
+      };
+    }
+
+    return ctx;
   }
 
   function getBacktestSnapshotForAi() {

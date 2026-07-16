@@ -206,6 +206,32 @@ def _sanitize_condition(cond: Any) -> dict[str, Any] | None:
             "params": _resolve_band_params(indicator, params),
         }
 
+    if cond_type == "fvg":
+        side = "bearish" if cond.get("side") == "bearish" else "bullish"
+        state = cond.get("state") or "present"
+        if state not in {"present", "in_zone", "filled"}:
+            state = "present"
+        lookback = int(cond.get("lookback") or 30)
+        return {
+            "type": "fvg",
+            "side": side,
+            "state": state,
+            "lookback": max(5, lookback),
+        }
+
+    if cond_type == "divergence":
+        kind = "bearish" if cond.get("kind") == "bearish" else "bullish"
+        indicator = "macd" if cond.get("indicator") == "macd" else "rsi"
+        lookback = int(cond.get("lookback") or 40)
+        period = int(cond.get("period") or 14)
+        return {
+            "type": "divergence",
+            "kind": kind,
+            "indicator": indicator,
+            "lookback": max(15, lookback),
+            "period": max(2, period),
+        }
+
     if cond.get("indicator") and cond.get("op") is not None:
         right_val = cond.get("value") if cond.get("value") is not None else cond.get("right")
         left = _sanitize_operand(

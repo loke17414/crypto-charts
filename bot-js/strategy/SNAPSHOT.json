@@ -1,11 +1,12 @@
 {
-  "syncedAt": "2026-07-16T06:51:29.935Z",
+  "syncedAt": "2026-07-16T08:58:23.751Z",
   "files": [
     "ta-math.js",
     "ta-extended.js",
     "indicator-catalog.js",
     "indicators.js",
     "candle-patterns.js",
+    "chart-structure.js",
     "risk-sizing.js",
     "strategy-engine.js",
     "futures-strategy.js"

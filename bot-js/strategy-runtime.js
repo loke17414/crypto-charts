@@ -32,6 +32,7 @@ const LOAD_ORDER = [
   'indicator-catalog.js',
   'indicators.js',
   'candle-patterns.js',
+  'chart-structure.js',
   'risk-sizing.js',
   'strategy-engine.js',
   'futures-strategy.js',

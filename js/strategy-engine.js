@@ -87,6 +87,7 @@ const StrategyEngine = (() => {
     lines.push('  long = closed back above lower band; short = closed back below upper band');
     lines.push('- exitRules: dynamic SL/TP — candle_extreme (field low|high, offset 1=prev bar) OR atr (period, mult); takeProfit risk_reward (ratio 1.5)');
     if (window.CandlePatterns) lines.push(CandlePatterns.catalogForAi());
+    if (window.ChartStructure) lines.push(ChartStructure.catalogForAi());
     return lines.join('\n');
   }
 
@@ -950,6 +951,14 @@ const StrategyEngine = (() => {
       return CandlePatterns.match(candles, barIdx, condition.pattern, condition.params || {});
     }
 
+    if (type === 'fvg' && window.ChartStructure) {
+      return ChartStructure.evaluateFvg(candles, index, condition);
+    }
+
+    if (type === 'divergence' && window.ChartStructure) {
+      return ChartStructure.evaluateDivergence(candles, index, condition);
+    }
+
     return false;
   }
 
@@ -994,6 +1003,16 @@ const StrategyEngine = (() => {
         if (cond.type === 'band_reentry') {
           const period = cond.params?.period || 20;
           if (period > maxPeriod) maxPeriod = period;
+        }
+        if (cond.type === 'fvg') {
+          const lb = parseInt(cond.lookback, 10) || 30;
+          if (lb + 3 > maxPeriod) maxPeriod = lb + 3;
+        }
+        if (cond.type === 'divergence') {
+          const lb = parseInt(cond.lookback, 10) || 40;
+          const period = parseInt(cond.period, 10) || 14;
+          if (lb > maxPeriod) maxPeriod = lb;
+          if (period + lb > maxPeriod) maxPeriod = period + lb;
         }
         if (cond.type === 'cross_above' || cond.type === 'cross_below' || cond.type === 'compare') {
           visit(cond.left);
