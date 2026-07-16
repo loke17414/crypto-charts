@@ -427,6 +427,15 @@ const FuturesBotApp = (() => {
       return;
     }
     el.value = String(value);
+    if (id === 'riskPerTrade') syncRiskPerTradeLabel();
+  }
+
+  function syncRiskPerTradeLabel() {
+    const el = $('#riskPerTradeVal');
+    const slider = $('#riskPerTrade');
+    if (!el || !slider) return;
+    const pct = parseFloat(slider.value);
+    el.textContent = Number.isFinite(pct) ? `${pct % 1 === 0 ? pct : pct.toFixed(1)}%` : '—';
   }
 
   function escapeHtml(text) {
@@ -2983,6 +2992,12 @@ const FuturesBotApp = (() => {
   function bindUiEvents() {
     document.addEventListener('chart-candles-updated', onChartCandlesUpdated);
     document.addEventListener('chart-candle-tick', onChartCandleTick);
+
+    const riskSlider = $('#riskPerTrade');
+    if (riskSlider) {
+      riskSlider.addEventListener('input', syncRiskPerTradeLabel);
+      syncRiskPerTradeLabel();
+    }
 
     const picker = $('#botIntervalPicker');
     if (picker) {
