@@ -206,10 +206,20 @@ def _key_source() -> str:
     return "none"
 
 
-def _openai_config() -> tuple[str, str]:
+def _openai_models() -> tuple[str, str, str]:
     api_key = (_runtime_api_key or os.getenv("OPENAI_API_KEY", "")).strip().strip('"').strip("'")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
-    return api_key, model
+    default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    complex_model = os.getenv("OPENAI_MODEL_COMPLEX", "gpt-4o").strip() or "gpt-4o"
+    return api_key, default_model, complex_model
+
+
+def _openai_config() -> tuple[str, str]:
+    api_key, default_model, _complex_model = _openai_models()
+    return api_key, default_model
+
+
+def _model_routing_mode() -> str:
+    return os.getenv("OPENAI_MODEL_ROUTING", "hybrid").strip().lower() or "hybrid"
 
 
 def mask_api_key(api_key: str) -> str:
@@ -252,12 +262,20 @@ def persist_openai_api_key(api_key: str) -> Path:
     updated: list[str] = []
     found_key = False
     found_model = False
+    found_complex = False
+    found_routing = False
     for line in lines:
         if line.startswith(f"{key_name}="):
             updated.append(f'{key_name}="{value}"')
             found_key = True
         elif line.startswith("OPENAI_MODEL="):
             found_model = True
+            updated.append(line)
+        elif line.startswith("OPENAI_MODEL_COMPLEX="):
+            found_complex = True
+            updated.append(line)
+        elif line.startswith("OPENAI_MODEL_ROUTING="):
+            found_routing = True
             updated.append(line)
         else:
             updated.append(line)
@@ -267,6 +285,10 @@ def persist_openai_api_key(api_key: str) -> Path:
             updated.append("")
         if not found_model:
             updated.append("OPENAI_MODEL=gpt-4o-mini")
+        if not found_complex:
+            updated.append("OPENAI_MODEL_COMPLEX=gpt-4o")
+        if not found_routing:
+            updated.append("OPENAI_MODEL_ROUTING=hybrid")
         updated.append(f'{key_name}="{value}"')
 
     env_path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
@@ -450,7 +472,8 @@ def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
 
 def ai_available(*, verify: bool = False) -> dict[str, Any]:
     _reload_env()
-    api_key, model = _openai_config()
+    api_key, default_model, complex_model = _openai_models()
+    routing = _model_routing_mode()
     configured = bool(api_key)
     status = {
         "available": configured and _last_test_result["verified"],
@@ -458,7 +481,9 @@ def ai_available(*, verify: bool = False) -> dict[str, Any]:
         "verified": _last_test_result["verified"] if configured else False,
         "authenticated": configured and _last_test_result.get("errorCode") != "invalid_api_key",
         "chatReady": _last_test_result["verified"] if configured else False,
-        "model": model,
+        "model": default_model,
+        "modelComplex": complex_model,
+        "modelRouting": routing,
         "keyPreview": mask_api_key(api_key) if configured else None,
         "keySource": _key_source(),
         "envPath": str(_env_path()),
@@ -523,6 +548,88 @@ def _looks_like_follow_up_edit(prompt: str) -> bool:
     return any(m in text for m in markers)
 
 
+_STRATEGY_RULE_MARKERS = (
+    "진입", "조건", "entryrules", "entry", "롱", "숏", "long", "short",
+    "rsi", "macd", "ema", "sma", "볼린저", "bollinger", "boll", "스토캐스틱", "stoch",
+    "크로스", "cross", "재진입", "이탈", "밴드", "band", "패턴", "pattern",
+    "candle", "봉", "지표", "indicator", "슬롯", "전략", "strategy",
+    "과매수", "과매도", "골든", "데드", "다이버", "삭제", "제거", "비활성",
+    "kdj", "cci", "atr", "adx", "envelope", "keltner", "donchian", "해머", "장악",
+)
+
+_RISK_ONLY_MARKERS = (
+    "손절", "익절", "레버리지", "leverage", "stoploss", "takeprofit",
+    "손익비", "riskpertrade", "maxaccountloss", "pollseconds",
+)
+
+_APPLY_MARKERS = ("적용", "apply", "설정해", "만들어", "추가해", "넣어", "바꿔줘", "변경해")
+
+
+def _looks_like_question_only(prompt: str) -> bool:
+    text = (prompt or "").strip()
+    lower = text.lower()
+    if looks_like_research_request(prompt) and not any(m in lower for m in _APPLY_MARKERS):
+        return True
+    question_hints = ("?", "뭐야", "무엇", "설명", "알려줘", "추천", "일까", "할까", "인가요")
+    if any(h in lower for h in question_hints):
+        if not any(m in lower for m in _STRATEGY_RULE_MARKERS):
+            if not any(m in lower for m in ("손절", "익절", "적용", "바꿔", "설정", "만들")):
+                return True
+    return False
+
+
+def _looks_like_risk_only_edit(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    has_risk = any(m in lower for m in _RISK_ONLY_MARKERS)
+    has_strategy = any(m in lower for m in _STRATEGY_RULE_MARKERS)
+    if has_risk and not has_strategy:
+        return True
+    if _looks_like_follow_up_edit(prompt) and has_risk and not has_strategy:
+        return True
+    return False
+
+
+def select_openai_model(
+    prompt: str,
+    *,
+    current_settings: dict[str, Any] | None = None,
+    web_research: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
+    """Return (model_name, route_reason). Uses mini by default; 4o for hard strategy edits."""
+    _api_key, default_model, complex_model = _openai_models()
+    routing = _model_routing_mode()
+    if routing in {"off", "false", "0", "single", "mini", "default"}:
+        return default_model, "single"
+    if routing in {"complex", "4o", "all", "always"}:
+        return complex_model, "all_complex"
+
+    text = (prompt or "").lower()
+
+    if _looks_like_question_only(prompt):
+        return default_model, "question"
+
+    if web_research and looks_like_research_request(prompt):
+        if any(m in text for m in _APPLY_MARKERS) or any(m in text for m in _STRATEGY_RULE_MARKERS):
+            return complex_model, "research_apply"
+        return default_model, "research_question"
+
+    if _looks_like_risk_only_edit(prompt):
+        return default_model, "risk_only"
+
+    if any(m in text for m in _STRATEGY_RULE_MARKERS):
+        return complex_model, "strategy_rules"
+
+    if _looks_like_follow_up_edit(prompt):
+        return complex_model, "follow_up"
+
+    settings = current_settings or {}
+    if settings.get("entryRules") or settings.get("strategySlots"):
+        if len((prompt or "").strip()) > 8:
+            return complex_model, "existing_strategy"
+
+    return default_model, "default"
+
+
 def _call_openai(
     prompt: str,
     current: StrategySettings,
@@ -531,8 +638,10 @@ def _call_openai(
     market_context: dict[str, Any] | None = None,
     backtest_snapshot: dict[str, Any] | None = None,
     web_research: list[dict[str, Any]] | None = None,
+    *,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    api_key, model = _openai_config()
+    api_key, default_model, _complex_model = _openai_models()
     if not api_key:
         raise ValueError(
             "OPENAI_API_KEY가 설정되지 않았습니다. OpenAI API Key 입력란에서 키를 저장하세요."
@@ -542,6 +651,8 @@ def _call_openai(
         test_result = test_openai_api_key(api_key)
         if not test_result["verified"]:
             raise ValueError(test_result["message"])
+
+    chosen_model = model or default_model
 
     user_content = json.dumps(
         {
@@ -560,7 +671,7 @@ def _call_openai(
         messages.append(turn)
     messages.append({"role": "user", "content": user_content})
     payload = {
-        "model": model,
+        "model": chosen_model,
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
         "messages": messages,
@@ -691,6 +802,13 @@ def interpret_strategy(
         except Exception:
             logger.exception("Web strategy research failed — continuing without it")
 
+    chosen_model, route_reason = select_openai_model(
+        prompt.strip(),
+        current_settings=raw_settings,
+        web_research=web_research,
+    )
+    logger.info("Strategy AI route: model=%s reason=%s", chosen_model, route_reason)
+
     raw = _call_openai(
         prompt.strip(),
         current,
@@ -699,6 +817,7 @@ def interpret_strategy(
         market,
         backtest_snapshot,
         web_research,
+        model=chosen_model,
     )
 
     patch = raw.get("settings") or {}
@@ -750,10 +869,12 @@ def interpret_strategy(
             "changed_fields": changed_fields,
             "backtest": bt_meta,
             "patch_keys": list(patch.keys()),
+            "model": chosen_model,
+            "route_reason": route_reason,
         },
     )
 
-    logger.info("Strategy AI applied patch: %s", patch)
+    logger.info("Strategy AI applied patch: %s (model=%s)", patch, chosen_model)
 
     return {
         "ok": True,
@@ -765,6 +886,8 @@ def interpret_strategy(
         "market_insight": market_insight,
         "backtest_insight": backtest_insight,
         "sources": sources,
+        "model": chosen_model,
+        "route_reason": route_reason,
     }
 
 

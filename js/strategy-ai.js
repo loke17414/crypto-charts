@@ -147,13 +147,20 @@ const StrategyAI = (() => {
       return;
     }
 
+    const routing = status?.modelRouting || 'hybrid';
+    const routingLabel = routing === 'hybrid'
+      ? '하이브리드 (전략→4o, 나머지→mini)'
+      : routing;
+
     const rows = [
       ['API 서버', '온라인'],
       ['키 설정', status?.configured ? '완료' : '미설정'],
       ['키 인증', status?.authenticated ? '성공' : '실패/미검사'],
       ['GPT 호출', status?.chatReady || status?.verified ? '가능' : '불가'],
       ['키 미리보기', status?.keyPreview || '—'],
-      ['모델', status?.model || 'gpt-4o-mini'],
+      ['모델 (기본)', status?.model || 'gpt-4o-mini'],
+      ['모델 (복잡)', status?.modelComplex || 'gpt-4o'],
+      ['라우팅', routingLabel],
       ['키 출처', status?.keySource || 'none'],
       ['.env 경로', status?.envPath || '—'],
       ['마지막 검사', formatCheckedAt(status?.checkedAt)],
@@ -199,7 +206,11 @@ const StrategyAI = (() => {
       return;
     }
 
-    el.textContent = `GPT: 사용 가능 (${status.model})`;
+    const routing = status?.modelRouting || 'hybrid';
+    const modelLine = routing === 'hybrid'
+      ? `${status.model} + ${status.modelComplex || 'gpt-4o'}`
+      : (status.model || 'gpt-4o-mini');
+    el.textContent = `GPT: 사용 가능 (${modelLine})`;
     el.className = 'strategy-ai-status strategy-ai-status--ready';
   }
 
@@ -272,6 +283,9 @@ const StrategyAI = (() => {
 
       const changed = changedFields.join(', ');
       const parts = [result.summary];
+      if (result.model) {
+        parts.push(`🤖 ${result.model}${result.route_reason ? ` (${result.route_reason})` : ''}`);
+      }
       if (result.market_insight) parts.push(`📊 ${result.market_insight}`);
       if (result.backtest_insight) parts.push(`📈 ${result.backtest_insight}`);
       if (changed) parts.push(`(변경: ${changed})`);
