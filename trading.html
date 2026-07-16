@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718d">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718e">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -32,124 +32,138 @@
     </header>
 
     <main class="trading-main trading-main--simple">
-      <section class="trading-chart-zone chart-panel chart-panel--embedded">
-        <div class="chart-top-bar">
-          <p class="chart-top-bar__signal" id="signalInfo">대기 중...</p>
-          <div class="chart-top-bar__meta">
-            <span>RSI <strong id="rsiValue">—</strong></span>
-            <span>명목 <strong id="notionalInfo">—</strong></span>
-            <span id="liveIndicator" class="live-indicator hidden"><span class="live-indicator__dot"></span>LIVE</span>
+      <section class="trading-chart-zone trading-chart-zone--canvas" id="floatPanelCanvas">
+        <div class="float-panel float-panel--chart" data-panel-id="chart">
+          <div class="float-panel__titlebar" data-drag-handle>
+            <span class="float-panel__title">차트</span>
+            <span class="float-panel__hint">드래그 · 모서리로 크기 조절 · 더블클릭 초기화</span>
+            <span class="float-panel__grip" aria-hidden="true">⋮⋮</span>
           </div>
-        </div>
-
-        <div class="coin-header coin-header--compact" id="coinHeader">
-          <div class="coin-header__info">
-            <img id="coinIcon" class="coin-header__icon" src="" alt="" hidden>
-            <div>
-              <h2 id="coinName" class="coin-header__name">Bitcoin</h2>
-              <span id="coinSymbol" class="coin-header__symbol">BTC/USDT</span>
-            </div>
-          </div>
-          <div class="coin-header__price">
-            <span id="currentPrice" class="coin-header__current">—</span>
-            <span id="priceChange" class="coin-header__change">—</span>
-          </div>
-          <div class="coin-header__stats">
-            <div class="stat"><span class="stat__label">24h 최고</span><span id="high24h" class="stat__value">—</span></div>
-            <div class="stat"><span class="stat__label">24h 최저</span><span id="low24h" class="stat__value">—</span></div>
-            <div class="stat"><span class="stat__label">거래량</span><span id="volume24h" class="stat__value">—</span></div>
-            <div class="stat"><span class="stat__label">시총</span><span id="marketCap" class="stat__value">—</span></div>
-          </div>
-        </div>
-
-        <div class="chart-controls chart-controls--simple">
-          <div class="chart-controls__type hidden">
-            <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
-            <button class="btn btn--tab" data-chart-type="line">라인</button>
-          </div>
-          <div class="chart-controls__range">
-            <button class="btn btn--tab" data-interval="1m">1m</button>
-            <button class="btn btn--tab" data-interval="5m">5m</button>
-            <button class="btn btn--tab" data-interval="15m">15m</button>
-            <button class="btn btn--tab active" data-interval="1h">1h</button>
-            <button class="btn btn--tab" data-interval="4h">4h</button>
-            <button class="btn btn--tab" data-interval="1d">1d</button>
-          </div>
-          <div class="chart-controls__tools">
-            <div class="indicator-dropdown">
-              <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
-              <div id="indicatorMenu" class="indicator-menu hidden">
-                <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
-                <div id="indicatorMenuList"></div>
+          <div class="float-panel__body">
+            <div class="chart-top-bar">
+              <p class="chart-top-bar__signal" id="signalInfo">대기 중...</p>
+              <div class="chart-top-bar__meta">
+                <span>RSI <strong id="rsiValue">—</strong></span>
+                <span>명목 <strong id="notionalInfo">—</strong></span>
+                <span id="liveIndicator" class="live-indicator hidden"><span class="live-indicator__dot"></span>LIVE</span>
               </div>
             </div>
-            <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
-          </div>
-        </div>
 
-        <div class="chart-container">
-          <div class="chart-workspace">
-            <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
-            <div class="chart-stack">
-              <div class="chart-main">
-                <div id="chartArea" class="chart-area"></div>
-                <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
-                <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
-                <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
-                <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
+            <div class="coin-header coin-header--compact" id="coinHeader">
+              <div class="coin-header__info">
+                <img id="coinIcon" class="coin-header__icon" src="" alt="" hidden>
+                <div>
+                  <h2 id="coinName" class="coin-header__name">Bitcoin</h2>
+                  <span id="coinSymbol" class="coin-header__symbol">BTC/USDT</span>
+                </div>
               </div>
-              <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart"></div>
+              <div class="coin-header__price">
+                <span id="currentPrice" class="coin-header__current">—</span>
+                <span id="priceChange" class="coin-header__change">—</span>
+              </div>
+              <div class="coin-header__stats">
+                <div class="stat"><span class="stat__label">24h 최고</span><span id="high24h" class="stat__value">—</span></div>
+                <div class="stat"><span class="stat__label">24h 최저</span><span id="low24h" class="stat__value">—</span></div>
+                <div class="stat"><span class="stat__label">거래량</span><span id="volume24h" class="stat__value">—</span></div>
+                <div class="stat"><span class="stat__label">시총</span><span id="marketCap" class="stat__value">—</span></div>
+              </div>
             </div>
+
+            <div class="chart-controls chart-controls--simple">
+              <div class="chart-controls__type hidden">
+                <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
+                <button class="btn btn--tab" data-chart-type="line">라인</button>
+              </div>
+              <div class="chart-controls__range">
+                <button class="btn btn--tab" data-interval="1m">1m</button>
+                <button class="btn btn--tab" data-interval="5m">5m</button>
+                <button class="btn btn--tab" data-interval="15m">15m</button>
+                <button class="btn btn--tab active" data-interval="1h">1h</button>
+                <button class="btn btn--tab" data-interval="4h">4h</button>
+                <button class="btn btn--tab" data-interval="1d">1d</button>
+              </div>
+              <div class="chart-controls__tools">
+                <div class="indicator-dropdown">
+                  <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
+                  <div id="indicatorMenu" class="indicator-menu hidden">
+                    <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
+                    <div id="indicatorMenuList"></div>
+                  </div>
+                </div>
+                <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
+              </div>
+            </div>
+
+            <div class="chart-container">
+              <div class="chart-workspace">
+                <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
+                <div class="chart-stack">
+                  <div class="chart-main">
+                    <div id="chartArea" class="chart-area"></div>
+                    <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
+                    <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
+                    <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
+                    <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
+                  </div>
+                  <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart"></div>
+                </div>
+              </div>
+            </div>
+
+            <details class="chart-advanced-panel">
+              <summary>차트 고급 · 백테스트</summary>
+              <div class="chart-advanced-panel__body">
+                <div class="backtest-bar">
+                  <label class="backtest-toggle"><input type="checkbox" id="showBacktest" checked> 백테스트</label>
+                  <label class="backtest-count-label">회수 <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100"></label>
+                  <button type="button" id="runBacktestBtn" class="btn btn--ghost btn--sm">실행</button>
+                  <span id="backtestStats" class="backtest-stats">—</span>
+                </div>
+              </div>
+            </details>
           </div>
+          <div class="float-panel__resize" data-resize-handle title="크기 조절"></div>
         </div>
 
-        <section class="chart-ai-panel">
-          <div class="chart-ai-panel__head">
-            <h3 class="chart-ai-panel__title">AI 대화</h3>
+        <div class="float-panel float-panel--ai" data-panel-id="ai">
+          <div class="float-panel__titlebar" data-drag-handle>
+            <span class="float-panel__title">AI 대화</span>
             <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
+            <span class="float-panel__grip" aria-hidden="true">⋮⋮</span>
           </div>
-          <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
-          <div class="strategy-ai-input chart-ai-panel__composer">
-            <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략 질문·설정 (예: RSI 30 이하 롱, SL 1.5% TP 3%)"></textarea>
-            <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">전송</button>
-          </div>
-          <div class="strategy-ai-quick">
-            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
-            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
-            <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱, SL 1.5% TP 3%">BB</button>
-          </div>
-          <div class="strategy-ai-target">
-            <label for="strategyAiTargetSlot">슬롯</label>
-            <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
-          </div>
-          <details class="chart-ai-panel__settings">
-            <summary>GPT 연결 설정</summary>
-            <div id="strategyAiDetails" class="strategy-ai-details"></div>
-            <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-            <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
-              <label for="openaiApiKey">OpenAI Key</label>
-              <input type="password" id="openaiApiKey" autocomplete="off">
+          <div class="float-panel__body">
+            <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
+            <div class="strategy-ai-input chart-ai-panel__composer">
+              <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략 질문·설정 (예: RSI 30 이하 롱, SL 1.5% TP 3%)"></textarea>
+              <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">전송</button>
             </div>
-            <div class="strategy-ai-actions chart-ai-panel__actions">
-              <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
-              <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
-              <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
-              <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
+            <div class="strategy-ai-quick">
+              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
+              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
+              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱, SL 1.5% TP 3%">BB</button>
             </div>
-          </details>
-        </section>
-
-        <details class="chart-advanced-panel">
-          <summary>차트 고급 · 백테스트</summary>
-          <div class="chart-advanced-panel__body">
-            <div class="backtest-bar">
-              <label class="backtest-toggle"><input type="checkbox" id="showBacktest" checked> 백테스트</label>
-              <label class="backtest-count-label">회수 <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100"></label>
-              <button type="button" id="runBacktestBtn" class="btn btn--ghost btn--sm">실행</button>
-              <span id="backtestStats" class="backtest-stats">—</span>
+            <div class="strategy-ai-target">
+              <label for="strategyAiTargetSlot">슬롯</label>
+              <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
             </div>
+            <details class="chart-ai-panel__settings">
+              <summary>GPT 연결 설정</summary>
+              <div id="strategyAiDetails" class="strategy-ai-details"></div>
+              <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
+              <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
+                <label for="openaiApiKey">OpenAI Key</label>
+                <input type="password" id="openaiApiKey" autocomplete="off">
+              </div>
+              <div class="strategy-ai-actions chart-ai-panel__actions">
+                <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
+                <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
+                <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
+                <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
+              </div>
+            </details>
           </div>
-        </details>
+          <div class="float-panel__resize" data-resize-handle title="크기 조절"></div>
+        </div>
       </section>
 
       <aside class="bot-control-panel">
@@ -298,6 +312,7 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
+  <script src="js/floating-panels.js?v=20260718a"></script>
   <script src="js/futures-bot-app.js?v=20260718a"></script>
   <script src="js/strategy-ai.js?v=20260718b"></script>
 </body>
