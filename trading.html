@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718a">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718b">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -90,17 +90,16 @@
         <div class="chart-container">
           <div class="chart-workspace">
             <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
-            <div class="chart-main">
-              <div id="chartArea" class="chart-area"></div>
-              <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
-              <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
-              <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
-              <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
+            <div class="chart-stack">
+              <div class="chart-main">
+                <div id="chartArea" class="chart-area"></div>
+                <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
+                <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
+                <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
+                <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
+              </div>
+              <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart"></div>
             </div>
-          </div>
-          <div class="indicator-section" id="indicatorSection">
-            <div id="activeIndicators" class="indicator-overview hidden"></div>
-            <div id="indicatorPanes" class="indicator-panes"></div>
           </div>
         </div>
 
@@ -163,19 +162,6 @@
         </div>
 
         <div class="control-section">
-          <div class="control-section__label">리스크 관리</div>
-          <div class="form-group">
-            <label for="riskPerTrade">1회 거래 리스크</label>
-            <div class="risk-slider-row">
-              <input type="range" id="riskPerTrade" value="1" min="0.1" max="10" step="0.1">
-              <span class="risk-slider-row__val" id="riskPerTradeVal">1%</span>
-            </div>
-          </div>
-          <div class="form-group hidden"><label for="maxAccountLoss">최대 손실 (%)</label><input type="number" id="maxAccountLoss" value="5" min="1" max="50" step="0.5"></div>
-          <div class="form-group"><label for="leverage">레버리지</label><input type="number" id="leverage" value="5" min="1" max="125" step="1"></div>
-        </div>
-
-        <div class="control-section">
           <div class="control-section__label">전략</div>
           <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
           <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
@@ -204,6 +190,19 @@
             <button type="button" id="startBotBtn" class="btn btn--simple-primary">봇 시작</button>
             <button type="button" id="stopBotBtn" class="btn btn--simple-ghost" disabled>봇 정지</button>
           </div>
+        </div>
+
+        <div class="control-section">
+          <div class="control-section__label">리스크 관리</div>
+          <div class="form-group">
+            <label for="riskPerTrade">1회 거래 리스크</label>
+            <div class="risk-slider-row">
+              <input type="range" id="riskPerTrade" value="1" min="0.1" max="10" step="0.1">
+              <span class="risk-slider-row__val" id="riskPerTradeVal">1%</span>
+            </div>
+          </div>
+          <div class="form-group hidden"><label for="maxAccountLoss">최대 손실 (%)</label><input type="number" id="maxAccountLoss" value="5" min="1" max="50" step="0.5"></div>
+          <div class="form-group"><label for="leverage">레버리지</label><input type="number" id="leverage" value="5" min="1" max="125" step="1"></div>
         </div>
 
         <div class="control-section log-section">
@@ -281,7 +280,7 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260714e"></script>
+  <script src="js/indicators.js?v=20260718b"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/strategy-engine.js?v=20260717c"></script>
   <script src="js/drawings.js?v=20260716a"></script>

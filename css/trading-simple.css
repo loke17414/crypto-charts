@@ -132,10 +132,67 @@
 .trading-page--simple .chart-container {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .trading-page--simple .chart-workspace {
-  min-height: 320px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.trading-page--simple .chart-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #131722;
+}
+
+.trading-page--simple .chart-main {
+  flex: 1;
+  min-height: 180px;
+  position: relative;
+}
+
+.trading-page--simple .indicator-panes--in-chart {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--simple-border);
+  background: #131722;
+}
+
+.trading-page--simple .indicator-panes--in-chart:empty {
+  display: none;
+  border-top: none;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane {
+  border-bottom: 1px solid var(--simple-border);
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane:last-child {
+  border-bottom: none;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__label {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.trading-page--simple .chart-ai-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  border-top: 1px solid var(--simple-border);
+  background: #151820;
+  min-height: 140px;
+  max-height: min(28vh, 240px);
 }
 
 .trading-page--simple .chart-advanced-panel .backtest-bar {
@@ -170,19 +227,7 @@
   gap: 0.5rem;
 }
 
-/* AI panel below chart */
-.trading-page--simple .chart-ai-panel {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.65rem 0.75rem;
-  border-top: 1px solid var(--simple-border);
-  background: #151820;
-  min-height: 160px;
-  max-height: min(32vh, 280px);
-}
-
+/* AI panel details */
 .trading-page--simple .chart-ai-panel__head {
   display: flex;
   align-items: center;

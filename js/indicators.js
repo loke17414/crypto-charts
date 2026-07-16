@@ -902,13 +902,30 @@ const IndicatorManager = (() => {
     });
   }
 
+  function calcMainChartHeight(workspace) {
+    const embedded = panesEl?.classList.contains('indicator-panes--in-chart');
+    if (!embedded) return Math.min(workspace.clientHeight, MAIN_CHART_MAX);
+    const subH = panesEl?.clientHeight || 0;
+    return Math.max(180, workspace.clientHeight - subH);
+  }
+
   function resizeMainChart() {
     const area = document.getElementById('chartArea');
     const workspace = document.querySelector('.chart-workspace');
     if (!area || !mainChart || !workspace) return;
-    const h = Math.min(workspace.clientHeight, MAIN_CHART_MAX);
+    const h = calcMainChartHeight(workspace);
     mainChart.applyOptions({ height: h });
     area.style.height = `${h}px`;
+    if (panesEl?.classList.contains('indicator-panes--in-chart')) {
+      requestAnimationFrame(() => {
+        if (!mainChart || !workspace) return;
+        const next = calcMainChartHeight(workspace);
+        if (next !== h) {
+          mainChart.applyOptions({ height: next });
+          area.style.height = `${next}px`;
+        }
+      });
+    }
   }
 
   function openSettings(id) {
