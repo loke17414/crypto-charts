@@ -144,6 +144,9 @@ class BinanceFuturesClient {
       stepSize: parseFloat(filters.LOT_SIZE.stepSize),
       minQty: parseFloat(filters.LOT_SIZE.minQty),
       minNotional: parseFloat((filters.MIN_NOTIONAL || { notional: '5' }).notional),
+      tickSize: parseFloat((filters.PRICE_FILTER || { tickSize: '0.1' }).tickSize),
+      minPrice: parseFloat((filters.PRICE_FILTER || {}).minPrice || 0) || 0,
+      maxPrice: parseFloat((filters.PRICE_FILTER || {}).maxPrice || 0) || 0,
     };
     return this._filters;
   }
@@ -185,6 +188,97 @@ class BinanceFuturesClient {
   openShort(qty) { return this.marketOrder('SELL', qty); }
   closeLong(qty) { return this.marketOrder('SELL', qty, true); }
   closeShort(qty) { return this.marketOrder('BUY', qty, true); }
+
+  _formatPrice(price) {
+    const f = this._filters || { tickSize: 0.1 };
+    const rounded = BinanceFuturesClient._roundStep(price, f.tickSize);
+    return String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  }
+
+  async _placeConditional(positionSide, orderType, triggerPrice) {
+    const f = await this.getSymbolFilters();
+    const rounded = BinanceFuturesClient._roundStep(triggerPrice, f.tickSize);
+    const formatted = String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    const num = parseFloat(formatted);
+    if (num <= 0 || (f.minPrice && num < f.minPrice)) {
+      throw new Error(`${orderType} trigger $${formatted} below min price $${f.minPrice}`);
+    }
+    if (f.maxPrice && num > f.maxPrice) {
+      throw new Error(`${orderType} trigger $${formatted} above max price $${f.maxPrice}`);
+    }
+    const side = positionSide === 'LONG' ? 'SELL' : 'BUY';
+    return this._request('POST', '/fapi/v1/algoOrder', {
+      algoType: 'CONDITIONAL',
+      symbol: this.symbol,
+      side,
+      type: orderType,
+      triggerPrice: formatted,
+      closePosition: 'true',
+      workingType: 'MARK_PRICE',
+    }, true);
+  }
+
+  placeStopMarket(positionSide, stopPrice) {
+    return this._placeConditional(positionSide, 'STOP_MARKET', stopPrice);
+  }
+
+  placeTakeProfitMarket(positionSide, takeProfitPrice) {
+    return this._placeConditional(positionSide, 'TAKE_PROFIT_MARKET', takeProfitPrice);
+  }
+
+  async getOpenAlgoOrders() {
+    const data = await this._request('GET', '/fapi/v1/openAlgoOrders', { symbol: this.symbol }, true);
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.orders)) return data.orders;
+    if (data && Array.isArray(data.algoOrders)) return data.algoOrders;
+    return [];
+  }
+
+  async cancelAllOrders() {
+    try {
+      await this._request('DELETE', '/fapi/v1/algoOpenOrders', { symbol: this.symbol }, true);
+    } catch { /* ignore */ }
+    try {
+      await this._request('DELETE', '/fapi/v1/allOpenOrders', { symbol: this.symbol }, true);
+    } catch { /* ignore */ }
+  }
+
+  async getSlTpOrders() {
+    const result = { stop_price: null, take_profit_price: null };
+    try {
+      const orders = await this.getOpenAlgoOrders();
+      for (const order of orders) {
+        const otype = order.type || order.origType || order.orderType;
+        const trigger = parseFloat(order.triggerPrice || order.stopPrice || 0);
+        if (trigger <= 0) continue;
+        if (otype === 'STOP_MARKET') result.stop_price = trigger;
+        else if (otype === 'TAKE_PROFIT_MARKET') result.take_profit_price = trigger;
+      }
+    } catch { /* ignore */ }
+    return result;
+  }
+
+  async setSlTp(positionSide, stopPrice, takeProfitPrice) {
+    await this.cancelAllOrders();
+    const errors = [];
+    if (stopPrice && stopPrice > 0) {
+      try {
+        await this.placeStopMarket(positionSide, stopPrice);
+      } catch (err) {
+        errors.push(`SL: ${err.message}`);
+      }
+    }
+    if (takeProfitPrice && takeProfitPrice > 0) {
+      try {
+        await this.placeTakeProfitMarket(positionSide, takeProfitPrice);
+      } catch (err) {
+        errors.push(`TP: ${err.message}`);
+      }
+    }
+    const result = await this.getSlTpOrders();
+    if (errors.length) throw new Error(errors.join(' · '));
+    return result;
+  }
 }
 
 module.exports = { BinanceFuturesClient };

@@ -125,27 +125,25 @@ async function syncPositionFromExchange() {
   if (cfg.dryRun) return;
   const live = await client.getPosition();
   if (live && !position) {
-    // Adopt an exchange position we don't have local SL/TP for; exits will fall
-    // back to the % levels from settings (same as the UI when extras are absent).
+    let sltp = { stop_price: null, take_profit_price: null };
+    try {
+      sltp = await client.getSlTpOrders();
+    } catch { /* ignore */ }
     position = {
       side: live.side,
       entryPrice: live.entryPrice,
       quantity: live.quantity,
       marginUsdt: (live.quantity * live.entryPrice) / (live.leverage || cfg.leverage),
-      stopPrice: null,
-      takeProfitPrice: null,
+      stopPrice: sltp.stop_price,
+      takeProfitPrice: sltp.take_profit_price,
       stopLossPct: cfg.settings.stopLossPct,
       takeProfitPct: cfg.settings.takeProfitPct,
       entryTime: new Date().toISOString(),
+      exchangeSlTp: Boolean(sltp.stop_price || sltp.take_profit_price),
     };
     log(`Synced position from exchange: ${position.side} ${position.quantity} @ $${position.entryPrice}`);
   } else if (!live && position) {
-    // Position vanished from the exchange = closed externally (manual close in
-    // the UI or liquidation). A time-based pause is not enough: level signals
-    // (e.g. RSI oversold) persist across bars and would re-open the trade the
-    // user just closed. Block entries until the signal disappears once, so
-    // only a FRESH signal can enter again.
-    log('Exchange has no position; clearing local state (entry blocked until current signal clears)');
+    log('Exchange position closed (SL/TP 체결 또는 수동 청산) — 로컬 상태 초기화');
     position = null;
     entryPausedUntil = Date.now() + Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
     blockEntryUntilSignalClears = true;
@@ -274,8 +272,21 @@ async function openPosition(side, price, levels, candles, index) {
     takeProfitPct: levels.takeProfitPct,
     entryTime: new Date().toISOString(),
     entryBarTime: candles?.[index]?.time ?? null,
+    exchangeSlTp: false,
   };
   log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)}`);
+
+  if (levels.stopPrice || levels.takeProfitPrice) {
+    try {
+      const sltp = await client.setSlTp(side, levels.stopPrice, levels.takeProfitPrice);
+      position.exchangeSlTp = true;
+      if (sltp.stop_price != null) position.stopPrice = sltp.stop_price;
+      if (sltp.take_profit_price != null) position.takeProfitPrice = sltp.take_profit_price;
+      log(`바이낸스 SL/TP 등록 — SL ${sltp.stop_price != null ? `$${sltp.stop_price}` : '없음'} · TP ${sltp.take_profit_price != null ? `$${sltp.take_profit_price}` : '없음'}`);
+    } catch (err) {
+      log(`바이낸스 SL/TP 등록 실패: ${err.message} — 봇이 종가 기준으로 청산합니다`, 'WARN');
+    }
+  }
   saveState();
 }
 
@@ -297,6 +308,9 @@ async function closePosition(price, reason) {
 
   if (side === 'LONG') await client.closeLong(quantity);
   else await client.closeShort(quantity);
+  try {
+    await client.cancelAllOrders();
+  } catch { /* ignore */ }
   log(`CLOSE ${side} ${quantity} @ $${price.toFixed(2)} | ROE ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% — ${reason}`);
   position = null;
   saveState();
@@ -329,16 +343,24 @@ async function tick() {
   // trigger phantom exits from price action that happened before we were in
   // the trade, so that bar is checked against the live price only.
   if (position) {
+    // Exchange SL/TP orders handle exit — only sync position state here.
+    if (!cfg.dryRun && position.exchangeSlTp) {
+      return;
+    }
+
     const extras = {
       stopPrice: position.stopPrice ?? undefined,
       takeProfitPrice: position.takeProfitPrice ?? undefined,
       stopLossPct: position.stopLossPct ?? cfg.settings.stopLossPct,
       takeProfitPct: position.takeProfitPct ?? cfg.settings.takeProfitPct,
+      useStopLoss: cfg.settings.useStopLoss !== false,
     };
     const sameBarAsEntry = position.entryBarTime != null && forming.time === position.entryBarTime;
-    const exit = sameBarAsEntry
-      ? FuturesStrategy.checkExit(position.side, position.entryPrice, price, cfg.settings, extras)
-      : FuturesStrategy.checkExitBar(position.side, position.entryPrice, forming, cfg.settings, extras);
+    // Live bot: use close price only (not wick) to avoid false exits on forming candles.
+    // Backtest uses checkExitBar; dry-run simulation keeps wick semantics.
+    const exit = (cfg.dryRun && !sameBarAsEntry)
+      ? FuturesStrategy.checkExitBar(position.side, position.entryPrice, forming, cfg.settings, extras)
+      : FuturesStrategy.checkExit(position.side, position.entryPrice, price, cfg.settings, extras);
     if (exit) {
       await closePosition(exit.exitPrice ?? price, exit.reason);
       return;
@@ -429,7 +451,17 @@ async function start() {
   }
 
   loadState();
-  if (!cfg.dryRun) await syncPositionFromExchange();
+  if (!cfg.dryRun) {
+    await syncPositionFromExchange();
+    if (position) {
+      try {
+        const sltp = await client.getSlTpOrders();
+        position.exchangeSlTp = Boolean(sltp.stop_price || sltp.take_profit_price);
+        if (sltp.stop_price != null) position.stopPrice = sltp.stop_price;
+        if (sltp.take_profit_price != null) position.takeProfitPrice = sltp.take_profit_price;
+      } catch { /* ignore */ }
+    }
+  }
 
   sessionStartEquity = await getEquity(0);
   const balance = await getAvailableMargin();
