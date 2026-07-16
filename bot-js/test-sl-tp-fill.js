@@ -1,6 +1,8 @@
 'use strict';
 
-const { shiftLevelsToFill, validateSlTp } = require('./sl-tp-utils');
+const { shiftLevelsToFill, recalcLevelsAtEntry, validateSlTp } = require('./sl-tp-utils');
+const { buildRuntime } = require('./strategy-runtime');
+const { FuturesStrategy } = buildRuntime();
 
 let failures = 0;
 function check(label, cond, detail = '') {
@@ -36,5 +38,18 @@ const shortLevels = { stopPrice: 101.5, takeProfitPrice: 97, stopLossPct: 1.5, t
 const shiftedShort = shiftLevelsToFill('SHORT', 100, 95, shortLevels);
 check('SHORT shift SL above fill', shiftedShort.stopPrice === 96.5, JSON.stringify(shiftedShort));
 check('SHORT shift TP below fill', shiftedShort.takeProfitPrice === 92, JSON.stringify(shiftedShort));
+
+// Recalc from entry price using % (always, even when signal == entry).
+const settings = { stopLossPct: 1.5, takeProfitPct: 3, useStopLoss: true };
+const atEntry = recalcLevelsAtEntry(
+  'LONG',
+  105,
+  { ...longLevels, signalPrice: 100 },
+  settings,
+  {},
+  FuturesStrategy.calcEntryLevels,
+);
+check('recalc LONG SL from entry', Math.abs(atEntry.stopPrice - 103.425) < 0.01, JSON.stringify(atEntry));
+check('recalc LONG TP from entry', Math.abs(atEntry.takeProfitPrice - 108.15) < 0.01, JSON.stringify(atEntry));
 
 process.exit(failures ? 1 : 0);

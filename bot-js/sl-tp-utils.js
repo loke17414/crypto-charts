@@ -41,6 +41,36 @@ function shiftLevelsToFill(side, refPrice, entryPrice, levels) {
   };
 }
 
+/**
+ * Recompute SL/TP from the actual fill price (and % / dynamic exit rules).
+ * Falls back to dollar-distance shift when dynamic calc is unavailable.
+ */
+function recalcLevelsAtEntry(side, entryPrice, signalLevels, settings, context, calcEntryLevels) {
+  if (!calcEntryLevels || !signalLevels || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return signalLevels;
+  }
+
+  const slOff = signalLevels.stopPrice == null && signalLevels.stopLossPct == null;
+  const mergedSettings = {
+    ...settings,
+    stopLossPct: signalLevels.stopLossPct ?? settings?.stopLossPct,
+    takeProfitPct: signalLevels.takeProfitPct ?? settings?.takeProfitPct,
+    useStopLoss: slOff ? false : settings?.useStopLoss !== false,
+  };
+
+  const hasCtx = context?.candles && context.index != null;
+  const recalc = calcEntryLevels(
+    side,
+    entryPrice,
+    mergedSettings,
+    hasCtx ? context : {},
+  );
+  if (recalc) return recalc;
+
+  const ref = signalLevels.signalPrice ?? entryPrice;
+  return shiftLevelsToFill(side, ref, entryPrice, signalLevels);
+}
+
 function validateSlTp(side, entryPrice, stopPrice, takeProfitPrice, markPrice) {
   const issues = [];
   if (!side || !Number.isFinite(entryPrice) || entryPrice <= 0) return issues;
@@ -75,4 +105,4 @@ function validateSlTp(side, entryPrice, stopPrice, takeProfitPrice, markPrice) {
   return issues;
 }
 
-module.exports = { shiftLevelsToFill, validateSlTp };
+module.exports = { shiftLevelsToFill, recalcLevelsAtEntry, validateSlTp };

@@ -101,6 +101,9 @@ class OpenBody(BaseModel):
     price: float = Field(gt=0)
     stop_price: float | None = Field(default=None, gt=0)
     take_profit_price: float | None = Field(default=None, gt=0)
+    stop_loss_pct: float | None = Field(default=None, gt=0)
+    take_profit_pct: float | None = Field(default=None, gt=0)
+    use_stop_loss: bool = True
 
 
 class SlTpBody(BaseModel):
@@ -132,6 +135,42 @@ def _require_session() -> Session:
     if not _session:
         raise HTTPException(status_code=401, detail="API key not connected")
     return _session
+
+
+def _levels_at_entry(
+    side: str,
+    entry_price: float,
+    *,
+    ref_price: float,
+    stop_loss_pct: float | None,
+    take_profit_pct: float | None,
+    use_stop_loss: bool,
+    stop_price: float | None,
+    take_profit_price: float | None,
+) -> tuple[float | None, float | None]:
+    """Compute SL/TP trigger prices from actual fill price and % distances."""
+    sl_pct = stop_loss_pct
+    tp_pct = take_profit_pct
+    if ref_price > 0:
+        if sl_pct is None and stop_price is not None:
+            sl_pct = (
+                ((ref_price - stop_price) / ref_price) * 100
+                if side == "LONG"
+                else ((stop_price - ref_price) / ref_price) * 100
+            )
+        if tp_pct is None and take_profit_price is not None:
+            tp_pct = (
+                ((take_profit_price - ref_price) / ref_price) * 100
+                if side == "LONG"
+                else ((ref_price - take_profit_price) / ref_price) * 100
+            )
+    if side == "LONG":
+        sl = entry_price * (1 - sl_pct / 100) if use_stop_loss and sl_pct and sl_pct > 0 else None
+        tp = entry_price * (1 + tp_pct / 100) if tp_pct and tp_pct > 0 else None
+    else:
+        sl = entry_price * (1 + sl_pct / 100) if use_stop_loss and sl_pct and sl_pct > 0 else None
+        tp = entry_price * (1 - tp_pct / 100) if tp_pct and tp_pct > 0 else None
+    return sl, tp
 
 
 def _shift_sl_tp_to_fill(
@@ -384,21 +423,23 @@ def open_order(body: OpenBody) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Register exchange-side SL/TP so they fill even when the browser is closed.
-    # Shift $ distances from the signal price to the actual fill so triggers
-    # are not already "hit" on MARK_PRICE (which would close immediately).
+    # Recompute SL/TP from actual fill price + % distances (not the signal candle).
     sl_tp: dict[str, Any] = {"stop_price": None, "take_profit_price": None}
     pos = client.get_position()
     entry_price = float(pos["entry_price"]) if pos else body.price
-    stop_price = body.stop_price
-    take_profit_price = body.take_profit_price
-    if (stop_price or take_profit_price) and abs(entry_price - body.price) >= body.price * 1e-5:
-        stop_price, take_profit_price = _shift_sl_tp_to_fill(
-            body.side, body.price, entry_price, stop_price, take_profit_price
-        )
+    stop_price, take_profit_price = _levels_at_entry(
+        body.side,
+        entry_price,
+        ref_price=body.price,
+        stop_loss_pct=body.stop_loss_pct,
+        take_profit_pct=body.take_profit_pct,
+        use_stop_loss=body.use_stop_loss,
+        stop_price=body.stop_price,
+        take_profit_price=body.take_profit_price,
+    )
+    if stop_price or take_profit_price:
         logger.info(
-            "SL/TP shifted to fill — signal $%.2f → entry $%.2f | SL %s TP %s",
-            body.price,
+            "SL/TP at entry $%.2f — SL %s · TP %s",
             entry_price,
             f"${stop_price:.2f}" if stop_price else "없음",
             f"${take_profit_price:.2f}" if take_profit_price else "없음",

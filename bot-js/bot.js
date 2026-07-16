@@ -21,7 +21,7 @@ const path = require('path');
 const { loadConfig } = require('./config');
 const { buildRuntime } = require('./strategy-runtime');
 const { BinanceFuturesClient } = require('./binance');
-const { shiftLevelsToFill, validateSlTp } = require('./sl-tp-utils');
+const { shiftLevelsToFill, recalcLevelsAtEntry, validateSlTp } = require('./sl-tp-utils');
 
 const cfg = loadConfig();
 const brain = buildRuntime();
@@ -215,9 +215,10 @@ function intervalSeconds(iv) {
 }
 
 // ---- Orders -------------------------------------------------------------
-async function openPosition(side, price, levels, candles, index) {
+async function openPosition(side, price, levels, candles, index, levelSettings = null) {
   if (position || entryInFlight) return;
   entryInFlight = true;
+  const settingsForLevels = levelSettings || cfg.settings;
   try {
   const equity = await getEquity(price);
   const slPctForSizing = RiskSizing.resolveStopLossPctForSizing(levels, cfg.settings.stopLossPct);
@@ -242,20 +243,28 @@ async function openPosition(side, price, levels, candles, index) {
   if (cfg.dryRun) {
     const qty = Number((notional / price).toFixed(3));
     const usedMargin = (qty * price) / cfg.leverage;
+    const adjusted = recalcLevelsAtEntry(
+      side,
+      price,
+      { ...levels, signalPrice: price },
+      settingsForLevels,
+      { candles, index },
+      FuturesStrategy.calcEntryLevels,
+    );
     dryCash -= usedMargin;
     position = {
       side,
       entryPrice: price,
       quantity: qty,
       marginUsdt: usedMargin,
-      stopPrice: levels.stopPrice,
-      takeProfitPrice: levels.takeProfitPrice,
-      stopLossPct: levels.stopLossPct,
-      takeProfitPct: levels.takeProfitPct,
+      stopPrice: adjusted.stopPrice,
+      takeProfitPrice: adjusted.takeProfitPrice,
+      stopLossPct: adjusted.stopLossPct,
+      takeProfitPct: adjusted.takeProfitPct,
       entryTime: new Date().toISOString(),
       entryBarTime: candles?.[index]?.time ?? null,
     };
-    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)} (실제 주문 없음)`, 'WARN');
+    log(`[DRY] OPEN ${side} ${qty} @ $${price.toFixed(2)} | SL ${adjusted.stopPrice != null ? `$${adjusted.stopPrice.toFixed(2)}` : '없음'} TP $${adjusted.takeProfitPrice.toFixed(2)} (진입가 기준)`, 'WARN');
     saveState();
     return;
   }
@@ -268,10 +277,18 @@ async function openPosition(side, price, levels, candles, index) {
   const live = await client.getPosition();
   const entryPrice = live ? live.entryPrice : price;
   const filledQty = live ? live.quantity : qty;
-  const adjusted = shiftLevelsToFill(side, price, entryPrice, levels);
-  if (Math.abs(entryPrice - price) >= price * 1e-5) {
-    log(`체결가 $${entryPrice.toFixed(2)} ≠ 신호가 $${price.toFixed(2)} — SL/TP를 체결가 기준으로 재조정`, 'INFO');
-  }
+  const adjusted = recalcLevelsAtEntry(
+    side,
+    entryPrice,
+    { ...levels, signalPrice: price },
+    settingsForLevels,
+    { candles, index },
+    FuturesStrategy.calcEntryLevels,
+  );
+  log(
+    `SL/TP 진입가 $${entryPrice.toFixed(2)} 기준 — SL ${adjusted.stopPrice != null ? `$${adjusted.stopPrice.toFixed(2)} (${adjusted.stopLossPct?.toFixed(2)}%)` : '없음'} · TP $${adjusted.takeProfitPrice.toFixed(2)} (${adjusted.takeProfitPct?.toFixed(2)}%)`,
+    'INFO',
+  );
 
   let markPrice = null;
   try { markPrice = await client.getMarkPrice(); } catch { /* ignore */ }
@@ -427,7 +444,14 @@ async function tick() {
     }
     log(`SIGNAL ${result.signal} @ $${price.toFixed(2)} — ${result.reason}`);
     try {
-      await openPosition(result.signal, price, levels, candles, candles.length - 1);
+      await openPosition(
+        result.signal,
+        price,
+        levels,
+        candles,
+        candles.length - 1,
+        result.levelSettings,
+      );
     } catch (err) {
       log(`Entry attempt failed — will retry on next check: ${err.message}`, 'WARN');
     }

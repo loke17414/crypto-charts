@@ -112,6 +112,9 @@ const FuturesApiClient = (() => {
         price,
         stop_price: levels.stopPrice ?? null,
         take_profit_price: levels.takeProfitPrice ?? null,
+        stop_loss_pct: levels.stopLossPct ?? null,
+        take_profit_pct: levels.takeProfitPct ?? null,
+        use_stop_loss: levels.stopPrice != null,
       }),
     });
   }
