@@ -142,7 +142,7 @@ def tail_bot_logs(n: int = 8) -> list[str]:
 
 
 def pause_bot_entry(*, manual: bool = True, interval: str = "15m") -> dict[str, Any]:
-    """Block server-bot re-entry after manual/UI close until signal clears."""
+    """Pause server-bot re-entry for a short window after manual/UI close."""
     seconds_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
     interval_sec = seconds_map.get(interval, 900)
     now_ms = int(time.time() * 1000)
@@ -152,13 +152,29 @@ def pause_bot_entry(*, manual: bool = True, interval: str = "15m") -> dict[str, 
     )
     payload = {
         "pausedUntil": paused_until,
-        "blockUntilSignalClears": bool(manual),
-        "reason": "manual_close",
+        "reason": "manual_close" if manual else "external_close",
         "updatedAt": _now_iso(),
     }
     ENTRY_GATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    logger.info("Bot entry paused until %s (blockUntilSignalClears=%s)", paused_until, manual)
+    logger.info("Bot entry paused until %s", paused_until)
     return payload
+
+
+def clear_expired_entry_gate() -> None:
+    if not ENTRY_GATE_FILE.exists():
+        return
+    try:
+        data = json.loads(ENTRY_GATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        ENTRY_GATE_FILE.unlink(missing_ok=True)
+        return
+    # Legacy gate from blockUntilSignalClears — never auto-cleared while signal held.
+    if data.get("blockUntilSignalClears"):
+        ENTRY_GATE_FILE.unlink(missing_ok=True)
+        return
+    paused_until = int(data.get("pausedUntil") or 0)
+    if paused_until <= int(time.time() * 1000):
+        ENTRY_GATE_FILE.unlink(missing_ok=True)
 
 
 def _strategy_interval() -> str:
@@ -181,6 +197,7 @@ def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
     global _bot_proc
 
     if is_running():
+        clear_expired_entry_gate()
         return {"ok": True, "running": True, "message": "봇이 이미 실행 중입니다.", **bot_status()}
 
     node = _node_executable()
@@ -198,6 +215,10 @@ def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
             f"bot-js/bot.js를 찾을 수 없습니다: {bot_script}. "
             "프로젝트 루트에서 git pull 후 systemctl restart crypto-web 하세요."
         )
+
+    clear_expired_entry_gate()
+    # Fresh start — drop stale pause (e.g. status-poll repeatedly extended pausedUntil).
+    ENTRY_GATE_FILE.unlink(missing_ok=True)
 
     env = os.environ.copy()
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -261,6 +282,7 @@ def restore_bot_if_needed() -> None:
     if not state.get("shouldRun"):
         return
     try:
+        clear_expired_entry_gate()
         start_bot(live_trading=bool(state.get("liveTrading", True)))
         logger.info("Restored server bot from web-bot-state.json")
     except Exception as exc:

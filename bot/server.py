@@ -16,8 +16,10 @@ from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.exchange import BinanceFuturesClient
 from bot.server_bot import (
+    ENTRY_GATE_FILE,
     bot_diagnostics,
     bot_status,
+    clear_expired_entry_gate,
     is_running,
     pause_bot_entry,
     restore_bot_if_needed,
@@ -564,6 +566,14 @@ def bot_pause_entry() -> dict[str, Any]:
         return {"ok": True, "running": False, "message": "서버 봇이 실행 중이 아닙니다."}
     gate = pause_bot_entry(manual=True, interval=_strategy_interval())
     return {"ok": True, "running": True, "gate": gate}
+
+
+@app.post("/api/bot/clear-entry-pause")
+def bot_clear_entry_pause() -> dict[str, Any]:
+    clear_expired_entry_gate()
+    if ENTRY_GATE_FILE.exists():
+        ENTRY_GATE_FILE.unlink(missing_ok=True)
+    return {"ok": True, "message": "진입 일시정지 해제"}
 
 
 @app.get("/api/bot/status")

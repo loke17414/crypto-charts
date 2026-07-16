@@ -1630,12 +1630,7 @@ const FuturesBotApp = (() => {
       }
       resetSlTpConfirm();
       slTpPreviewTouchedAt = 0;
-      if (botRunning && serverBotActive) {
-        try {
-          await FuturesApiClient.pauseBotEntry();
-        } catch { /* ignore */ }
-        pauseAutoEntryAfterManualClose('포지션 종료');
-      } else if (botRunning && !isAutoEntryPaused()) {
+      if (botRunning && !serverBotActive && !isAutoEntryPaused()) {
         pauseAutoEntryAfterManualClose('포지션 종료');
       }
     }
@@ -2850,6 +2845,7 @@ const FuturesBotApp = (() => {
           symbol: state.symbol,
           tradeMarginUsdt: marginPreview,
         });
+        await FuturesApiClient.clearBotEntryPause();
         await FuturesApiClient.startServerBot({ liveTrading: true });
         serverBotActive = true;
         serverBotLive = true;
