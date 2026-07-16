@@ -4,6 +4,26 @@ const StrategyAI = (() => {
   const HISTORY_KEY = 'crypto-charts-strategy-ai-history';
   const MAX_HISTORY = 24;
 
+  const STRATEGY_APPLY_HINT = (
+    '전략을 이해하지 못했습니다. 진입 조건을 더 구체적으로 설명해 주세요.\n'
+    + '예: RSI 30 이하 롱, 양봉일 때 롱, EMA 12가 26 상향 돌파 시 롱'
+  );
+
+  function looksLikeStrategyApply(text) {
+    const t = (text || '').trim();
+    if (!t) return false;
+    if (/(\?|뭐야|무엇|설명해|알려줘|추천해|일까|할까|인가요)/.test(t)) {
+      if (!/(진입|만들|설정해|적용|바꿔|추가해|넣어)/.test(t)) return false;
+    }
+    if (/^(손절|익절|레버리지만)/.test(t.replace(/\s/g, ''))) return false;
+    return /진입|조건|롱|숏|long|short|rsi|macd|ema|캔들|봉|양봉|상승|전략|패턴|크로스|볼린저|해머|장악|매수|매도/.test(t);
+  }
+
+  function formatAiError(message) {
+    const msg = String(message || '전략 적용에 실패했습니다. 다시 시도해 주세요.').trim();
+    return msg.startsWith('⚠️') ? msg : `⚠️ ${msg}`;
+  }
+
   const $ = (sel) => document.querySelector(sel);
 
   let conversationHistory = [];
@@ -264,25 +284,33 @@ const StrategyAI = (() => {
         backtestSnapshot,
       });
 
-      if (result.chart_interval && FuturesBotApp.applyChartInterval) {
-        await FuturesBotApp.applyChartInterval(result.chart_interval);
-      }
-
       const changedFields = result.changed_fields || result.changedFields || [];
       const patch = result.patch && typeof result.patch === 'object' ? result.patch : null;
       const patchKeys = patch ? Object.keys(patch) : [];
 
-      // Question/research mode returns an answer without touching settings —
-      // applying would needlessly recompute the backtest and spam logs.
-      // patch가 비어 있으면 changed_fields만 있어도 적용하지 않는다.
+      if (!patchKeys.length && looksLikeStrategyApply(trimmed)) {
+        addMessage('assistant', formatAiError(STRATEGY_APPLY_HINT), { persist: true });
+        return;
+      }
+
+      let applyResult = { applied: false };
       if (patchKeys.length) {
-        FuturesBotApp.applyStrategySettings(result.settings, {
+        applyResult = FuturesBotApp.applyStrategySettings(result.settings, {
           rulesHtml: result.rules,
           summary: result.summary,
           changedFields,
           targetSlotId,
           patch,
-        });
+        }) || { applied: false };
+      }
+
+      if (applyResult.applied === false && applyResult.reason) {
+        addMessage('assistant', formatAiError(applyResult.reason), { persist: true });
+        return;
+      }
+
+      if (applyResult.applied && result.chart_interval && FuturesBotApp.applyChartInterval) {
+        await FuturesBotApp.applyChartInterval(result.chart_interval);
       }
 
       const changed = changedFields.join(', ');
@@ -307,7 +335,7 @@ const StrategyAI = (() => {
       });
     } catch (err) {
       console.error(err);
-      addMessage('assistant', err.message || '전략 적용에 실패했습니다. 다시 시도해 주세요.', { persist: true });
+      addMessage('assistant', formatAiError(err.message), { persist: true });
       await refreshStatus({ verify: true });
     } finally {
       setThinking(false);

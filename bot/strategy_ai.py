@@ -17,7 +17,7 @@ from bot.config import ROOT
 from bot.strategy_ai_memory import append_turn, clear_memory, load_turns, merge_histories
 from bot.strategy_market import build_market_context
 from bot.strategy_research import looks_like_research_request, research_strategies
-from bot.strategy_schema import StrategySettings
+from bot.strategy_schema import StrategySettings, entry_rules_have_signals, strategy_slots_have_signals
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,8 @@ TIMEFRAME (봉 주기):
 - The system switches the chart to that interval automatically — do NOT leave settings empty just because of timeframe.
 - ALWAYS return entryRules (and exitRules if needed) for strategy requests like "롱 진입", even when a timeframe is mentioned.
 
-WEB RESEARCH / QUESTION MODE:
+- If you cannot translate the user's strategy into valid entryRules, do NOT return empty settings — explain the problem in summary and still omit settings (the server will reject empty strategy applies).
+- Never return entryRules with zero valid conditions when the user asked to create or change entry rules.
 - You may receive web_research: a list of {title, url, content} scraped from the internet about trading strategies.
 - Use web_research as your primary knowledge source when it is provided — it reflects what real traders publish about the strategy.
 - If the user is ASKING a question (전략 설명/추천/비교/원리 등) rather than requesting a settings change:
@@ -570,6 +571,71 @@ _RISK_ONLY_MARKERS = (
 )
 
 _APPLY_MARKERS = ("적용", "apply", "설정해", "만들어", "추가해", "넣어", "바꿔줘", "변경해")
+_RULE_PATCH_KEYS = frozenset({"entryRules", "exitRules", "strategySlots"})
+_DELETE_MARKERS = ("삭제", "제거", "비활성", "없애", "초기화", "지워", "없애줘", "빼줘")
+
+_STRATEGY_APPLY_ERROR = (
+    "전략을 이해하지 못했습니다. 진입 조건을 더 구체적으로 설명해 주세요.\n"
+    "예: RSI 30 이하 롱, 양봉일 때 롱, EMA 12가 26 상향 돌파 시 롱"
+)
+_ENTRY_RULES_INVALID_ERROR = (
+    "진입 조건이 비어 있거나 시스템이 이해할 수 없는 형식입니다.\n"
+    "지표·캔들·롱/숏 방향과 수치를 포함해 다시 설명해 주세요."
+)
+_STRATEGY_NOT_IN_PATCH_ERROR = (
+    "요청하신 진입 조건이 설정에 반영되지 않았습니다.\n"
+    "롱/숏 진입 조건을 조금 더 구체적으로 다시 설명해 주세요."
+)
+
+
+def _looks_like_strategy_delete_request(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return any(m in lower for m in _DELETE_MARKERS)
+
+
+def _looks_like_strategy_apply_request(prompt: str) -> bool:
+    if _looks_like_question_only(prompt):
+        return False
+    if _looks_like_risk_only_edit(prompt):
+        return False
+    if _looks_like_strategy_delete_request(prompt):
+        return False
+    lower = (prompt or "").lower()
+    return any(m in lower for m in _STRATEGY_RULE_MARKERS) or any(m in lower for m in _APPLY_MARKERS)
+
+
+def _validate_strategy_apply_or_raise(
+    prompt: str,
+    patch: dict[str, Any],
+    merged: StrategySettings,
+    *,
+    strategy_slot_target: str | None = None,
+) -> None:
+    """Reject strategy-apply prompts that would produce empty or invalid rules."""
+    if not _looks_like_strategy_apply_request(prompt):
+        return
+
+    if not patch:
+        raise ValueError(_STRATEGY_APPLY_ERROR)
+
+    patch_keys = set(patch.keys())
+    if not patch_keys.intersection(_RULE_PATCH_KEYS):
+        raise ValueError(_STRATEGY_NOT_IN_PATCH_ERROR)
+
+    if "entryRules" in patch and not entry_rules_have_signals(patch.get("entryRules")):
+        raise ValueError(_ENTRY_RULES_INVALID_ERROR)
+
+    if "strategySlots" in patch:
+        slots = patch.get("strategySlots")
+        if isinstance(slots, list) and slots:
+            if not strategy_slots_have_signals(slots) and "entryRules" not in patch:
+                raise ValueError(_ENTRY_RULES_INVALID_ERROR)
+
+    if strategy_slot_target == "__new__":
+        slot_rules_ok = strategy_slots_have_signals(merged.strategySlots)
+        top_ok = entry_rules_have_signals(merged.entryRules)
+        if not slot_rules_ok and not top_ok:
+            raise ValueError(_ENTRY_RULES_INVALID_ERROR)
 
 
 def _looks_like_question_only(prompt: str) -> bool:
@@ -946,6 +1012,13 @@ def interpret_strategy(
             changed_fields = list(patch.keys())
     else:
         merged = current
+
+    _validate_strategy_apply_or_raise(
+        prompt.strip(),
+        patch,
+        merged,
+        strategy_slot_target=strategy_slot_target,
+    )
 
     summary = str(raw.get("summary") or "전략 설정을 업데이트했습니다.").strip()
     rules = str(raw.get("rules") or merged.rules_text()).strip()

@@ -258,6 +258,30 @@ def sanitize_entry_rules(rules: Any) -> dict[str, Any] | None:
     }
 
 
+def entry_rules_have_signals(rules: Any) -> bool:
+    cleaned = sanitize_entry_rules(rules)
+    if not cleaned:
+        return False
+    for side in ("long", "short"):
+        group = cleaned.get(side) or {}
+        if group.get("enabled") and group.get("conditions"):
+            return True
+    return False
+
+
+def strategy_slots_have_signals(slots: Any) -> bool:
+    if not isinstance(slots, list):
+        return False
+    for item in slots:
+        slot = _slot_dict(item)
+        if not slot or slot.get("enabled") is False:
+            continue
+        raw_rules = slot.get("entryRules") or slot.get("rules")
+        if entry_rules_have_signals(raw_rules):
+            return True
+    return False
+
+
 def _deep_merge_entry_rules(current: Any, patch: Any) -> dict[str, Any] | None:
     if not isinstance(patch, dict):
         return current if isinstance(current, dict) else None

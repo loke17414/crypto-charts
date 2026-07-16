@@ -717,7 +717,7 @@ const FuturesBotApp = (() => {
   function applyStrategySettings(settings, {
     rulesHtml = null, summary = null, changedFields = [], targetSlotId = null, patch = null,
   } = {}) {
-    if (!settings) return;
+    if (!settings) return { applied: false, reason: '적용할 설정이 없습니다.' };
 
     const patchObj = patch && typeof patch === 'object' ? patch : null;
     const patchKeys = patchObj ? Object.keys(patchObj) : [];
@@ -731,7 +731,7 @@ const FuturesBotApp = (() => {
       if (changed.size > 0) {
         addLog('AI 응답에 실제 변경 내용이 없어 기존 설정과 백테스트를 유지합니다.', 'info');
       }
-      return;
+      return { applied: false };
     }
 
     readFormSettings();
@@ -780,7 +780,11 @@ const FuturesBotApp = (() => {
       if (settings.entryRules && !entryRulesHaveSignals(nextRules)
         && (prevHadSignals || targetSlotId === '__new__')) {
         entryRulesRejected = true;
-        addLog('AI가 보낸 진입 조건이 비어 있거나 잘못되어 기존 조건을 유지합니다.', 'warn');
+        const rejectReason = '진입 조건이 비어 있거나 시스템이 이해할 수 없는 형식입니다. 지표·캔들·롱/숏 방향과 수치를 포함해 다시 설명해 주세요.';
+        addLog(`AI가 보낸 진입 조건이 비어 있거나 잘못되어 기존 조건을 유지합니다.`, 'warn');
+        if (touches('entryRules') && (targetSlotId === '__new__' || !prevHadSignals)) {
+          return { applied: false, reason: rejectReason };
+        }
       } else {
         state.entryRules = nextRules;
       }
@@ -862,6 +866,7 @@ const FuturesBotApp = (() => {
       addLog('AI가 SL/TP를 변경했습니다 — 진입하려면 SL/TP 확인 버튼을 다시 눌러주세요.', 'info');
     }
     scheduleServerStrategySync();
+    return { applied: true };
   }
 
   function resetSlTpConfirm() {
