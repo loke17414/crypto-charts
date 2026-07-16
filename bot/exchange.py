@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -172,6 +173,72 @@ class BinanceFuturesClient:
         rounded = (value // step) * step
         return round(rounded, precision)
 
+    @staticmethod
+    def _round_trigger(value: float, step: float, *, up: bool) -> float:
+        if step <= 0:
+            return value
+        precision = max(0, len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0)
+        steps = value / step
+        rounded = (math.ceil(steps) if up else math.floor(steps)) * step
+        return round(rounded, precision)
+
+    def get_mark_price(self) -> float | None:
+        data = self._request("GET", "/fapi/v1/premiumIndex", {"symbol": self.config.symbol})
+        mark = float(data.get("markPrice", 0))
+        return mark if mark > 0 else None
+
+    def _format_trigger_price(self, price: float, position_side: str, order_type: str) -> str:
+        filters = self.get_symbol_filters()
+        tick = filters["tick_size"]
+        is_stop = order_type == "STOP_MARKET"
+        if position_side == "LONG":
+            rounded = self._round_trigger(price, tick, up=not is_stop)
+        else:
+            rounded = self._round_trigger(price, tick, up=is_stop)
+        return f"{rounded:.8f}".rstrip("0").rstrip(".")
+
+    def _validate_trigger(
+        self,
+        position_side: str,
+        order_type: str,
+        trigger: float,
+        entry_price: float,
+        mark_price: float | None,
+    ) -> None:
+        is_stop = order_type == "STOP_MARKET"
+        if position_side == "LONG":
+            if is_stop:
+                if trigger >= entry_price:
+                    raise ValueError(
+                        f"SL ${trigger:g} must be below entry ${entry_price:g}"
+                    )
+                if mark_price is not None and trigger >= mark_price:
+                    raise ValueError(
+                        f"SL ${trigger:g} at/above mark ${mark_price:g} (즉시 체결)"
+                    )
+            elif trigger <= entry_price:
+                raise ValueError(f"TP ${trigger:g} must be above entry ${entry_price:g}")
+            elif mark_price is not None and trigger <= mark_price:
+                raise ValueError(
+                    f"TP ${trigger:g} at/below mark ${mark_price:g} (즉시 체결)"
+                )
+        else:
+            if is_stop:
+                if trigger <= entry_price:
+                    raise ValueError(
+                        f"SL ${trigger:g} must be above entry ${entry_price:g}"
+                    )
+                if mark_price is not None and trigger <= mark_price:
+                    raise ValueError(
+                        f"SL ${trigger:g} at/below mark ${mark_price:g} (즉시 체결)"
+                    )
+            elif trigger >= entry_price:
+                raise ValueError(f"TP ${trigger:g} must be below entry ${entry_price:g}")
+            elif mark_price is not None and trigger >= mark_price:
+                raise ValueError(
+                    f"TP ${trigger:g} at/above mark ${mark_price:g} (즉시 체결)"
+                )
+
     def calc_quantity(self, notional_usdt: float, price: float) -> float:
         filters = self.get_symbol_filters()
         qty = self._round_step(notional_usdt / price, filters["step_size"])
@@ -217,7 +284,7 @@ class BinanceFuturesClient:
     # Order API on 2025-12-09; /fapi/v1/order now rejects them with error -4120.
     def _place_conditional(self, position_side: str, order_type: str, trigger_price: float) -> dict[str, Any]:
         filters = self.get_symbol_filters()
-        formatted = self._format_price(trigger_price)
+        formatted = self._format_trigger_price(trigger_price, position_side, order_type)
         min_price = filters.get("min_price") or 0
         max_price = filters.get("max_price") or 0
         if float(formatted) <= 0 or (min_price and float(formatted) < min_price):
@@ -309,21 +376,41 @@ class BinanceFuturesClient:
         position_side: str,
         stop_price: float | None,
         take_profit_price: float | None,
+        *,
+        entry_price: float | None = None,
     ) -> dict[str, float | None]:
         """Replace exchange-side SL/TP orders (cancel existing, place new).
 
         Places each leg independently so a bad SL doesn't block the TP (and
         vice versa); raises with the collected errors after trying both.
         """
+        mark_price: float | None = None
+        try:
+            mark_price = self.get_mark_price()
+        except requests.RequestException:
+            mark_price = None
+
         self.cancel_all_orders()
         errors: list[str] = []
         if stop_price and stop_price > 0:
             try:
+                if entry_price is not None:
+                    self._validate_trigger(
+                        position_side, "STOP_MARKET", stop_price, entry_price, mark_price
+                    )
                 self.place_stop_market(position_side, stop_price)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"SL: {exc}")
         if take_profit_price and take_profit_price > 0:
             try:
+                if entry_price is not None:
+                    self._validate_trigger(
+                        position_side,
+                        "TAKE_PROFIT_MARKET",
+                        take_profit_price,
+                        entry_price,
+                        mark_price,
+                    )
                 self.place_take_profit_market(position_side, take_profit_price)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"TP: {exc}")

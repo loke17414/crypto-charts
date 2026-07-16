@@ -7,6 +7,7 @@
  */
 
 const crypto = require('crypto');
+const { validateSlTp } = require('./sl-tp-utils');
 
 const MAINNET = 'https://fapi.binance.com';
 const TESTNET = 'https://testnet.binancefuture.com';
@@ -101,6 +102,12 @@ class BinanceFuturesClient {
     return usdt ? parseFloat(usdt.availableBalance) : 0;
   }
 
+  async getMarkPrice() {
+    const data = await this._request('GET', '/fapi/v1/premiumIndex', { symbol: this.symbol });
+    const mark = parseFloat(data.markPrice);
+    return Number.isFinite(mark) && mark > 0 ? mark : null;
+  }
+
   async getPosition() {
     const positions = await this._request('GET', '/fapi/v2/positionRisk', {}, true);
     for (const p of positions) {
@@ -151,13 +158,26 @@ class BinanceFuturesClient {
     return this._filters;
   }
 
-  static _roundStep(value, step) {
-    if (step <= 0) return value;
+  static _stepPrecision(step) {
     const stepStr = String(step);
-    const precision = stepStr.includes('.')
+    return stepStr.includes('.')
       ? stepStr.replace(/0+$/, '').split('.')[1].length
       : 0;
+  }
+
+  static _roundStep(value, step) {
+    if (step <= 0) return value;
+    const precision = BinanceFuturesClient._stepPrecision(step);
     const rounded = Math.floor(value / step) * step;
+    return Number(rounded.toFixed(precision));
+  }
+
+  /** Round trigger prices away from mark so SL/TP are not nudged into instant fill. */
+  static _roundTrigger(value, step, mode) {
+    if (step <= 0) return value;
+    const precision = BinanceFuturesClient._stepPrecision(step);
+    const steps = value / step;
+    const rounded = (mode === 'up' ? Math.ceil(steps) : Math.floor(steps)) * step;
     return Number(rounded.toFixed(precision));
   }
 
@@ -197,7 +217,11 @@ class BinanceFuturesClient {
 
   async _placeConditional(positionSide, orderType, triggerPrice) {
     const f = await this.getSymbolFilters();
-    const rounded = BinanceFuturesClient._roundStep(triggerPrice, f.tickSize);
+    const isStop = orderType === 'STOP_MARKET';
+    const roundMode = positionSide === 'LONG'
+      ? (isStop ? 'down' : 'up')
+      : (isStop ? 'up' : 'down');
+    const rounded = BinanceFuturesClient._roundTrigger(triggerPrice, f.tickSize, roundMode);
     const formatted = String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
     const num = parseFloat(formatted);
     if (num <= 0 || (f.minPrice && num < f.minPrice)) {
@@ -258,8 +282,14 @@ class BinanceFuturesClient {
     return result;
   }
 
-  async setSlTp(positionSide, stopPrice, takeProfitPrice) {
+  async setSlTp(positionSide, stopPrice, takeProfitPrice, entryPrice = null) {
     await this.cancelAllOrders();
+    let markPrice = null;
+    try { markPrice = await this.getMarkPrice(); } catch { /* ignore */ }
+    if (entryPrice != null) {
+      const issues = validateSlTp(positionSide, entryPrice, stopPrice, takeProfitPrice, markPrice);
+      if (issues.length) throw new Error(issues.join(' · '));
+    }
     const errors = [];
     if (stopPrice && stopPrice > 0) {
       try {

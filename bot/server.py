@@ -134,6 +134,31 @@ def _require_session() -> Session:
     return _session
 
 
+def _shift_sl_tp_to_fill(
+    side: str,
+    ref_price: float,
+    entry_price: float,
+    stop_price: float | None,
+    take_profit_price: float | None,
+) -> tuple[float | None, float | None]:
+    """Preserve $ risk/reward distances when fill price differs from signal price."""
+    if abs(ref_price - entry_price) < ref_price * 1e-5:
+        return stop_price, take_profit_price
+    sl = stop_price
+    tp = take_profit_price
+    if side == "LONG":
+        if sl is not None:
+            sl = entry_price - (ref_price - sl)
+        if tp is not None:
+            tp = entry_price + (tp - ref_price)
+    else:
+        if sl is not None:
+            sl = entry_price + (sl - ref_price)
+        if tp is not None:
+            tp = entry_price - (ref_price - tp)
+    return sl, tp
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     ai = ai_available()
@@ -360,12 +385,32 @@ def open_order(body: OpenBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Register exchange-side SL/TP so they fill even when the browser is closed.
-    # If registration fails the position would be unprotected, so roll the entry
-    # back (close immediately) and report the error instead of keeping it open.
+    # Shift $ distances from the signal price to the actual fill so triggers
+    # are not already "hit" on MARK_PRICE (which would close immediately).
     sl_tp: dict[str, Any] = {"stop_price": None, "take_profit_price": None}
-    if body.stop_price or body.take_profit_price:
+    pos = client.get_position()
+    entry_price = float(pos["entry_price"]) if pos else body.price
+    stop_price = body.stop_price
+    take_profit_price = body.take_profit_price
+    if (stop_price or take_profit_price) and abs(entry_price - body.price) >= body.price * 1e-5:
+        stop_price, take_profit_price = _shift_sl_tp_to_fill(
+            body.side, body.price, entry_price, stop_price, take_profit_price
+        )
+        logger.info(
+            "SL/TP shifted to fill — signal $%.2f → entry $%.2f | SL %s TP %s",
+            body.price,
+            entry_price,
+            f"${stop_price:.2f}" if stop_price else "없음",
+            f"${take_profit_price:.2f}" if take_profit_price else "없음",
+        )
+    if stop_price or take_profit_price:
         try:
-            sl_tp = client.set_sl_tp(body.side, body.stop_price, body.take_profit_price)
+            sl_tp = client.set_sl_tp(
+                body.side,
+                stop_price,
+                take_profit_price,
+                entry_price=entry_price,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("SL/TP order failed after open — rolling back entry: %s", exc)
             rollback_error: str | None = None
@@ -408,7 +453,12 @@ def set_sl_tp_order(body: SlTpBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="stop_price or take_profit_price required")
 
     try:
-        sl_tp = client.set_sl_tp(pos["side"], body.stop_price, body.take_profit_price)
+        sl_tp = client.set_sl_tp(
+            pos["side"],
+            body.stop_price,
+            body.take_profit_price,
+            entry_price=float(pos["entry_price"]),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

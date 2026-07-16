@@ -21,6 +21,7 @@ const path = require('path');
 const { loadConfig } = require('./config');
 const { buildRuntime } = require('./strategy-runtime');
 const { BinanceFuturesClient } = require('./binance');
+const { shiftLevelsToFill, validateSlTp } = require('./sl-tp-utils');
 
 const cfg = loadConfig();
 const brain = buildRuntime();
@@ -261,24 +262,47 @@ async function openPosition(side, price, levels, candles, index) {
   const live = await client.getPosition();
   const entryPrice = live ? live.entryPrice : price;
   const filledQty = live ? live.quantity : qty;
+  const adjusted = shiftLevelsToFill(side, price, entryPrice, levels);
+  if (Math.abs(entryPrice - price) >= price * 1e-5) {
+    log(`체결가 $${entryPrice.toFixed(2)} ≠ 신호가 $${price.toFixed(2)} — SL/TP를 체결가 기준으로 재조정`, 'INFO');
+  }
+
+  let markPrice = null;
+  try { markPrice = await client.getMarkPrice(); } catch { /* ignore */ }
+  const sltpIssues = validateSlTp(
+    side,
+    entryPrice,
+    adjusted.stopPrice,
+    adjusted.takeProfitPrice,
+    markPrice,
+  );
+  if (sltpIssues.length) {
+    log(`SL/TP 검증 경고: ${sltpIssues.join(' · ')}`, 'WARN');
+  }
+
   position = {
     side,
     entryPrice,
     quantity: filledQty,
     marginUsdt: (filledQty * entryPrice) / cfg.leverage,
-    stopPrice: levels.stopPrice,
-    takeProfitPrice: levels.takeProfitPrice,
-    stopLossPct: levels.stopLossPct,
-    takeProfitPct: levels.takeProfitPct,
+    stopPrice: adjusted.stopPrice,
+    takeProfitPrice: adjusted.takeProfitPrice,
+    stopLossPct: adjusted.stopLossPct,
+    takeProfitPct: adjusted.takeProfitPct,
     entryTime: new Date().toISOString(),
     entryBarTime: candles?.[index]?.time ?? null,
     exchangeSlTp: false,
   };
-  log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL ${levels.stopPrice != null ? `$${levels.stopPrice.toFixed(2)}` : '없음'} TP $${levels.takeProfitPrice.toFixed(2)}`);
+  log(`OPEN ${side} ${filledQty} @ $${entryPrice.toFixed(2)} | SL ${adjusted.stopPrice != null ? `$${adjusted.stopPrice.toFixed(2)}` : '없음'} TP $${adjusted.takeProfitPrice.toFixed(2)}`);
 
-  if (levels.stopPrice || levels.takeProfitPrice) {
+  if (adjusted.stopPrice || adjusted.takeProfitPrice) {
     try {
-      const sltp = await client.setSlTp(side, levels.stopPrice, levels.takeProfitPrice);
+      const sltp = await client.setSlTp(
+        side,
+        adjusted.stopPrice,
+        adjusted.takeProfitPrice,
+        entryPrice,
+      );
       position.exchangeSlTp = true;
       if (sltp.stop_price != null) position.stopPrice = sltp.stop_price;
       if (sltp.take_profit_price != null) position.takeProfitPrice = sltp.take_profit_price;
