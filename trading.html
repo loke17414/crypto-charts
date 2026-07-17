@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718e">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718f">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -102,6 +102,20 @@
                     <div id="chartArea" class="chart-area"></div>
                     <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
                     <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
+                    <button id="backtestToggleBtn" class="backtest-toggle-btn" type="button" title="백테스트">백테스트</button>
+                    <div id="backtestPopup" class="backtest-popup hidden" role="dialog" aria-label="백테스트">
+                      <div class="backtest-popup__header">
+                        <span class="backtest-popup__title">백테스트</span>
+                        <button type="button" id="backtestPopupClose" class="backtest-popup__close" aria-label="닫기">×</button>
+                      </div>
+                      <div class="backtest-popup__body">
+                        <label class="backtest-count-label">회수
+                          <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100">
+                        </label>
+                        <button type="button" id="runBacktestBtn" class="btn btn--primary btn--sm">실행</button>
+                        <p id="backtestStats" class="backtest-stats">실행 버튼을 눌러 백테스트를 시작하세요.</p>
+                      </div>
+                    </div>
                     <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
                     <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
                   </div>
@@ -109,18 +123,6 @@
                 </div>
               </div>
             </div>
-
-            <details class="chart-advanced-panel" open>
-              <summary>차트 고급 · 백테스트</summary>
-              <div class="chart-advanced-panel__body">
-                <div class="backtest-bar">
-                  <label class="backtest-toggle"><input type="checkbox" id="showBacktest" checked> 백테스트</label>
-                  <label class="backtest-count-label">회수 <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100"></label>
-                  <button type="button" id="runBacktestBtn" class="btn btn--ghost btn--sm">실행</button>
-                  <span id="backtestStats" class="backtest-stats">—</span>
-                </div>
-              </div>
-            </details>
           </div>
           <div class="float-panel__resize" data-resize-handle title="크기 조절"></div>
         </div>
@@ -317,7 +319,7 @@
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718a"></script>
-  <script src="js/futures-bot-app.js?v=20260719b"></script>
+  <script src="js/futures-bot-app.js?v=20260718f"></script>
   <script src="js/strategy-ai.js?v=20260718d"></script>
 </body>
 </html>

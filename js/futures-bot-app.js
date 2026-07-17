@@ -27,7 +27,8 @@ const FuturesBotApp = (() => {
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
-  let showBacktest = true;
+  let showBacktest = false;
+  let backtestPopupOpen = false;
   let backtestUnsub = null;
   let lastBacktestScheduleAt = 0;
   let lastBacktestMeta = { interval: '', symbol: '', lastTime: 0, count: 0 };
@@ -562,6 +563,31 @@ const FuturesBotApp = (() => {
 
   // ── 진입 조건 슬롯 패널 ─────────────────────────────────────────────
 
+  function openBacktestPopup() {
+    backtestPopupOpen = true;
+    $('#backtestPopup')?.classList.remove('hidden');
+    $('#backtestToggleBtn')?.classList.add('is-active');
+  }
+
+  function closeBacktestPopup() {
+    backtestPopupOpen = false;
+    $('#backtestPopup')?.classList.add('hidden');
+    $('#backtestToggleBtn')?.classList.remove('is-active');
+  }
+
+  function toggleBacktestPopup() {
+    if (backtestPopupOpen) closeBacktestPopup();
+    else openBacktestPopup();
+  }
+
+  function invalidateBacktestResult(message = '전략 변경됨 — 실행 버튼을 눌러 다시 계산하세요.') {
+    showBacktest = false;
+    window.BacktestClient?.cancel?.();
+    refreshChartMarkers();
+    const statsEl = $('#backtestStats');
+    if (statsEl) statsEl.textContent = message;
+  }
+
   function getStrategySlots() {
     return state.strategySlots || [];
   }
@@ -588,7 +614,7 @@ const FuturesBotApp = (() => {
     readFormSettings();
     updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
-    scheduleBacktest({ force: true });
+    invalidateBacktestResult();
     updateSignalDisplay();
     scheduleServerStrategySync();
     updateUI();
@@ -917,7 +943,7 @@ const FuturesBotApp = (() => {
     updateChartIndicatorButtons();
 
     if (strategyChanged) {
-      scheduleBacktest({ force: true });
+      invalidateBacktestResult();
     }
 
     updateSignalDisplay();
@@ -2058,22 +2084,8 @@ const FuturesBotApp = (() => {
     if (statsEl) statsEl.innerHTML = formatBacktestStats(stats, result.interval || state.interval);
   }
 
-  function shouldScheduleOnCandleUpdate(candles) {
-    if (!candles?.length) return false;
-    const interval = Chart.getState()?.interval || state.interval;
-    const lastTime = candles.at(-1)?.time ?? 0;
-    const count = candles.length;
-    const m = lastBacktestMeta;
-    if (interval !== m.interval || state.symbol !== m.symbol) return true;
-    if (!m.count) return true;
-    if (lastTime !== m.lastTime) return true;
-    if (count > m.count * 1.05) return true;
-    return false;
-  }
-
-  function scheduleBacktest({ force = false } = {}) {
+  function scheduleBacktest() {
     if (!window.BacktestClient) return;
-    if (!showBacktest && !force && !BacktestClient.isRunning()) return;
 
     readFormSettings();
     const candles = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
@@ -2086,7 +2098,7 @@ const FuturesBotApp = (() => {
     const settings = getSettings();
     const cacheKey = backtestCacheKey(settings);
     const now = Date.now();
-    if (!force && now - lastBacktestScheduleAt < 800) return;
+    if (now - lastBacktestScheduleAt < 800) return;
     lastBacktestScheduleAt = now;
 
     lastBacktestMeta = {
@@ -2108,7 +2120,7 @@ const FuturesBotApp = (() => {
       interval: Chart.getState()?.interval || state.interval,
       maxTrades: state.backtestTradeCount || BACKTEST_TRADES_DEFAULT,
       expand: true,
-    }, { cacheKey, force }).then((result) => {
+    }, { cacheKey, force: true }).then((result) => {
       if (result?.cancelled) return;
       renderBacktestResult(result);
     });
@@ -2117,6 +2129,8 @@ const FuturesBotApp = (() => {
   async function runBacktest() {
     const btn = $('#runBacktestBtn');
     if (btn) btn.disabled = true;
+    openBacktestPopup();
+    showBacktest = true;
     try {
       if (!Chart.available()) {
         const statsEl = $('#backtestStats');
@@ -2131,7 +2145,7 @@ const FuturesBotApp = (() => {
         chartCandles = Chart.getCandles() || lastCandles;
       }
       lastCandles = chartCandles;
-      scheduleBacktest({ force: true });
+      scheduleBacktest();
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -2153,9 +2167,7 @@ const FuturesBotApp = (() => {
     lastCandles = e.detail?.candles || Chart.getCandles() || [];
     state.interval = e.detail?.interval || Chart.getState()?.interval || state.interval;
     state.lastPrice = lastCandles.at(-1)?.close || Chart.getPrice() || 0;
-    if (showBacktest && shouldScheduleOnCandleUpdate(lastCandles)) {
-      scheduleBacktest({ force: false });
-    }
+    if (showBacktest) refreshChartMarkers();
     updateSignalDisplay();
     ensurePositionSlTpOverlay();
     updateUI();
@@ -2999,7 +3011,6 @@ const FuturesBotApp = (() => {
       evaluateLiveExit();
     }
     if (e.detail?.newBar) {
-      if (showBacktest) scheduleBacktest({ force: false });
       updateUI();
     }
   }
@@ -3033,30 +3044,32 @@ const FuturesBotApp = (() => {
       });
     }
 
-    $('#showBacktest')?.addEventListener('change', (e) => {
-      showBacktest = e.target.checked;
-      if (!showBacktest) {
-        Chart.pinBacktestChartView?.(false);
-        refreshChartMarkers();
-        const statsEl = $('#backtestStats');
-        if (statsEl) statsEl.textContent = '백테스트: 꺼짐';
-        return;
-      }
-      scheduleBacktest({ force: true });
+    $('#backtestToggleBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleBacktestPopup();
     });
-
-    $('#runBacktestBtn')?.addEventListener('click', () => { runBacktest(); });
+    $('#backtestPopupClose')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeBacktestPopup();
+    });
+    $('#runBacktestBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      runBacktest();
+    });
 
     const backtestCountEl = $('#backtestTradeCount');
     if (backtestCountEl) {
       const onCount = () => {
         readFormSettings();
         backtestCountEl.value = String(state.backtestTradeCount);
-        scheduleBacktest({ force: true });
       };
       backtestCountEl.addEventListener('change', onCount);
       backtestCountEl.addEventListener('input', onCount);
     }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && backtestPopupOpen) closeBacktestPopup();
+    });
   }
 
   async function init() {
@@ -3090,7 +3103,6 @@ const FuturesBotApp = (() => {
 
     if ((Chart.getCandles() || []).length) {
       onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
-      if (showBacktest) scheduleBacktest({ force: true });
     }
 
     addLog('CryptoCharts 차트 연동됨', 'info');

@@ -346,6 +346,125 @@
   gap: 0.5rem;
 }
 
+/* Backtest popup — chart overlay, manual run only */
+.trading-page--simple .backtest-toggle-btn {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  z-index: 12;
+  padding: 0.35rem 0.7rem;
+  background: rgba(18, 21, 26, 0.92);
+  color: var(--text-secondary);
+  border: 1px solid var(--simple-border);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.trading-page--simple .backtest-toggle-btn:hover,
+.trading-page--simple .backtest-toggle-btn.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.trading-page--simple .backtest-popup {
+  position: absolute;
+  top: 2.75rem;
+  right: 0.65rem;
+  z-index: 13;
+  width: min(22rem, calc(100% - 1.3rem));
+  background: rgba(18, 21, 26, 0.96);
+  border: 1px solid var(--simple-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+.trading-page--simple .backtest-popup.hidden {
+  display: none;
+}
+
+.trading-page--simple .backtest-popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--simple-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.trading-page--simple .backtest-popup__title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.trading-page--simple .backtest-popup__close {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.trading-page--simple .backtest-popup__close:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.trading-page--simple .backtest-popup__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem 0.75rem;
+}
+
+.trading-page--simple .backtest-popup .backtest-count-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.trading-page--simple .backtest-popup .backtest-count-input {
+  width: 4rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  color: var(--text-primary);
+  background: #0d0f12;
+  border: 1px solid var(--simple-border);
+  border-radius: 4px;
+}
+
+.trading-page--simple .backtest-popup .backtest-stats {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.trading-page--simple .backtest-popup .backtest-stats .positive {
+  color: #22c55e;
+}
+
+.trading-page--simple .backtest-popup .backtest-stats .negative {
+  color: #ef4444;
+}
+
 .trading-page--simple .chart-workspace,
 .trading-page--simple .chart-main,
 .trading-page--simple .chart-area {
