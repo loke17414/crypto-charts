@@ -27,6 +27,25 @@ const StrategyAI = (() => {
   const $ = (sel) => document.querySelector(sel);
 
   let conversationHistory = [];
+  let aiPopupOpen = false;
+
+  function openAiPopup() {
+    aiPopupOpen = true;
+    $('#strategyAiPopup')?.classList.remove('hidden');
+    $('#strategyAiToggleBtn')?.classList.add('is-active');
+    $('#strategyAiInput')?.focus();
+  }
+
+  function closeAiPopup() {
+    aiPopupOpen = false;
+    $('#strategyAiPopup')?.classList.add('hidden');
+    $('#strategyAiToggleBtn')?.classList.remove('is-active');
+  }
+
+  function toggleAiPopup() {
+    if (aiPopupOpen) closeAiPopup();
+    else openAiPopup();
+  }
 
   function loadHistory() {
     try {
@@ -471,6 +490,18 @@ const StrategyAI = (() => {
 
     document.querySelectorAll('[data-strategy-ai-cmd]').forEach((btn) => {
       btn.addEventListener('click', () => handlePrompt(btn.dataset.strategyAiCmd));
+    });
+
+    $('#strategyAiToggleBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleAiPopup();
+    });
+    $('#strategyAiPopupClose')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAiPopup();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && aiPopupOpen) closeAiPopup();
     });
   }
 

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718i">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718j">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -42,10 +42,15 @@
           <div class="float-panel__body">
             <div class="chart-top-bar">
               <p class="chart-top-bar__signal" id="signalInfo">대기 중...</p>
-              <div class="chart-top-bar__meta">
-                <span>RSI <strong id="rsiValue">—</strong></span>
-                <span>명목 <strong id="notionalInfo">—</strong></span>
-                <span id="liveIndicator" class="live-indicator hidden"><span class="live-indicator__dot"></span>LIVE</span>
+              <div class="chart-top-bar__actions">
+                <div class="chart-top-bar__meta">
+                  <span>RSI <strong id="rsiValue">—</strong></span>
+                  <span>명목 <strong id="notionalInfo">—</strong></span>
+                  <span id="liveIndicator" class="live-indicator hidden"><span class="live-indicator__dot"></span>LIVE</span>
+                </div>
+                <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
+                <button type="button" id="strategyAiToggleBtn" class="chart-top-bar__btn" title="AI 전략 대화">AI</button>
+                <button type="button" id="backtestToggleBtn" class="chart-top-bar__btn" title="백테스트">백테스트</button>
               </div>
             </div>
 
@@ -103,20 +108,6 @@
                       <div id="chartArea" class="chart-area"></div>
                       <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
                       <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
-                      <button id="backtestToggleBtn" class="backtest-toggle-btn" type="button" title="백테스트">백테스트</button>
-                      <div id="backtestPopup" class="backtest-popup hidden" role="dialog" aria-label="백테스트">
-                        <div class="backtest-popup__header">
-                          <span class="backtest-popup__title">백테스트</span>
-                          <button type="button" id="backtestPopupClose" class="backtest-popup__close" aria-label="닫기">×</button>
-                        </div>
-                        <div class="backtest-popup__body">
-                          <label class="backtest-count-label">회수
-                            <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100">
-                          </label>
-                          <button type="button" id="runBacktestBtn" class="btn btn--primary btn--sm">실행</button>
-                          <p id="backtestStats" class="backtest-stats">실행 버튼을 눌러 백테스트를 시작하세요.</p>
-                        </div>
-                      </div>
                       <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
                       <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
                     </div>
@@ -125,48 +116,60 @@
                 </div>
               </div>
             </div>
-          </div>
-          <div class="float-panel__resize" data-resize-handle title="크기 조절"></div>
-        </div>
 
-        <div class="float-panel float-panel--ai" data-panel-id="ai">
-          <div class="float-panel__titlebar" data-drag-handle>
-            <span class="float-panel__title">AI 대화</span>
-            <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
-            <span class="float-panel__grip" aria-hidden="true">⋮⋮</span>
-          </div>
-          <div class="float-panel__body">
-            <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
-            <div class="strategy-ai-input chart-ai-panel__composer">
-              <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략 질문·설정 (예: RSI 30 이하 롱, SL 1.5% TP 3%)"></textarea>
-              <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">전송</button>
-            </div>
-            <div class="strategy-ai-quick">
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱, SL 1.5% TP 3%">BB</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전고점 돌파 롱 / 전저점 이탈 숏 (스윙 pivotBars 5), SL 캔들 극단 TP 1.5R">전고저 돌파</button>
-              <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전저점 지지 롱 / 전고점 저항 숏 (스윙 반등, pivotBars 5, 허용 0.5%), SL 캔들 극단 TP 1.5R">전고저 반등</button>
-            </div>
-            <div class="strategy-ai-target">
-              <label for="strategyAiTargetSlot">슬롯</label>
-              <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
-            </div>
-            <details class="chart-ai-panel__settings">
-              <summary>GPT 연결 설정</summary>
-              <div id="strategyAiDetails" class="strategy-ai-details"></div>
-              <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-              <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
-                <label for="openaiApiKey">OpenAI Key</label>
-                <input type="password" id="openaiApiKey" autocomplete="off">
+            <div id="backtestPopup" class="backtest-popup hidden" role="dialog" aria-label="백테스트">
+              <div class="backtest-popup__header">
+                <span class="backtest-popup__title">백테스트</span>
+                <button type="button" id="backtestPopupClose" class="backtest-popup__close" aria-label="닫기">×</button>
               </div>
-              <div class="strategy-ai-actions chart-ai-panel__actions">
-                <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
-                <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
-                <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
-                <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
+              <div class="backtest-popup__body">
+                <label class="backtest-count-label">회수
+                  <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100">
+                </label>
+                <button type="button" id="runBacktestBtn" class="btn btn--primary btn--sm">실행</button>
+                <p id="backtestStats" class="backtest-stats">실행 버튼을 눌러 백테스트를 시작하세요.</p>
               </div>
-            </details>
+            </div>
+
+            <div id="strategyAiPopup" class="strategy-ai-popup hidden" role="dialog" aria-label="AI 전략 대화">
+              <div class="strategy-ai-popup__header">
+                <span class="strategy-ai-popup__title">AI 전략 대화</span>
+                <button type="button" id="strategyAiPopupClose" class="strategy-ai-popup__close" aria-label="닫기">×</button>
+              </div>
+              <div class="strategy-ai-popup__body">
+                <div id="strategyAiMessages" class="strategy-ai-messages chart-ai-panel__messages"></div>
+                <div class="strategy-ai-input chart-ai-panel__composer">
+                  <textarea id="strategyAiInput" class="strategy-ai-text" rows="2" placeholder="전략 질문·설정 (예: RSI 30 이하 롱, SL 1.5% TP 3%)"></textarea>
+                  <button type="button" id="strategyAiSendBtn" class="btn btn--simple-primary">전송</button>
+                </div>
+                <div class="strategy-ai-quick">
+                  <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="EMA 골든크로스 롱, SL 1.5% TP 3%">골든크로스</button>
+                  <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="RSI 30 이하 롱, SL 1% TP 2%">RSI</button>
+                  <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="BB 재진입 롱, SL 1.5% TP 3%">BB</button>
+                  <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전고점 돌파 롱 / 전저점 이탈 숏 (스윙 pivotBars 5), SL 캔들 극단 TP 1.5R">전고저 돌파</button>
+                  <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전저점 지지 롱 / 전고점 저항 숏 (스윙 반등, pivotBars 5, 허용 0.5%), SL 캔들 극단 TP 1.5R">전고저 반등</button>
+                </div>
+                <div class="strategy-ai-target">
+                  <label for="strategyAiTargetSlot">슬롯</label>
+                  <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
+                </div>
+                <details class="chart-ai-panel__settings">
+                  <summary>GPT 연결 설정</summary>
+                  <div id="strategyAiDetails" class="strategy-ai-details"></div>
+                  <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
+                  <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
+                    <label for="openaiApiKey">OpenAI Key</label>
+                    <input type="password" id="openaiApiKey" autocomplete="off">
+                  </div>
+                  <div class="strategy-ai-actions chart-ai-panel__actions">
+                    <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
+                    <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
+                    <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
+                    <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
+                  </div>
+                </details>
+              </div>
+            </div>
           </div>
           <div class="float-panel__resize" data-resize-handle title="크기 조절"></div>
         </div>
@@ -320,8 +323,8 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/floating-panels.js?v=20260718i"></script>
+  <script src="js/floating-panels.js?v=20260718j"></script>
   <script src="js/futures-bot-app.js?v=20260718g"></script>
-  <script src="js/strategy-ai.js?v=20260718d"></script>
+  <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>
 </html>
