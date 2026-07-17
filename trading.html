@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718k">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718l">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -74,30 +74,33 @@
               </div>
             </div>
 
-            <div class="chart-controls chart-controls--simple">
-              <div class="chart-controls__type hidden">
-                <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
-                <button class="btn btn--tab" data-chart-type="line">라인</button>
-              </div>
-              <div class="chart-controls__range">
-                <button class="btn btn--tab" data-interval="1m">1m</button>
-                <button class="btn btn--tab" data-interval="5m">5m</button>
-                <button class="btn btn--tab" data-interval="15m">15m</button>
-                <button class="btn btn--tab active" data-interval="1h">1h</button>
-                <button class="btn btn--tab" data-interval="4h">4h</button>
-                <button class="btn btn--tab" data-interval="1d">1d</button>
-              </div>
-              <div class="chart-controls__tools">
-                <div class="indicator-dropdown">
-                  <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
-                  <div id="indicatorMenu" class="indicator-menu hidden">
-                    <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
-                    <div id="indicatorMenuList"></div>
-                  </div>
+            <details class="chart-toolbar-fold">
+              <summary class="chart-toolbar-fold__summary">봉 · 지표 · 도구</summary>
+              <div class="chart-controls chart-controls--simple">
+                <div class="chart-controls__type hidden">
+                  <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
+                  <button class="btn btn--tab" data-chart-type="line">라인</button>
                 </div>
-                <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
+                <div class="chart-controls__range">
+                  <button class="btn btn--tab" data-interval="1m">1m</button>
+                  <button class="btn btn--tab" data-interval="5m">5m</button>
+                  <button class="btn btn--tab" data-interval="15m">15m</button>
+                  <button class="btn btn--tab active" data-interval="1h">1h</button>
+                  <button class="btn btn--tab" data-interval="4h">4h</button>
+                  <button class="btn btn--tab" data-interval="1d">1d</button>
+                </div>
+                <div class="chart-controls__tools">
+                  <div class="indicator-dropdown">
+                    <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
+                    <div id="indicatorMenu" class="indicator-menu hidden">
+                      <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
+                      <div id="indicatorMenuList"></div>
+                    </div>
+                  </div>
+                  <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
+                </div>
               </div>
-            </div>
+            </details>
 
             <div class="chart-container">
               <div class="chart-workspace">
@@ -314,7 +317,7 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260718h"></script>
+  <script src="js/indicators.js?v=20260718l"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/chart-structure.js?v=20260718f"></script>
   <script src="js/strategy-engine.js?v=20260719a"></script>
@@ -331,7 +334,7 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/floating-panels.js?v=20260718j"></script>
+  <script src="js/floating-panels.js?v=20260718l"></script>
   <script src="js/futures-bot-app.js?v=20260718g"></script>
   <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>

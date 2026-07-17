@@ -1040,7 +1040,9 @@ const IndicatorManager = (() => {
     const embedded = panesEl?.classList.contains('indicator-panes--in-chart');
     if (!embedded) return Math.min(workspace.clientHeight, MAIN_CHART_MAX);
     if (useInChartSubScales()) {
-      return Math.max(180, workspace.clientHeight);
+      const container = workspace.closest('.chart-container');
+      const base = Math.max(container?.clientHeight || 0, workspace.clientHeight);
+      return Math.max(180, Math.round(base));
     }
     const subH = panesEl?.clientHeight || 0;
     return Math.max(180, workspace.clientHeight - subH);
