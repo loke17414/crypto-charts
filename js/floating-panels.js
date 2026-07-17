@@ -1,9 +1,13 @@
 /* Draggable / resizable floating panels on the trading page */
 
 const FloatingPanels = (() => {
-  const STORAGE_KEY = 'crypto-charts-float-panels-v2';
+  const STORAGE_KEY = 'crypto-charts-float-panels-v3';
   const MIN_W = 280;
   const MIN_H = 140;
+  const AI_MIN_W = 280;
+  const AI_MAX_W = 400;
+  const AI_WIDTH_RATIO = 0.30;
+  const PANEL_GAP = 3;
 
   function loadState() {
     try {
@@ -36,20 +40,16 @@ const FloatingPanels = (() => {
     panel.style.height = `${rect.h}px`;
   }
 
-  function defaultLayout(canvas) {
-    const pad = 6;
+  /** Side-by-side dock: chart fills left, AI fills right — both full canvas height. */
+  function fitLayout(canvas) {
     const cw = canvas.clientWidth || 640;
     const ch = canvas.clientHeight || 480;
-    const aiW = Math.min(380, Math.max(300, Math.round(cw * 0.36)));
-    const aiH = Math.min(440, Math.max(260, Math.round(ch * 0.4)));
+    const aiW = clamp(Math.round(cw * AI_WIDTH_RATIO), AI_MIN_W, AI_MAX_W);
+    const chartW = Math.max(MIN_W, cw - aiW - PANEL_GAP);
+    const h = Math.max(MIN_H, ch);
     return {
-      chart: { x: pad, y: pad, w: Math.max(MIN_W, cw - pad * 2), h: Math.max(MIN_H, ch - pad * 2) },
-      ai: {
-        x: Math.max(pad, cw - aiW - pad),
-        y: Math.max(pad, ch - aiH - pad),
-        w: aiW,
-        h: aiH,
-      },
+      chart: { x: 0, y: 0, w: chartW, h },
+      ai: { x: chartW + PANEL_GAP, y: 0, w: aiW, h },
     };
   }
 
@@ -63,14 +63,22 @@ const FloatingPanels = (() => {
     return { x, y, w, h };
   }
 
+  function applyFitLayout(canvas, panels, state) {
+    const layout = fitLayout(canvas);
+    panels.forEach((panel) => {
+      const id = panel.dataset.panelId;
+      if (!id || !layout[id]) return;
+      state[id] = layout[id];
+      applyRect(panel, state[id]);
+    });
+    saveState(state);
+    notifyChartResize();
+  }
+
   function initPanel(panel, canvas, state, id) {
     const handle = panel.querySelector('[data-drag-handle]');
     const resize = panel.querySelector('[data-resize-handle]');
     if (!handle || !resize) return;
-
-    const rect = clampRect(state[id] || defaultLayout(canvas)[id], canvas);
-    applyRect(panel, rect);
-    state[id] = rect;
 
     let drag = null;
     let resizeDrag = null;
@@ -143,26 +151,9 @@ const FloatingPanels = (() => {
 
     handle.addEventListener('dblclick', (e) => {
       if (e.target.closest('button, input, select, textarea, a')) return;
-      const defaults = defaultLayout(canvas);
-      const next = clampRect(defaults[id], canvas);
-      applyRect(panel, next);
-      state[id] = next;
-      saveState(state);
-      notifyChartResize();
+      const panels = [...canvas.querySelectorAll('[data-panel-id]')];
+      applyFitLayout(canvas, panels, state);
     });
-  }
-
-  function relayout(canvas, panels, state) {
-    const defaults = defaultLayout(canvas);
-    panels.forEach((panel) => {
-      const id = panel.dataset.panelId;
-      if (!id) return;
-      if (!state[id]) state[id] = defaults[id];
-      state[id] = clampRect(state[id], canvas);
-      applyRect(panel, state[id]);
-    });
-    saveState(state);
-    notifyChartResize();
   }
 
   function init() {
@@ -181,24 +172,14 @@ const FloatingPanels = (() => {
         requestAnimationFrame(boot);
         return;
       }
-      if (!state.chart || !state.ai) {
-        Object.assign(state, defaultLayout(canvas));
-      }
+      applyFitLayout(canvas, panels, state);
       panels.forEach((panel) => initPanel(panel, canvas, state, panel.dataset.panelId));
-      saveState(state);
 
       let resizeTimer = null;
       const ro = new ResizeObserver(() => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-          panels.forEach((panel) => {
-            const id = panel.dataset.panelId;
-            if (!id || !state[id]) return;
-            state[id] = clampRect(state[id], canvas);
-            applyRect(panel, state[id]);
-          });
-          saveState(state);
-          notifyChartResize();
+          applyFitLayout(canvas, panels, state);
         }, 80);
       });
       ro.observe(canvas);
