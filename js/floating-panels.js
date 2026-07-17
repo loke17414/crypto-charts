@@ -1,7 +1,7 @@
 /* Draggable / resizable floating panels on the trading page */
 
 const FloatingPanels = (() => {
-  const STORAGE_KEY = 'crypto-charts-float-panels-v1';
+  const STORAGE_KEY = 'crypto-charts-float-panels-v2';
   const MIN_W = 280;
   const MIN_H = 140;
 
@@ -37,15 +37,19 @@ const FloatingPanels = (() => {
   }
 
   function defaultLayout(canvas) {
-    const pad = 12;
+    const pad = 6;
     const cw = canvas.clientWidth || 640;
     const ch = canvas.clientHeight || 480;
-    const chartH = Math.max(MIN_H, Math.round(ch * 0.62));
-    const aiH = Math.max(MIN_H, ch - chartH - pad * 3);
-    const w = Math.max(MIN_W, cw - pad * 2);
+    const aiW = Math.min(380, Math.max(300, Math.round(cw * 0.36)));
+    const aiH = Math.min(440, Math.max(260, Math.round(ch * 0.4)));
     return {
-      chart: { x: pad, y: pad, w, h: chartH },
-      ai: { x: pad, y: pad + chartH + pad, w, h: aiH },
+      chart: { x: pad, y: pad, w: Math.max(MIN_W, cw - pad * 2), h: Math.max(MIN_H, ch - pad * 2) },
+      ai: {
+        x: Math.max(pad, cw - aiW - pad),
+        y: Math.max(pad, ch - aiH - pad),
+        w: aiW,
+        h: aiH,
+      },
     };
   }
 

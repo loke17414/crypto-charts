@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718f">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718h">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -99,27 +99,29 @@
                 <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
                 <div class="chart-stack">
                   <div class="chart-main">
-                    <div id="chartArea" class="chart-area"></div>
-                    <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
-                    <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
-                    <button id="backtestToggleBtn" class="backtest-toggle-btn" type="button" title="백테스트">백테스트</button>
-                    <div id="backtestPopup" class="backtest-popup hidden" role="dialog" aria-label="백테스트">
-                      <div class="backtest-popup__header">
-                        <span class="backtest-popup__title">백테스트</span>
-                        <button type="button" id="backtestPopupClose" class="backtest-popup__close" aria-label="닫기">×</button>
+                    <div class="chart-main__plot">
+                      <div id="chartArea" class="chart-area"></div>
+                      <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
+                      <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
+                      <button id="backtestToggleBtn" class="backtest-toggle-btn" type="button" title="백테스트">백테스트</button>
+                      <div id="backtestPopup" class="backtest-popup hidden" role="dialog" aria-label="백테스트">
+                        <div class="backtest-popup__header">
+                          <span class="backtest-popup__title">백테스트</span>
+                          <button type="button" id="backtestPopupClose" class="backtest-popup__close" aria-label="닫기">×</button>
+                        </div>
+                        <div class="backtest-popup__body">
+                          <label class="backtest-count-label">회수
+                            <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100">
+                          </label>
+                          <button type="button" id="runBacktestBtn" class="btn btn--primary btn--sm">실행</button>
+                          <p id="backtestStats" class="backtest-stats">실행 버튼을 눌러 백테스트를 시작하세요.</p>
+                        </div>
                       </div>
-                      <div class="backtest-popup__body">
-                        <label class="backtest-count-label">회수
-                          <input type="number" id="backtestTradeCount" class="backtest-count-input" value="100" min="1" max="100">
-                        </label>
-                        <button type="button" id="runBacktestBtn" class="btn btn--primary btn--sm">실행</button>
-                        <p id="backtestStats" class="backtest-stats">실행 버튼을 눌러 백테스트를 시작하세요.</p>
-                      </div>
+                      <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
+                      <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
                     </div>
-                    <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
-                    <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
+                    <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart indicator-panes--inline-scales"></div>
                   </div>
-                  <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart"></div>
                 </div>
               </div>
             </div>
@@ -301,14 +303,14 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260718c"></script>
+  <script src="js/indicators.js?v=20260718h"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/chart-structure.js?v=20260718f"></script>
   <script src="js/strategy-engine.js?v=20260719a"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
-  <script src="js/app.js?v=20260718d"></script>
+  <script src="js/app.js?v=20260718h"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260719a"></script>
@@ -318,7 +320,7 @@
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
-  <script src="js/floating-panels.js?v=20260718a"></script>
+  <script src="js/floating-panels.js?v=20260718h"></script>
   <script src="js/futures-bot-app.js?v=20260718g"></script>
   <script src="js/strategy-ai.js?v=20260718d"></script>
 </body>

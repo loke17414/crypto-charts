@@ -130,6 +130,15 @@
   border-bottom-right-radius: 10px;
 }
 
+.trading-page--simple .float-panel--chart .float-panel__titlebar,
+.trading-page--simple .float-panel--chart .float-panel__resize {
+  display: none;
+}
+
+.trading-page--simple .float-panel--chart {
+  border-radius: 6px;
+}
+
 .trading-page--simple .float-panel--chart .chart-top-bar,
 .trading-page--simple .float-panel--chart .chart-controls--simple {
   flex-shrink: 0;
@@ -282,10 +291,28 @@
   flex-direction: column;
 }
 
+.trading-page--simple .chart-main__plot {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.trading-page--simple .chart-main__plot .chart-area {
+  flex: 1;
+  min-height: 0;
+  height: auto !important;
+}
+
 .trading-page--simple .chart-main .chart-area {
   flex: 1;
   min-height: 0;
   height: auto !important;
+}
+
+.trading-page--simple .indicator-panes--inline-scales {
+  display: none !important;
 }
 
 .trading-page--simple .indicator-panes--in-chart {
