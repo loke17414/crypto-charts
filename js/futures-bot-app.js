@@ -1997,8 +1997,6 @@ const FuturesBotApp = (() => {
   }
 
   function formatBacktestStats(stats, interval) {
-    const pnlCls = stats.totalPnlPct >= 0 ? 'positive' : 'negative';
-    const pnlSign = stats.totalPnlPct >= 0 ? '+' : '';
     const intervalLabel = INTERVALS[interval]?.label || interval || '—';
     let countLabel = stats.targetTrades
       ? `${stats.trades}/${stats.targetTrades}회`
@@ -2012,9 +2010,8 @@ const FuturesBotApp = (() => {
       countLabel += ` (차트 ${stats.chartVisibleTrades}/${stats.trades}회)`;
     }
     return (
-      `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | 승률 ${stats.winRate.toFixed(0)}% ` +
-      `(${stats.wins}W ${stats.losses}L) | ` +
-      `<span class="${pnlCls}">누적 ${pnlSign}${stats.totalPnlPct.toFixed(2)}%</span>`
+      `백테스트 ${countLabel} (${intervalLabel} ${formatBacktestRange(stats)}) | ` +
+      `승률 ${stats.winRate.toFixed(0)}% (${stats.wins}W ${stats.losses}L)`
     );
   }
 
