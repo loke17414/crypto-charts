@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718j">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718k">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -176,31 +176,7 @@
       </section>
 
       <aside class="bot-control-panel">
-        <div class="control-section">
-          <div class="control-section__label">API 연결</div>
-          <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
-          <div class="form-group"><label for="apiKey">API Key</label><input type="text" id="apiKey" autocomplete="off"></div>
-          <div class="form-group"><label for="apiSecret">API Secret</label><input type="password" id="apiSecret" autocomplete="off"></div>
-          <div class="bot-control-row">
-            <button type="button" id="connectApiBtn" class="btn btn--simple-primary btn--block">연결</button>
-            <button type="button" id="disconnectApiBtn" class="btn btn--simple-ghost btn--block" disabled>해제</button>
-          </div>
-        </div>
-
-        <div class="control-section">
-          <div class="control-section__label">전략</div>
-          <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
-          <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
-          <div class="strategy-slots">
-            <div class="strategy-slots__header">
-              <h3 class="strategy-slots__title">진입 조건</h3>
-              <button type="button" id="addStrategySlotBtn" class="btn btn--ghost btn--sm">+ 추가</button>
-            </div>
-            <div id="strategySlotsList" class="strategy-slots__list"></div>
-          </div>
-        </div>
-
-        <div class="control-section">
+        <div class="control-section control-section--primary">
           <div class="control-section__label">봇 제어</div>
           <div class="status-mini">
             <span>상태</span><span id="botStatus" class="bot-status bot-status--off">정지</span>
@@ -219,26 +195,58 @@
           <button type="button" id="closeBtn" class="btn btn--simple-ghost btn--block btn--sm bot-close-btn">수동 청산</button>
         </div>
 
-        <div class="control-section">
-          <div class="control-section__label">리스크 관리</div>
-          <div class="form-group">
-            <label for="riskPerTrade">1회 거래 리스크</label>
-            <div class="risk-slider-row">
-              <input type="range" id="riskPerTrade" value="1" min="0.1" max="10" step="0.1">
-              <span class="risk-slider-row__val" id="riskPerTradeVal">1%</span>
+        <details class="control-section control-section--fold">
+          <summary class="control-section__summary">API 연결</summary>
+          <div class="control-section__body">
+            <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
+            <div class="form-group"><label for="apiKey">API Key</label><input type="text" id="apiKey" autocomplete="off"></div>
+            <div class="form-group"><label for="apiSecret">API Secret</label><input type="password" id="apiSecret" autocomplete="off"></div>
+            <div class="bot-control-row">
+              <button type="button" id="connectApiBtn" class="btn btn--simple-primary btn--block">연결</button>
+              <button type="button" id="disconnectApiBtn" class="btn btn--simple-ghost btn--block" disabled>해제</button>
             </div>
           </div>
-          <div class="form-group hidden"><label for="maxAccountLoss">최대 손실 (%)</label><input type="number" id="maxAccountLoss" value="5" min="1" max="50" step="0.5"></div>
-          <div class="form-group"><label for="leverage">레버리지</label><input type="number" id="leverage" value="5" min="1" max="125" step="1"></div>
-        </div>
+        </details>
 
-        <div class="control-section log-section">
-          <div class="control-section__label">로그</div>
-          <div id="tradeLog" class="trade-log"></div>
-        </div>
+        <details class="control-section control-section--fold">
+          <summary class="control-section__summary">전략</summary>
+          <div class="control-section__body">
+            <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
+            <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
+            <div class="strategy-slots">
+              <div class="strategy-slots__header">
+                <h3 class="strategy-slots__title">진입 조건</h3>
+                <button type="button" id="addStrategySlotBtn" class="btn btn--ghost btn--sm">+ 추가</button>
+              </div>
+              <div id="strategySlotsList" class="strategy-slots__list"></div>
+            </div>
+          </div>
+        </details>
 
-        <details class="control-advanced">
-          <summary>고급 설정 · 수동 주문</summary>
+        <details class="control-section control-section--fold">
+          <summary class="control-section__summary">리스크 관리</summary>
+          <div class="control-section__body">
+            <div class="form-group">
+              <label for="riskPerTrade">1회 거래 리스크</label>
+              <div class="risk-slider-row">
+                <input type="range" id="riskPerTrade" value="1" min="0.1" max="10" step="0.1">
+                <span class="risk-slider-row__val" id="riskPerTradeVal">1%</span>
+              </div>
+            </div>
+            <div class="form-group hidden"><label for="maxAccountLoss">최대 손실 (%)</label><input type="number" id="maxAccountLoss" value="5" min="1" max="50" step="0.5"></div>
+            <div class="form-group"><label for="leverage">레버리지</label><input type="number" id="leverage" value="5" min="1" max="125" step="1"></div>
+          </div>
+        </details>
+
+        <details class="control-section control-section--fold log-section">
+          <summary class="control-section__summary">로그</summary>
+          <div class="control-section__body">
+            <div id="tradeLog" class="trade-log"></div>
+          </div>
+        </details>
+
+        <details class="control-section control-section--fold control-advanced">
+          <summary class="control-section__summary">고급 설정 · 수동 주문</summary>
           <div class="control-advanced__body">
             <div class="form-group form-group--check hidden"><label><input type="checkbox" id="allowShort" checked> 숏 허용</label></div>
             <button type="button" id="exportStrategyBtn" class="btn btn--ghost btn--block btn--sm">전략 내보내기</button>

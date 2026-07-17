@@ -22,7 +22,7 @@
 
 .trading-page--simple .trading-main--simple {
   display: grid;
-  grid-template-columns: 1fr min(300px, 26vw);
+  grid-template-columns: 1fr min(240px, 20vw);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -152,7 +152,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.3rem 0.55rem;
+  padding: 0.22rem 0.45rem;
   background: #12151a;
   border-bottom: 1px solid var(--simple-border);
   flex-shrink: 0;
@@ -227,7 +227,7 @@
   justify-content: space-between;
   gap: 0.5rem;
   flex-wrap: wrap;
-  padding: 0.25rem 0.55rem;
+  padding: 0.18rem 0.45rem;
   border-bottom: 1px solid var(--simple-border);
   background: #12151a;
 }
@@ -736,6 +736,62 @@
   border-bottom: 1px solid var(--simple-border);
 }
 
+.trading-page--simple .control-section--primary {
+  flex-shrink: 0;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.trading-page--simple .control-section--fold {
+  padding: 0;
+}
+
+.trading-page--simple .control-section--fold > summary.control-section__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.62rem 0.85rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  background: rgba(255, 255, 255, 0.015);
+  transition: color 0.15s, background 0.15s;
+}
+
+.trading-page--simple .control-section--fold > summary.control-section__summary::-webkit-details-marker {
+  display: none;
+}
+
+.trading-page--simple .control-section--fold > summary.control-section__summary::after {
+  content: '▸';
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.trading-page--simple .control-section--fold[open] > summary.control-section__summary {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.trading-page--simple .control-section--fold[open] > summary.control-section__summary::after {
+  transform: rotate(90deg);
+}
+
+.trading-page--simple .control-section--fold > summary.control-section__summary:hover {
+  color: var(--text-secondary);
+}
+
+.trading-page--simple .control-section--fold .control-section__body {
+  padding: 0 0.85rem 0.75rem;
+}
+
 .trading-page--simple .control-section__label {
   font-size: 0.65rem;
   font-weight: 700;
@@ -894,10 +950,20 @@
 
 .trading-page--simple .log-section {
   flex: 1;
-  min-height: 140px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: 0.5rem;
+}
+
+.trading-page--simple .log-section[open] {
+  min-height: 140px;
+}
+
+.trading-page--simple .log-section .control-section__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .trading-page--simple .log-section .trade-log {
@@ -914,20 +980,11 @@
 }
 
 .trading-page--simple .control-advanced {
-  border-top: 1px solid var(--simple-border);
-}
-
-.trading-page--simple .control-advanced summary {
-  padding: 0.65rem 1rem;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  cursor: pointer;
-  user-select: none;
-  background: #151820;
+  flex-shrink: 0;
 }
 
 .trading-page--simple .control-advanced__body {
-  padding: 0.75rem 1rem 1rem;
+  padding: 0 0.85rem 0.85rem;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
