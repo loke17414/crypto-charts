@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718m">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718n">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -75,7 +75,7 @@
             </div>
 
             <details class="chart-toolbar-fold">
-              <summary class="chart-toolbar-fold__summary">봉 · 지표 · 도구</summary>
+              <summary class="chart-toolbar-fold__summary"><span class="chart-toolbar-fold__summary-text">봉 · 지표 · 도구</span></summary>
               <div class="chart-controls chart-controls--simple">
                 <div class="chart-controls__type hidden">
                   <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
@@ -198,8 +198,9 @@
           <button type="button" id="closeBtn" class="btn btn--simple-ghost btn--block btn--sm bot-close-btn">수동 청산</button>
         </div>
 
+        <div class="control-accordions">
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary">API 연결</summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">API 연결</span></summary>
           <div class="control-section__body">
             <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
             <div class="form-group"><label for="apiKey">API Key</label><input type="text" id="apiKey" autocomplete="off"></div>
@@ -212,7 +213,7 @@
         </details>
 
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary">전략</summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">전략</span></summary>
           <div class="control-section__body">
             <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
             <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
@@ -227,7 +228,7 @@
         </details>
 
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary">리스크 관리</summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">리스크 관리</span></summary>
           <div class="control-section__body">
             <div class="form-group">
               <label for="riskPerTrade">1회 거래 리스크</label>
@@ -242,14 +243,14 @@
         </details>
 
         <details class="control-section control-section--fold log-section">
-          <summary class="control-section__summary">로그</summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">로그</span></summary>
           <div class="control-section__body">
             <div id="tradeLog" class="trade-log"></div>
           </div>
         </details>
 
         <details class="control-section control-section--fold control-advanced">
-          <summary class="control-section__summary">고급 설정 · 수동 주문</summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">고급 설정 · 수동 주문</span></summary>
           <div class="control-advanced__body">
             <div class="form-group form-group--check hidden"><label><input type="checkbox" id="allowShort" checked> 숏 허용</label></div>
             <button type="button" id="exportStrategyBtn" class="btn btn--ghost btn--block btn--sm">전략 내보내기</button>
@@ -285,6 +286,7 @@
             </div>
           </div>
         </details>
+        </div>
 
         <input type="hidden" id="stopLoss" value="1.5">
         <input type="hidden" id="takeProfit" value="3">
@@ -317,14 +319,14 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260718m"></script>
+  <script src="js/indicators.js?v=20260718n"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/chart-structure.js?v=20260718f"></script>
   <script src="js/strategy-engine.js?v=20260719a"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
-  <script src="js/app.js?v=20260718m"></script>
+  <script src="js/app.js?v=20260718n"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260719a"></script>

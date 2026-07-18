@@ -369,10 +369,10 @@ const IndicatorManager = (() => {
   }
   const softUi = document.body.classList.contains('trading-page--simple');
   const TV = {
-    bg: softUi ? '#16181d' : '#131722',
+    bg: softUi ? '#15171c' : '#131722',
     text: softUi ? '#eceef2' : '#d1d4dc',
-    grid: softUi ? '#22262e' : '#1e222d',
-    border: softUi ? '#2a2e36' : '#2a2e39',
+    grid: softUi ? '#21252d' : '#1e222d',
+    border: softUi ? '#2b3039' : '#2a2e39',
     up: '#26a69a',
     down: '#ef5350',
   };

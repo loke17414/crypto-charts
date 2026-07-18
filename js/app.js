@@ -616,10 +616,10 @@ function resetManualPriceScale() {
 const TV_COLORS = (() => {
   const soft = document.body.classList.contains('trading-page--simple');
   return {
-    bg: soft ? '#16181d' : '#131722',
+    bg: soft ? '#15171c' : '#131722',
     text: soft ? '#eceef2' : '#d1d4dc',
-    grid: soft ? '#22262e' : '#1e222d',
-    border: soft ? '#2a2e36' : '#2a2e39',
+    grid: soft ? '#21252d' : '#1e222d',
+    border: soft ? '#2b3039' : '#2a2e39',
     up: '#0ecb81',
     down: '#f6465d',
     crosshair: '#758696',
