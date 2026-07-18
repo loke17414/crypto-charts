@@ -113,11 +113,19 @@ def me(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    from bot.user_credentials import has_credentials
+    from bot.user_credentials import has_credentials, load_credentials
+
+    saved = has_credentials(db, user.id)
+    use_testnet = None
+    if saved:
+        creds = load_credentials(db, user.id)
+        if creds:
+            use_testnet = creds[2]
 
     return {
         "ok": True,
         "user": _user_payload(user),
         "authRequired": auth_required(),
-        "credentialsSaved": has_credentials(db, user.id),
+        "credentialsSaved": saved,
+        "credentialsUseTestnet": use_testnet,
     }

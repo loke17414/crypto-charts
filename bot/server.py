@@ -90,11 +90,19 @@ def _connect_session(api_key: str, api_secret: str, *, use_testnet: bool | None 
     client = BinanceFuturesClient(config)
     label = "Testnet" if testnet else "Mainnet"
     if not client.ping():
-        raise HTTPException(status_code=502, detail=f"Cannot reach Binance Futures {label}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cannot reach Binance Futures {label} — 네트워크 또는 Binance 장애",
+        )
     try:
         balance = client.get_usdt_balance()
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid API key: {exc}") from exc
+        hint = (
+            " 테스트넷 키·테스트넷 선택을 확인하세요."
+            if testnet
+            else " 실거래 키·실거래 선택, Futures 권한, IP 화이트리스트(VPS IP)를 확인하세요."
+        )
+        raise HTTPException(status_code=401, detail=f"Invalid API key ({label}): {exc}{hint}") from exc
     logger.info("%s connected — balance $%.2f USDT", label, balance)
     return TradingSession(config=config, client=client)
 
@@ -179,6 +187,11 @@ app.add_middleware(
 class ConnectBody(BaseModel):
     api_key: str = Field(min_length=1)
     api_secret: str = Field(min_length=1)
+    use_testnet: bool | None = None
+
+
+class ReconnectBody(BaseModel):
+    use_testnet: bool | None = None
 
 
 class SetupBody(BaseModel):
@@ -428,7 +441,7 @@ def connect(
     user: User | None = Depends(get_optional_user),
     db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
-    use_testnet = _use_testnet_flag()
+    use_testnet = body.use_testnet if body.use_testnet is not None else _use_testnet_flag()
     try:
         session = _connect_session(body.api_key, body.api_secret, use_testnet=use_testnet)
     except HTTPException:
@@ -442,7 +455,8 @@ def connect(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"키 저장 실패: {exc}") from exc
         _set_session(user, session)
-        message = "Binance 연결됨 — 키가 계정에 암호화 저장되었습니다."
+        env_label = "테스트넷" if use_testnet else "실거래"
+        message = f"Binance {env_label} 연결됨 — 키가 계정에 암호화 저장되었습니다."
     else:
         try:
             persist_binance_credentials(body.api_key, body.api_secret)
@@ -466,6 +480,7 @@ def connect(
 
 @app.post("/api/reconnect")
 def reconnect(
+    body: ReconnectBody | None = None,
     user: User | None = Depends(get_optional_user),
     db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -477,6 +492,9 @@ def reconnect(
         if not creds:
             raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
         api_key, api_secret, use_testnet = creds
+        if body and body.use_testnet is not None and body.use_testnet != use_testnet:
+            use_testnet = body.use_testnet
+            save_credentials(db, user.id, api_key, api_secret, use_testnet=use_testnet)
         session = _connect_session(api_key, api_secret, use_testnet=use_testnet)
         _set_session(user, session)
         balance = session.client.get_usdt_balance()

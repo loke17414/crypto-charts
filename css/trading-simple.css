@@ -1447,6 +1447,25 @@
   padding: 0.15rem 0.5rem;
 }
 
+.trading-page--simple .live-badge {
+  background: rgba(220, 53, 69, 0.12);
+  color: #c0392b;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.68rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.trading-page--simple .input-select {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--simple-border);
+  border-radius: var(--simple-radius-sm);
+  background: var(--simple-surface);
+  color: var(--simple-text);
+  font-size: 0.82rem;
+}
+
 .trading-page--simple .bot-status--on {
   color: var(--green);
 }

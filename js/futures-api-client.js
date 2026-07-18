@@ -64,17 +64,28 @@ const FuturesApiClient = (() => {
     return data?.ok === true;
   }
 
-  async function connect(apiKey, apiSecret) {
+  async function connect(apiKey, apiSecret, useTestnet = null) {
+    const payload = { api_key: apiKey, api_secret: apiSecret };
+    if (useTestnet !== null && useTestnet !== undefined) {
+      payload.use_testnet = Boolean(useTestnet);
+    }
     const data = await request('/api/connect', {
       method: 'POST',
-      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }),
+      body: JSON.stringify(payload),
     });
     connected = true;
     return data;
   }
 
-  async function reconnect() {
-    const data = await request('/api/reconnect', { method: 'POST' });
+  async function reconnect(useTestnet = null) {
+    const payload = {};
+    if (useTestnet !== null && useTestnet !== undefined) {
+      payload.use_testnet = Boolean(useTestnet);
+    }
+    const data = await request('/api/reconnect', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
     connected = true;
     return data;
   }

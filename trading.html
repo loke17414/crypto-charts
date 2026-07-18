@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718w">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718x">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -234,6 +234,14 @@
             <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
             <div class="form-group"><label for="apiKey">API Key</label><input type="text" id="apiKey" autocomplete="off"></div>
             <div class="form-group"><label for="apiSecret">API Secret</label><input type="password" id="apiSecret" autocomplete="off"></div>
+            <div class="form-group">
+              <label for="apiEnv">거래 환경</label>
+              <select id="apiEnv" class="input-select">
+                <option value="mainnet">실거래 (Binance Futures)</option>
+                <option value="testnet">테스트넷</option>
+              </select>
+              <p class="api-hint">실거래 키는 반드시 「실거래」를 선택하세요. 테스트넷 키와 URL이 다릅니다.</p>
+            </div>
             <div class="bot-control-row">
               <button type="button" id="connectApiBtn" class="btn btn--simple-primary btn--block">연결</button>
               <button type="button" id="disconnectApiBtn" class="btn btn--simple-ghost btn--block" disabled>해제</button>
@@ -331,13 +339,13 @@
   <script src="js/futures-strategy.js?v=20260719a"></script>
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
-  <script src="js/futures-api-client.js?v=20260718p"></script>
+  <script src="js/futures-api-client.js?v=20260718q"></script>
   <script src="js/auth.js?v=20260718a"></script>
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
-  <script src="js/futures-bot-app.js?v=20260718v"></script>
+  <script src="js/futures-bot-app.js?v=20260718w"></script>
   <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>
 </html>

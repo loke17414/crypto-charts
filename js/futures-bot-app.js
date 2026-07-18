@@ -27,6 +27,7 @@ const FuturesBotApp = (() => {
   let statusPollTimer = null;
   let lastCandles = [];
   let testnetStatus = null;
+  let exchangeUseTestnet = true;
   let showBacktest = false;
   let backtestPopupOpen = false;
   let backtestUnsub = null;
@@ -1539,8 +1540,27 @@ const FuturesBotApp = (() => {
     return Boolean(FuturesPaper.getPosition());
   }
 
+  function getApiUseTestnet() {
+    return $('#apiEnv')?.value === 'testnet';
+  }
+
+  function setApiEnvSelect(useTestnet) {
+    const el = $('#apiEnv');
+    if (el) el.value = useTestnet ? 'testnet' : 'mainnet';
+  }
+
+  function syncExchangeEnv(useTestnet) {
+    if (useTestnet === undefined || useTestnet === null) return;
+    exchangeUseTestnet = Boolean(useTestnet);
+    setApiEnvSelect(exchangeUseTestnet);
+  }
+
   function isTestnetMode() {
     return state.mode === 'testnet';
+  }
+
+  function exchangeEnvLabel() {
+    return exchangeUseTestnet ? '테스트넷' : '실거래';
   }
 
   function syncFromChart() {
@@ -1789,12 +1809,17 @@ const FuturesBotApp = (() => {
     if (health.connected) {
       state.mode = 'testnet';
       FuturesApiClient.setConnected(true);
+      try {
+        const st = await FuturesApiClient.getStatus();
+        syncExchangeEnv(st?.testnet);
+      } catch { /* ignore */ }
       await refreshTestnetStatus();
       sessionStartEquity = await getEquity();
       $('#connectApiBtn').disabled = true;
       $('#disconnectApiBtn').disabled = false;
       $('#apiKey').disabled = true;
       $('#apiSecret').disabled = true;
+      $('#apiEnv').disabled = true;
       $('#apiKey').placeholder = '서버에 저장됨';
       $('#apiSecret').placeholder = '서버에 저장됨';
       setModeBadge();
@@ -1809,6 +1834,9 @@ const FuturesBotApp = (() => {
           if (userSaved) {
             $('#apiKey').placeholder = '비워두면 계정 저장 키로 연결';
             $('#apiSecret').placeholder = '비워두면 계정 저장 키로 연결';
+            if (me.credentialsUseTestnet !== undefined && me.credentialsUseTestnet !== null) {
+              syncExchangeEnv(me.credentialsUseTestnet);
+            }
             addLog('API 키가 계정에 암호화 저장되어 있습니다. 연결로 재연결하세요.', 'info');
           }
         } catch { /* ignore */ }
@@ -1855,8 +1883,13 @@ const FuturesBotApp = (() => {
   function setModeBadge() {
     const badge = $('#modeBadge');
     if (isTestnetMode()) {
-      badge.textContent = '테스트넷';
-      badge.className = 'paper-badge testnet-badge';
+      if (exchangeUseTestnet) {
+        badge.textContent = '테스트넷';
+        badge.className = 'paper-badge testnet-badge';
+      } else {
+        badge.textContent = '실거래';
+        badge.className = 'paper-badge live-badge';
+      }
     } else {
       badge.textContent = '모의매매';
       badge.className = 'paper-badge';
@@ -1870,7 +1903,8 @@ const FuturesBotApp = (() => {
       el.className = 'api-status api-status--offline';
       return;
     }
-    el.textContent = connected ? 'API 서버: 연결됨 · 테스트넷 활성' : 'API 서버: 대기 중';
+    const env = exchangeEnvLabel();
+    el.textContent = connected ? `API 서버: 연결됨 · ${env}` : 'API 서버: 대기 중';
     el.className = connected ? 'api-status api-status--connected' : 'api-status api-status--online';
   }
 
@@ -2317,6 +2351,7 @@ const FuturesBotApp = (() => {
 
     try {
       readFormSettings();
+      const useTestnet = getApiUseTestnet();
       let data;
       if (!apiKey || !apiSecret) {
         let saved = false;
@@ -2334,15 +2369,16 @@ const FuturesBotApp = (() => {
           addLog('API Key와 Secret을 입력하세요.', 'loss');
           return;
         }
-        data = await FuturesApiClient.reconnect();
-        addLog('저장된 API 키로 재연결', 'info');
+        data = await FuturesApiClient.reconnect(useTestnet);
+        addLog(`저장된 API 키로 재연결 (${useTestnet ? '테스트넷' : '실거래'})`, 'info');
       } else {
         if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
           addLog('로그인 후 API 키를 연결하세요.', 'loss');
           return;
         }
-        data = await FuturesApiClient.connect(apiKey, apiSecret);
+        data = await FuturesApiClient.connect(apiKey, apiSecret, useTestnet);
       }
+      syncExchangeEnv(data.testnet);
       state.mode = 'testnet';
       const marginPreview = await calcTradeMarginForTrade();
       await FuturesApiClient.setup({
@@ -2357,13 +2393,14 @@ const FuturesBotApp = (() => {
       $('#disconnectApiBtn').disabled = false;
       $('#apiKey').disabled = true;
       $('#apiSecret').disabled = true;
+      $('#apiEnv').disabled = true;
       $('#apiKey').placeholder = data.perUser ? '계정에 암호화 저장됨' : '서버에 저장됨';
       $('#apiSecret').placeholder = data.perUser ? '계정에 암호화 저장됨' : '서버에 저장됨';
       setModeBadge();
       updateApiServerStatus(true, true);
       startStatusPolling();
       const storeHint = data.perUser ? '계정 암호화 저장' : '서버 .env 저장';
-      addLog(`연결 성공 — 잔고 $${data.balance.toFixed(2)} USDT (${storeHint})`, 'info');
+      addLog(`연결 성공 (${exchangeEnvLabel()}) — 잔고 $${data.balance.toFixed(2)} USDT (${storeHint})`, 'info');
       updateUI();
     } catch (err) {
       addLog(`연결 실패: ${err.message}`, 'loss');
@@ -2385,8 +2422,9 @@ const FuturesBotApp = (() => {
     $('#disconnectApiBtn').disabled = true;
     $('#apiKey').disabled = false;
     $('#apiSecret').disabled = false;
-    $('#apiKey').placeholder = 'Testnet API Key';
-    $('#apiSecret').placeholder = 'Testnet API Secret';
+    $('#apiEnv').disabled = false;
+    $('#apiKey').placeholder = '';
+    $('#apiSecret').placeholder = '';
     setModeBadge();
     updateApiServerStatus(await FuturesApiClient.checkServer(), false);
     addLog('세션 해제 — 저장된 키는 서버에 유지 (재연결 가능)', 'info');
@@ -3149,6 +3187,8 @@ const FuturesBotApp = (() => {
     await AppAuth.refreshFromHealth(bootHealth);
     if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
       addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
+    } else if (AppAuth.isRequired()) {
+      setApiEnvSelect(false);
     }
 
     readFormSettings();
