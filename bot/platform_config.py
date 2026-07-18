@@ -49,3 +49,13 @@ def access_token_expire_minutes() -> int:
         return max(5, int(raw))
     except ValueError:
         return 1440
+
+
+def master_encryption_key() -> str:
+    """Fernet key for encrypting per-user Binance secrets (Phase 2-B)."""
+    return os.getenv("MASTER_ENCRYPTION_KEY", "").strip().strip('"').strip("'")
+
+
+def app_origin() -> str:
+    """Allowed CORS origin for production (Phase 2-E). Default * for local."""
+    return os.getenv("APP_ORIGIN", "*").strip() or "*"

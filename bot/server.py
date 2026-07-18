@@ -19,7 +19,7 @@ from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.db import init_db
 from bot.exchange import BinanceFuturesClient
-from bot.platform_config import auth_required
+from bot.platform_config import auth_required, database_url
 from bot.server_bot import (
     ENTRY_GATE_FILE,
     bot_diagnostics,
@@ -84,6 +84,7 @@ def auto_connect_from_env() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    logger.info("Database ready (%s)", database_url().split(":", 1)[0])
     auto_connect_from_env()
     restore_bot_if_needed()
     yield
@@ -255,7 +256,19 @@ def _shift_sl_tp_to_fill(
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    from sqlalchemy import text
+
+    from bot.db import engine
+
     ai = ai_available()
+    db_ok = False
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as exc:
+        logger.warning("Database health check failed: %s", exc)
+
     return {
         "ok": True,
         "apiVersion": 2,
@@ -263,6 +276,10 @@ def health() -> dict[str, Any]:
         "connected": _session is not None,
         "credentialsSaved": credentials_configured(),
         "testnet": True,
+        "database": {
+            "ok": db_ok,
+            "driver": database_url().split(":", 1)[0],
+        },
         "strategyAi": ai,
         "bot": bot_status(),
         "botDiagnostics": bot_diagnostics(),

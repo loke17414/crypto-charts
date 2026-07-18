@@ -9,8 +9,7 @@ from sqlalchemy import engine_from_config, pool
 
 from bot.db import Base
 from bot.platform_config import database_url
-
-import bot.models  # noqa: F401 — register models on Base.metadata
+import bot.models  # noqa: F401 — register metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -27,6 +26,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=url.startswith("sqlite"),
     )
 
     with context.begin_transaction():
@@ -34,15 +34,20 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    url = database_url()
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        url=database_url(),
+        url=url,
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=url.startswith("sqlite"),
+        )
 
         with context.begin_transaction():
             context.run_migrations()

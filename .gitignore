@@ -1,6 +1,7 @@
 .env
 .venv/
 data/
+*.db
 logs/
 bot-state.json
 bot-js-state.json
