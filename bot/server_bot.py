@@ -168,12 +168,14 @@ def pause_bot_entry(
     seconds_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
     interval_sec = seconds_map.get(interval, 900)
     now_ms = int(time.time() * 1000)
+    min_pause_ms = 90_000  # never reopen within 90s of a manual close
     if manual and bar_time:
         bar_end_ms = (int(bar_time) + interval_sec) * 1000
-        paused_until = min(max(now_ms + 30_000, bar_end_ms), now_ms + 15 * 60_000)
+        # Prefer waiting out the current bar; never shorter than min_pause_ms.
+        paused_until = min(max(now_ms + min_pause_ms, bar_end_ms), now_ms + 15 * 60_000)
     else:
         paused_until = min(
-            max(now_ms + 30_000, now_ms + interval_sec * 1000),
+            max(now_ms + min_pause_ms, now_ms + interval_sec * 1000),
             now_ms + 15 * 60_000,
         )
     payload: dict[str, Any] = {

@@ -57,9 +57,11 @@ function createEntryGate({ gateFile, log = () => {} }) {
     const gate = read();
     if (!gate || gate.reason !== 'manual_close') return false;
 
+    // Hard pause — block every direction.
     if ((Number(gate.pausedUntil) || 0) > nowMs) return true;
 
     const blockedBar = Number(gate.blockedBarTime) || 0;
+    // Same bar still open: keep blocking the closed-side signal.
     if (
       blockedBar > 0
       && barTime === blockedBar
@@ -69,8 +71,15 @@ function createEntryGate({ gateFile, log = () => {} }) {
       return true;
     }
 
+    // New bar (or opposite signal after hard pause) — release.
+    if (blockedBar > 0 && barTime !== blockedBar) {
+      clear();
+      log('수동 청산 재진입 보류 해제 — 봉 종료', 'DEBUG');
+      return false;
+    }
+
     clear();
-    log('수동 청산 재진입 보류 해제 — 봉 종료/신호 변경', 'DEBUG');
+    log('수동 청산 재진입 보류 해제 — 신호 변경', 'DEBUG');
     return false;
   }
 

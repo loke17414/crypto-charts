@@ -34,23 +34,36 @@ const EntryPause = (() => {
   }
 
   /**
-   * True when the manual-close block still applies to this signal/bar.
-   * Clears itself once the bar has moved on or a different signal appears.
+   * True when the manual-close block still applies.
+   * - While hard pause is active: block ALL entry signals.
+   * - After hard pause: still block the same signal on the same bar.
+   * Clears itself once the bar has moved on (or a different signal appears
+   * after the hard pause).
    */
   function isBlocked(signal, barTime, nowMs = Date.now()) {
     if (!manualBlock) return false;
-    if (nowMs >= manualBlock.until && barTime !== manualBlock.barTime) {
+
+    // Hard pause window — block every direction so a flip-flop signal cannot
+    // reopen immediately after the user closed.
+    if (nowMs < manualBlock.until) return true;
+
+    // Pause expired. Drop the block once we are on a newer bar.
+    if (barTime != null && barTime !== manualBlock.barTime) {
       manualBlock = null;
+      pausedUntilMs = 0;
       return false;
     }
-    if (nowMs < manualBlock.until) return true;
+
+    // Same bar still forming: keep blocking the closed-side signal.
     if (
       (signal === 'LONG' || signal === 'SHORT')
       && signal === manualBlock.signal
-      && barTime === manualBlock.barTime
+      && (barTime == null || barTime === manualBlock.barTime)
     ) {
       return true;
     }
+
+    // Same bar but opposite / no signal — release.
     manualBlock = null;
     return false;
   }

@@ -149,6 +149,7 @@ async function syncPositionFromExchange() {
   } else if (!live && position) {
     const wasBotClose = closeInitiatedByBot;
     const wasExchangeSlTp = position.exchangeSlTp;
+    const closedSide = position.side;
     closeInitiatedByBot = false;
     log(wasBotClose
       ? '봇 청산 완료 — 로컬 상태 초기화'
@@ -156,11 +157,23 @@ async function syncPositionFromExchange() {
         ? '거래소 SL/TP 체결 — 로컬 상태 초기화'
         : '외부/수동 청산 감지 — 로컬 상태 초기화');
     position = null;
-    if (!entryGate.read()) {
-      const cooldownMs = (wasBotClose || wasExchangeSlTp)
-        ? cfg.entryCooldownSeconds * 1000
-        : Math.min(intervalSeconds(cfg.interval) * 1000, 15 * 60_000);
-      entryPausedUntil = Date.now() + cooldownMs;
+    // Always apply a local cooldown. If the UI already wrote the gate file,
+    // pausedUntil() covers it; if the gate races behind the close, this
+    // in-memory pause still blocks same-tick / next-tick re-entry.
+    const cooldownMs = (wasBotClose || wasExchangeSlTp)
+      ? Math.max(cfg.entryCooldownSeconds * 1000, 30_000)
+      : Math.max(
+        intervalSeconds(cfg.interval) * 1000,
+        90_000,
+      );
+    entryPausedUntil = Math.max(entryPausedUntil, Date.now() + Math.min(cooldownMs, 15 * 60_000));
+    skipEntryThisTick = !wasBotClose; // external/manual/SLTP: never reopen in this tick
+    if (!wasBotClose && closedSide) {
+      log(
+        `재진입 보류 ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s`
+        + (closedSide ? ` (닫힌 방향 ${closedSide})` : ''),
+        'WARN',
+      );
     }
     saveState();
   }
@@ -170,6 +183,7 @@ let entryPausedUntil = 0;
 let closeInitiatedByBot = false;
 let entryInFlight = false;
 let tickInFlight = false;
+let skipEntryThisTick = false;
 let lastLossCheckAt = 0;
 
 // ---- Strategy hot reload --------------------------------------------------
@@ -442,6 +456,7 @@ async function closePosition(price, reason) {
 async function tick() {
   if (tickInFlight) return;
   tickInFlight = true;
+  skipEntryThisTick = false;
   try {
   maybeReloadStrategy();
   const raw = await client.getKlines(200);
@@ -501,6 +516,10 @@ async function tick() {
   const barTime = forming.time;
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
+    if (skipEntryThisTick) {
+      log(`Signal ${result.signal} skipped — 방금 청산된 틱에서는 재진입하지 않습니다`, 'WARN');
+      return;
+    }
     if (entryGate.isManualReentryBlocked(result.signal, barTime)) {
       log(`Signal ${result.signal} skipped — 수동 청산 후 같은 봉 재진입 보류`, 'WARN');
       return;

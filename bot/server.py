@@ -540,6 +540,16 @@ def close_order(body: CloseOrderBody = CloseOrderBody()) -> dict[str, Any]:
     if not pos:
         raise HTTPException(status_code=400, detail="No open position")
 
+    # Pause BEFORE closing on the exchange. Otherwise the headless bot can see
+    # a flat account + live entry signal and reopen in the same tick window.
+    if is_running() and body.manual:
+        pause_bot_entry(
+            manual=True,
+            interval=_strategy_interval(),
+            bar_time=body.bar_time,
+            blocked_signal=body.blocked_signal or pos["side"],
+        )
+
     try:
         if pos["side"] == "LONG":
             client.close_long(pos["quantity"])
@@ -553,14 +563,6 @@ def close_order(body: CloseOrderBody = CloseOrderBody()) -> dict[str, Any]:
         client.cancel_all_orders()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to cancel open orders after close: %s", exc)
-
-    if is_running() and body.manual:
-        pause_bot_entry(
-            manual=True,
-            interval=_strategy_interval(),
-            bar_time=body.bar_time,
-            blocked_signal=body.blocked_signal or pos["side"],
-        )
 
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
 

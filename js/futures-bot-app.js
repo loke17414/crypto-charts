@@ -1651,10 +1651,13 @@ const FuturesBotApp = (() => {
     } else if (hadPosition) {
       // Position disappeared — closed by SL/TP, liquidation, or a manual close
       // outside this browser (e.g. exchange website). Whatever the cause, a
-      // still-active entry signal must not silently reopen the trade: drop the
-      // SL/TP confirmation and pause auto entry until the current bar closes.
+      // still-active entry signal must not silently reopen the trade.
       if (slTpConfirmed) {
         addLog('포지션 종료 감지 — 전략 SL/TP로 재진입 대기', 'info');
+      }
+      if (!EntryPause.isPaused() && !EntryPause.getBlock()) {
+        const closedSide = lastPendingSide || null;
+        pauseAutoEntryAfterManualClose('포지션 종료 감지', closedSide);
       }
       autoConfirmSlTpFromStrategy();
       slTpPreviewTouchedAt = 0;
@@ -1667,7 +1670,12 @@ const FuturesBotApp = (() => {
     const intervalSec = secondsMap[state.interval] || 60;
     const barTime = lastCandles.at(-1)?.time ?? Math.floor(Date.now() / 1000);
     const barEndMs = (barTime + intervalSec) * 1000;
-    const until = Math.max(Date.now() + 30_000, Math.min(barEndMs, Date.now() + 15 * 60_000));
+    const minPauseMs = 90_000;
+    // Wait out the current bar when possible; never reopen within 90s.
+    const until = Math.min(
+      Math.max(barEndMs, Date.now() + minPauseMs),
+      Date.now() + 15 * 60_000,
+    );
     return { barTime, signal: closedSide, until };
   }
 
@@ -2922,20 +2930,22 @@ const FuturesBotApp = (() => {
   }
 
   // A close (manual or exchange-side) must not be instantly reversed by the
-  // running bot: pause auto entries until the current bar closes (min 30s).
+  // running bot: pause auto entries until the current bar closes (min 90s).
   function pauseAutoEntryAfterManualClose(reason = '수동 청산', closedSide = null) {
     const side = closedSide || testnetStatus?.position?.side || lastPendingSide || null;
-    if (side) {
-      EntryPause.blockManualClose(buildManualCloseBlock(side));
-    } else {
-      const secondsMap = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
-      const intervalSec = secondsMap[state.interval] || 60;
-      const nowSec = Math.floor(Date.now() / 1000);
-      const barEndSec = lastCandles.at(-1) ? lastCandles.at(-1).time + intervalSec : nowSec + 60;
-      const pausedUntil = Math.min(barEndSec * 1000, Date.now() + 15 * 60_000);
-      EntryPause.pauseUntil(Math.max(Date.now() + 30_000, pausedUntil));
+    const block = buildManualCloseBlock(side);
+    EntryPause.blockManualClose(block);
+    // Prevent the same-bar signal key from being treated as a fresh entry.
+    if (side && block.barTime != null) {
+      lastAutoEntryKey = `${side}:${block.barTime}`;
     }
-    addLog(`${reason} — 같은 신호로 바로 재진입하지 않도록 자동 진입을 잠시 멈춥니다.`, 'info');
+    autoEntryRetryAt = Math.max(autoEntryRetryAt, block.until);
+    const secs = Math.max(1, Math.ceil((block.until - Date.now()) / 1000));
+    addLog(
+      `${reason} — ${secs}초(또는 현재 봉 종료)까지 자동 재진입을 멈춥니다.`,
+      'info',
+    );
+    return block;
   }
 
   function isAutoEntryPaused() {
@@ -2964,15 +2974,21 @@ const FuturesBotApp = (() => {
         try {
           const side = testnetStatus?.position?.side || '';
           const barTime = lastCandles.at(-1)?.time ?? null;
-          if (side) EntryPause.blockManualClose(buildManualCloseBlock(side));
+          // Local + server pause BEFORE the exchange close so neither the
+          // browser bot nor the headless bot can race a reopen.
+          pauseAutoEntryAfterManualClose('수동 청산', side || null);
           resetSlTpConfirm();
+          if (serverBotActive) {
+            try {
+              await FuturesApiClient.pauseBotEntry?.();
+            } catch { /* closePosition also pauses when manual=true */ }
+          }
           await FuturesApiClient.closePosition({
             manual: true,
             barTime,
             blockedSignal: side || null,
           });
           clearPositionStop();
-          pauseAutoEntryAfterManualClose('수동 청산', side);
           addLog(`${side} 수동 청산 @ $${price.toFixed(2)}`, 'info');
           await refreshTestnetStatus();
           updateUI();
@@ -2987,10 +3003,10 @@ const FuturesBotApp = (() => {
         return;
       }
       const closedSide = FuturesPaper.getPosition()?.side || null;
+      pauseAutoEntryAfterManualClose('수동 청산', closedSide);
       const r = FuturesPaper.closePosition(price, '수동 청산');
       if (r.ok) {
         clearPositionStop();
-        pauseAutoEntryAfterManualClose('수동 청산', closedSide);
         resetSlTpConfirm();
       }
       addLog(r.message, r.ok ? (r.pnl >= 0 ? 'win' : 'loss') : 'info');
