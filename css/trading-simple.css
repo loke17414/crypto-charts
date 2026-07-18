@@ -358,14 +358,7 @@
 }
 
 .trading-page--simple .chart-top-bar__signal {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
+  display: none;
 }
 
 .trading-page--simple .chart-top-bar__meta {
