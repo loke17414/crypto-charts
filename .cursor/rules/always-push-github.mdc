@@ -1,0 +1,27 @@
+---
+description: After code changes, commit and push to GitHub without waiting to be asked
+alwaysApply: true
+---
+
+# Always Push to GitHub
+
+When you finish implementing requested code changes in this repo:
+
+1. Commit the relevant changes with a concise message (focus on why).
+2. Push to `origin/main` (or the user's active feature branch if one is in use).
+3. Tell the user the commit hash and that the push succeeded.
+
+Do not skip push because the user did not repeat "GitHub에 올려" in that turn.
+
+## Git safety
+
+- Never commit secrets (`.env`, credentials).
+- Do not force-push to `main`.
+- Do not amend unless the user explicitly asked or a hook auto-modified files on your commit.
+- If push to `main` is blocked, retry with user approval rather than leaving commits local only.
+
+## When not to push
+
+- Question-only or review-only tasks with no file edits.
+- User explicitly says not to commit/push yet.
+- Changes are intentionally local experiments the user asked to keep uncommitted.
