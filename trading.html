@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718t">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718u">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -74,35 +74,30 @@
               </div>
             </div>
 
-            <details class="chart-toolbar-fold">
-              <summary class="chart-toolbar-fold__summary"><span class="chart-toolbar-fold__summary-text">봉 · 지표 · 도구</span></summary>
-              <div class="chart-controls chart-controls--simple">
-                <div class="chart-controls__type hidden">
-                  <button class="btn btn--tab active" data-chart-type="candlestick">캔들</button>
-                  <button class="btn btn--tab" data-chart-type="line">라인</button>
+            <div class="chart-container">
+              <aside class="chart-sidebar" aria-label="차트 봉 · 지표">
+                <div class="chart-sidebar__section chart-sidebar__intervals">
+                  <span class="chart-sidebar__label">봉</span>
+                  <div class="chart-controls__range" role="group" aria-label="봉 주기">
+                    <button class="btn btn--tab" data-interval="1m">1m</button>
+                    <button class="btn btn--tab" data-interval="5m">5m</button>
+                    <button class="btn btn--tab" data-interval="15m">15m</button>
+                    <button class="btn btn--tab active" data-interval="1h">1h</button>
+                    <button class="btn btn--tab" data-interval="4h">4h</button>
+                    <button class="btn btn--tab" data-interval="1d">1d</button>
+                  </div>
                 </div>
-                <div class="chart-controls__range">
-                  <button class="btn btn--tab" data-interval="1m">1m</button>
-                  <button class="btn btn--tab" data-interval="5m">5m</button>
-                  <button class="btn btn--tab" data-interval="15m">15m</button>
-                  <button class="btn btn--tab active" data-interval="1h">1h</button>
-                  <button class="btn btn--tab" data-interval="4h">4h</button>
-                  <button class="btn btn--tab" data-interval="1d">1d</button>
-                </div>
-                <div class="chart-controls__tools">
+                <div class="chart-sidebar__section chart-sidebar__tools">
                   <div class="indicator-dropdown">
-                    <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool" title="지표">지표</button>
+                    <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool chart-sidebar__tool" title="지표">지표</button>
                     <div id="indicatorMenu" class="indicator-menu hidden">
                       <input type="text" id="indicatorSearch" class="indicator-menu__search" placeholder="지표 검색..." autocomplete="off">
                       <div id="indicatorMenuList"></div>
                     </div>
                   </div>
-                  <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool" title="도구">도구</button>
+                  <button type="button" id="drawingToggleBtn" class="btn btn--ghost btn--tool chart-sidebar__tool" title="도구">도구</button>
                 </div>
-              </div>
-            </details>
-
-            <div class="chart-container">
+              </aside>
               <div class="chart-workspace">
                 <aside id="drawingToolbar" class="drawing-toolbar hidden"></aside>
                 <div class="chart-stack">
@@ -114,7 +109,7 @@
                       <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
                       <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
                     </div>
-                    <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart indicator-panes--inline-scales"></div>
+                    <div id="indicatorPanes" class="indicator-panes indicator-panes--in-chart"></div>
                   </div>
                 </div>
               </div>
@@ -305,14 +300,14 @@
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
   <script src="js/indicator-catalog.js?v=20260714e"></script>
-  <script src="js/indicators.js?v=20260718q"></script>
+  <script src="js/indicators.js?v=20260718r"></script>
   <script src="js/candle-patterns.js"></script>
   <script src="js/chart-structure.js?v=20260718f"></script>
   <script src="js/strategy-engine.js?v=20260719a"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
-  <script src="js/app.js?v=20260718n"></script>
+  <script src="js/app.js?v=20260718o"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260719a"></script>

@@ -843,9 +843,11 @@ function setupChartInteractions() {
 
 function syncVolumeVisibility() {
   if (!volumeSeries) return;
-  const hideMainVol = !usesEmbeddedIndicatorPanes()
-    && typeof IndicatorManager !== 'undefined'
+  const hasVolSub = typeof IndicatorManager !== 'undefined'
     && (IndicatorManager.active.has('vol') || IndicatorManager.active.has('volma'));
+  const inlineScales = typeof IndicatorManager !== 'undefined'
+    && IndicatorManager.useInChartSubScales?.();
+  const hideMainVol = hasVolSub && !inlineScales;
   const isCandle = state.chartType === 'candlestick';
   volumeSeries.applyOptions({ visible: isCandle && !hideMainVol });
 }

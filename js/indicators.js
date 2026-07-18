@@ -298,9 +298,99 @@ const IndicatorManager = (() => {
   const MAIN_CHART_MAX = 280;
   const IN_CHART_VOL_BAND = 0.16;
   const IN_CHART_SUB_BAND = 0.11;
+  const SUB_PANE_MIN = 56;
+  const SUB_PANE_MAX = 280;
+  const SUB_PANE_HEADER = 26;
+  const SUB_PANE_STATE_KEY = 'crypto-charts-sub-pane-state';
 
   function useInChartSubScales() {
-    return panesEl?.classList.contains('indicator-panes--in-chart');
+    return panesEl?.classList.contains('indicator-panes--inline-scales');
+  }
+
+  function loadSubPaneState() {
+    try {
+      return JSON.parse(localStorage.getItem(SUB_PANE_STATE_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveSubPaneState(state) {
+    try {
+      localStorage.setItem(SUB_PANE_STATE_KEY, JSON.stringify(state));
+    } catch { /* ignore */ }
+  }
+
+  function getSubPaneChartHeight(id, def) {
+    const saved = loadSubPaneState()[id];
+    if (saved?.collapsed) return 0;
+    return Math.min(SUB_PANE_MAX, Math.max(SUB_PANE_MIN, saved?.height || def?.subHeight || SUB_HEIGHT));
+  }
+
+  function applySubPaneLayout(id) {
+    const sc = subCharts[id];
+    const def = getDef(id);
+    if (!sc?.wrap || !sc.el || sc.inChart) return;
+    const saved = loadSubPaneState()[id] || {};
+    const collapsed = !!saved.collapsed;
+    const chartH = collapsed ? 0 : getSubPaneChartHeight(id, def);
+    sc.wrap.classList.toggle('is-collapsed', collapsed);
+    sc.wrap.style.height = collapsed ? `${SUB_PANE_HEADER}px` : `${SUB_PANE_HEADER + chartH}px`;
+    sc.el.style.height = `${chartH}px`;
+    sc.chart.applyOptions({ height: chartH });
+    const btn = sc.wrap.querySelector('.indicator-pane__collapse');
+    if (btn) {
+      btn.textContent = collapsed ? '+' : '−';
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+  }
+
+  function bindSubPaneControls(wrap, id) {
+    if (wrap.dataset.controlsBound) return;
+    wrap.dataset.controlsBound = '1';
+
+    wrap.querySelector('.indicator-pane__collapse')?.addEventListener('click', () => {
+      const state = loadSubPaneState();
+      const next = !state[id]?.collapsed;
+      state[id] = { ...state[id], collapsed: next };
+      saveSubPaneState(state);
+      applySubPaneLayout(id);
+      resizeMainChart();
+    });
+
+    const handle = wrap.querySelector('.indicator-pane__resize-handle');
+    if (!handle) return;
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const sc = subCharts[id];
+      if (!sc?.wrap || sc.inChart) return;
+      const startY = e.clientY;
+      const startH = getSubPaneChartHeight(id, getDef(id));
+      const onMove = (ev) => {
+        const next = Math.min(SUB_PANE_MAX, Math.max(SUB_PANE_MIN, startH + (startY - ev.clientY)));
+        const state = loadSubPaneState();
+        state[id] = { ...state[id], collapsed: false, height: next };
+        saveSubPaneState(state);
+        applySubPaneLayout(id);
+        resizeMainChart();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  function resetMainChartScales() {
+    if (!mainChart || useInChartSubScales()) return;
+    mainChart.priceScale('right').applyOptions({
+      scaleMargins: { top: 0.05, bottom: 0.08 },
+    });
+    mainChart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 },
+    });
   }
 
   function subScaleId(id) {
@@ -698,12 +788,12 @@ const IndicatorManager = (() => {
     }
 
     const def = getDef(id);
-    const height = def?.subHeight || SUB_HEIGHT;
+    const chartH = getSubPaneChartHeight(id, def);
     const chartOpts = getSubChartOptions(def);
 
     if (subCharts[id]) {
-      subCharts[id].el.style.height = `${height}px`;
-      subCharts[id].chart.applyOptions({ height, ...chartOpts });
+      applySubPaneLayout(id);
+      subCharts[id].chart.applyOptions({ ...chartOpts });
       reorderSubPanes();
       return subCharts[id];
     }
@@ -712,11 +802,18 @@ const IndicatorManager = (() => {
     wrap.className = 'indicator-pane';
     if (def?.type === 'sub-macd') wrap.classList.add('indicator-pane--macd');
     wrap.dataset.id = id;
-    wrap.innerHTML = `<div class="indicator-pane__label"></div><div class="indicator-pane__chart"></div>`;
+    wrap.innerHTML = `
+      <div class="indicator-pane__resize-handle" title="높이 조절"></div>
+      <div class="indicator-pane__header">
+        <div class="indicator-pane__label"></div>
+        <button type="button" class="indicator-pane__collapse" title="접기/펼치기" aria-expanded="true">−</button>
+      </div>
+      <div class="indicator-pane__chart"></div>`;
     panesEl.appendChild(wrap);
+    bindSubPaneControls(wrap, id);
 
     const el = wrap.querySelector('.indicator-pane__chart');
-    el.style.height = `${height}px`;
+    el.style.height = `${chartH}px`;
     const sub = LightweightCharts.createChart(el, {
       layout: { background: { type: 'solid', color: TV.bg }, textColor: TV.text, fontSize: 10 },
       grid: { vertLines: { color: TV.grid }, horzLines: { color: TV.grid } },
@@ -725,7 +822,7 @@ const IndicatorManager = (() => {
       handleScale: false,
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       width: el.clientWidth,
-      height: height,
+      height: chartH,
     });
 
     const ro = new ResizeObserver(() => {
@@ -734,6 +831,7 @@ const IndicatorManager = (() => {
     ro.observe(el);
 
     subCharts[id] = { chart: sub, el, wrap, series: {}, ro };
+    applySubPaneLayout(id);
     syncTimeScale(sub);
     reorderSubPanes();
     return subCharts[id];
@@ -1049,6 +1147,9 @@ const IndicatorManager = (() => {
       const base = Math.max(container?.clientHeight || 0, workspace.clientHeight);
       return Math.max(180, Math.round(base));
     }
+    const plot = workspace.querySelector('.chart-main__plot');
+    const plotH = plot?.clientHeight || 0;
+    if (plotH > 0) return Math.max(180, plotH);
     const subH = panesEl?.clientHeight || 0;
     return Math.max(180, workspace.clientHeight - subH);
   }
@@ -1408,6 +1509,7 @@ const IndicatorManager = (() => {
       renderMenu(e.target.value);
     });
     renderActiveTags();
+    resetMainChartScales();
     layoutInChartSubScales();
     resizeMainChart();
     reorderSubPanes();
@@ -1445,5 +1547,8 @@ const IndicatorManager = (() => {
     return true;
   }
 
-  return { init, update, updateLive, toggle, onResize, clear, openSettings, setParams, active, getParams, getDisplayName, INDICATOR_REGISTRY, count: () => INDICATOR_REGISTRY.length };
+  return {
+    init, update, updateLive, toggle, onResize, clear, openSettings, setParams, active,
+    getParams, getDisplayName, useInChartSubScales, INDICATOR_REGISTRY, count: () => INDICATOR_REGISTRY.length,
+  };
 })();

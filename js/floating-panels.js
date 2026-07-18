@@ -41,8 +41,6 @@ const FloatingPanels = (() => {
       });
       ro.observe(canvas);
 
-      document.querySelector('.chart-toolbar-fold')?.addEventListener('toggle', notifyChartResize);
-
       setTimeout(notifyChartResize, 120);
       setTimeout(notifyChartResize, 500);
     };

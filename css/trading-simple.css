@@ -206,12 +206,11 @@
 .trading-page--simple .float-panel--chart .float-panel__body {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
-.trading-page--simple .float-panel--chart .chart-top-bar,
-.trading-page--simple .float-panel--chart .chart-toolbar-fold {
+.trading-page--simple .float-panel--chart .chart-top-bar {
   flex-shrink: 0;
 }
 
@@ -434,12 +433,90 @@
 }
 
 .trading-page--simple .float-panel--chart .chart-container {
-  grid-row: 3;
+  grid-row: 2;
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
+}
+
+.trading-page--simple .chart-sidebar {
+  flex-shrink: 0;
+  width: 3.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.45rem 0.35rem;
+  border-right: 1px solid var(--simple-border-soft);
+  background: var(--simple-panel);
+  z-index: 35;
+}
+
+.trading-page--simple .chart-sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.trading-page--simple .chart-sidebar__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.trading-page--simple .chart-sidebar__intervals .chart-controls__range {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.trading-page--simple .chart-sidebar__intervals .btn--tab {
+  width: 100%;
+  padding: 0.34rem 0.2rem;
+  font-size: 0.68rem;
+  border-radius: var(--simple-radius-sm);
+  background: var(--simple-elevated);
+  color: var(--text-muted);
+  border: 1px solid transparent;
+}
+
+.trading-page--simple .chart-sidebar__intervals .btn--tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.trading-page--simple .chart-sidebar__intervals .btn--tab.active {
+  background: var(--simple-accent-soft);
+  color: var(--simple-accent);
+}
+
+.trading-page--simple .chart-sidebar__tools {
+  margin-top: auto;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--simple-border-soft);
+}
+
+.trading-page--simple .chart-sidebar__tools .indicator-dropdown {
+  position: relative;
+}
+
+.trading-page--simple .chart-sidebar__tool {
+  width: 100%;
+  padding: 0.38rem 0.2rem;
+  font-size: 0.66rem;
+  border-radius: var(--simple-radius-sm);
+}
+
+.trading-page--simple .chart-sidebar .indicator-menu {
+  position: absolute;
+  left: calc(100% + 0.35rem);
+  top: 0;
+  min-width: 13rem;
+  z-index: 45;
 }
 
 .trading-page--simple .float-panel--ai .float-panel__body,
@@ -481,9 +558,12 @@
 
 .trading-page--simple .chart-workspace {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: row;
+  position: relative;
+  z-index: 1;
 }
 
 .trading-page--simple .chart-stack {
@@ -501,6 +581,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  z-index: 1;
 }
 
 .trading-page--simple .chart-main__plot {
@@ -509,12 +590,23 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  z-index: 3;
+  isolation: isolate;
 }
 
 .trading-page--simple .chart-main__plot .chart-area {
   flex: 1;
   min-height: 0;
   height: auto !important;
+  position: relative;
+  z-index: 1;
+}
+
+.trading-page--simple .chart-main__plot .drawing-overlay,
+.trading-page--simple .chart-main__plot .go-realtime-btn,
+.trading-page--simple .chart-main__plot .chart-loading,
+.trading-page--simple .chart-main__plot .chart-error {
+  z-index: 5;
 }
 
 .trading-page--simple .chart-main .chart-area {
@@ -532,6 +624,8 @@
   overflow: hidden;
   border-top: 1px solid var(--simple-border-soft);
   background: var(--simple-bg);
+  position: relative;
+  z-index: 1;
 }
 
 .trading-page--simple .indicator-panes--in-chart:empty {
@@ -540,16 +634,88 @@
 }
 
 .trading-page--simple .indicator-panes--in-chart .indicator-pane {
+  position: relative;
   border-bottom: 1px solid var(--simple-border);
+  background: var(--simple-bg);
+  overflow: hidden;
 }
 
 .trading-page--simple .indicator-panes--in-chart .indicator-pane:last-child {
   border-bottom: none;
 }
 
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+  z-index: 4;
+  background: transparent;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__resize-handle:hover {
+  background: rgba(249, 115, 22, 0.35);
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  min-height: 22px;
+  padding: 0.15rem 0.45rem 0.15rem 0.55rem;
+  background: rgba(21, 23, 28, 0.92);
+  border-bottom: 1px solid var(--simple-border-soft);
+}
+
 .trading-page--simple .indicator-panes--in-chart .indicator-pane__label {
-  font-size: 0.65rem;
-  padding: 0.15rem 0.5rem;
+  position: static;
+  z-index: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  max-width: calc(100% - 1.5rem);
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__collapse {
+  flex-shrink: 0;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 1px solid var(--simple-border);
+  border-radius: 4px;
+  background: var(--simple-elevated);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__collapse:hover {
+  color: var(--text-primary);
+  border-color: var(--simple-accent);
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane.is-collapsed .indicator-pane__chart {
+  display: none;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane.is-collapsed .indicator-pane__resize-handle {
+  display: none;
+}
+
+.trading-page--simple .indicator-panes--in-chart .indicator-pane__chart {
+  width: 100%;
 }
 
 .trading-page--simple .chart-advanced-panel {
