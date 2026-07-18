@@ -13,6 +13,8 @@
   --simple-radius: 8px;
   --simple-radius-sm: 6px;
   --simple-header-h: 2rem;
+  --simple-chart-share: 46%;
+  --simple-panel-min-w: 320px;
   --simple-chevron-size: 0.42rem;
   --bg-primary: var(--simple-bg);
   --bg-secondary: var(--simple-panel);
@@ -83,7 +85,7 @@
 
 .trading-page--simple .trading-main--simple {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) min(280px, 24vw);
+  grid-template-columns: minmax(0, var(--simple-chart-share)) minmax(var(--simple-panel-min-w), 1fr);
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
   flex: 1;
@@ -1142,14 +1144,14 @@
 }
 
 .trading-page--simple .control-section {
-  padding: 0.85rem 1rem;
+  padding: 0.65rem 0.85rem;
   border-bottom: 1px solid var(--simple-border);
 }
 
 .trading-page--simple .control-section--primary {
   flex: 0 0 auto;
   flex-shrink: 0;
-  padding: 0.85rem 0.95rem;
+  padding: 0.65rem 0.8rem;
   background: transparent;
   border-bottom: 1px solid var(--simple-border-soft);
 }
@@ -1513,9 +1515,14 @@
 }
 
 @media (max-width: 960px) {
+  .trading-page--simple {
+    --simple-chart-share: 100%;
+    --simple-panel-min-w: 0;
+  }
+
   .trading-page--simple .trading-main--simple {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 13fr) minmax(0, 7fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     height: calc(100dvh - var(--simple-header-h));
     max-height: calc(100dvh - var(--simple-header-h));
   }

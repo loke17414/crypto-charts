@@ -294,12 +294,12 @@ const INDICATOR_REGISTRY = [
 const SETTINGS_KEY = 'crypto-charts-indicator-settings';
 
 const IndicatorManager = (() => {
-  const SUB_HEIGHT = 88;
+  const SUB_HEIGHT = 72;
   const MAIN_CHART_MAX = 280;
-  const IN_CHART_VOL_BAND = 0.16;
-  const IN_CHART_SUB_BAND = 0.11;
-  const SUB_PANE_MIN = 56;
-  const SUB_PANE_MAX = 280;
+  const IN_CHART_VOL_BAND = 0.14;
+  const IN_CHART_SUB_BAND = 0.09;
+  const SUB_PANE_MIN = 52;
+  const SUB_PANE_MAX = 200;
   const SUB_PANE_HEADER = 26;
   const SUB_PANE_STATE_KEY = 'crypto-charts-sub-pane-state';
 
