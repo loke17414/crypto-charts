@@ -502,9 +502,8 @@
 }
 
 .trading-page--simple .chart-sidebar__tools {
-  margin-top: auto;
-  padding-top: 0.45rem;
-  border-top: 1px solid var(--simple-border-soft);
+  padding-top: 0;
+  border-top: none;
 }
 
 .trading-page--simple .chart-sidebar__tools .indicator-dropdown {
