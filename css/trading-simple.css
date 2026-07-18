@@ -1237,6 +1237,19 @@
 }
 
 .trading-page--simple .control-section input[type="text"],
+.trading-page--simple .auth-panel__status {
+  margin-bottom: 0.55rem;
+}
+
+.trading-page--simple .auth-panel__user {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+}
+
+.trading-page--simple .auth-panel .bot-control-row {
+  margin-top: 0.35rem;
+}
+
 .trading-page--simple .control-section input[type="password"],
 .trading-page--simple .control-section input[type="number"],
 .trading-page--simple .control-section select {

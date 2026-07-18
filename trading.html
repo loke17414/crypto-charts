@@ -210,6 +210,24 @@
         </div>
 
         <div class="control-accordions">
+        <details class="control-section control-section--fold" id="authSection" open>
+          <summary class="control-section__summary"><span class="control-section__summary-text">계정</span></summary>
+          <div class="control-section__body auth-panel">
+            <div id="authStatus" class="api-hint auth-panel__status">확인 중...</div>
+            <div id="authLoggedOut">
+              <div class="form-group"><label for="authEmail">이메일</label><input type="email" id="authEmail" autocomplete="username"></div>
+              <div class="form-group"><label for="authPassword">비밀번호</label><input type="password" id="authPassword" autocomplete="current-password"></div>
+              <div class="bot-control-row">
+                <button type="button" id="authLoginBtn" class="btn btn--simple-primary btn--block">로그인</button>
+                <button type="button" id="authRegisterBtn" class="btn btn--simple-ghost btn--block">회원가입</button>
+              </div>
+            </div>
+            <div id="authLoggedIn" class="hidden">
+              <p class="auth-panel__user"><span class="text-muted">로그인:</span> <strong id="authUserEmail">—</strong></p>
+              <button type="button" id="authLogoutBtn" class="btn btn--simple-ghost btn--block btn--sm">로그아웃</button>
+            </div>
+          </div>
+        </details>
         <details class="control-section control-section--fold">
           <summary class="control-section__summary"><span class="control-section__summary-text">API 연결</span></summary>
           <div class="control-section__body">
@@ -313,12 +331,13 @@
   <script src="js/futures-strategy.js?v=20260719a"></script>
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
-  <script src="js/futures-api-client.js?v=20260717k"></script>
+  <script src="js/futures-api-client.js?v=20260718p"></script>
+  <script src="js/auth.js?v=20260718a"></script>
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
-  <script src="js/futures-bot-app.js?v=20260718s"></script>
+  <script src="js/futures-bot-app.js?v=20260718t"></script>
   <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>
 </html>

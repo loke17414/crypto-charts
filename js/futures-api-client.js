@@ -36,8 +36,9 @@ const FuturesApiClient = (() => {
 
   async function request(path, options = {}) {
     const method = (options.method || 'GET').toUpperCase();
+    const authHdr = typeof AppAuth !== 'undefined' ? AppAuth.authHeaders() : {};
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...options.headers },
+      headers: { 'Content-Type': 'application/json', ...authHdr, ...options.headers },
       ...options,
     });
     const data = await res.json().catch(() => ({}));
@@ -214,6 +215,24 @@ const FuturesApiClient = (() => {
     return request('/api/bot/clear-entry-pause', { method: 'POST' });
   }
 
+  async function authRegister(email, password) {
+    return request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
+  async function authLogin(email, password) {
+    return request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
+  async function authMe() {
+    return request('/api/auth/me');
+  }
+
   function isConnected() {
     return connected;
   }
@@ -246,6 +265,9 @@ const FuturesApiClient = (() => {
     stopServerBot,
     pauseBotEntry,
     clearBotEntryPause,
+    authRegister,
+    authLogin,
+    authMe,
     isConnected,
     setConnected,
   };

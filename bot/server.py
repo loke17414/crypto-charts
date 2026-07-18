@@ -8,13 +8,18 @@ from dataclasses import dataclass
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
+from bot.auth_routes import router as auth_router
+from bot.auth_service import decode_access_token
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
+from bot.db import init_db
 from bot.exchange import BinanceFuturesClient
+from bot.platform_config import auth_required
 from bot.server_bot import (
     ENTRY_GATE_FILE,
     bot_diagnostics,
@@ -78,13 +83,45 @@ def auto_connect_from_env() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     auto_connect_from_env()
     restore_bot_if_needed()
     yield
     stop_bot()
 
 
+PUBLIC_API_PATHS = {
+    "/api/health",
+    "/api/auth/register",
+    "/api/auth/login",
+}
+
+
 app = FastAPI(title="CryptoCharts Futures API", version="1.0", lifespan=lifespan)
+app.include_router(auth_router)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not auth_required():
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    if path in PUBLIC_API_PATHS:
+        return await call_next(request)
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Login required"})
+    try:
+        decode_access_token(auth[7:].strip())
+    except ValueError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -222,6 +259,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "apiVersion": 2,
+        "authRequired": auth_required(),
         "connected": _session is not None,
         "credentialsSaved": credentials_configured(),
         "testnet": True,

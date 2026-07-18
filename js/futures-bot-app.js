@@ -3110,6 +3110,13 @@ const FuturesBotApp = (() => {
     bindBacktestClient();
     bindUiEvents();
 
+    await AppAuth.init();
+    const bootHealth = await FuturesApiClient.getHealth();
+    await AppAuth.refreshFromHealth(bootHealth);
+    if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+      addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
+    }
+
     readFormSettings();
     const stored = loadStrategyStorage();
     state.entryRules = stored.entryRules;
@@ -3304,6 +3311,7 @@ const FuturesBotApp = (() => {
     updateStrategyRulesDisplay,
     exportStrategyForServer,
     getStrategySlots,
+    restoreSessionFromServer,
   };
 })();
 
