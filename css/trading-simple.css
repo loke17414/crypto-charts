@@ -873,6 +873,33 @@
   margin-top: 0.45rem;
 }
 
+.trading-page--simple .bot-manual-order {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--simple-border-soft);
+}
+
+.trading-page--simple .control-section__label--sub {
+  margin-bottom: 0.5rem;
+}
+
+.trading-page--simple .bot-manual-order .trading-actions--manual {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.trading-page--simple .bot-manual-order .trading-actions--manual .btn {
+  flex: 1;
+  padding: 0.65rem;
+  font-size: 0.85rem;
+  border-radius: var(--simple-radius-sm);
+}
+
+.trading-page--simple .bot-reset-btn {
+  margin-top: 0;
+}
+
 .trading-page--simple #slTpStrategyHint {
   margin-bottom: 0.45rem;
   color: var(--text-secondary);
