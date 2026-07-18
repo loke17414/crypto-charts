@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718x">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718y">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -232,6 +232,14 @@
           <summary class="control-section__summary"><span class="control-section__summary-text">API 연결</span></summary>
           <div class="control-section__body">
             <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
+            <div id="apiIpWhitelist" class="api-ip-whitelist hidden">
+              <p class="api-ip-whitelist__title">Binance IP 화이트리스트 (필수)</p>
+              <p class="api-hint">선물 API는 IP 제한이 필요합니다. 아래 <strong>서버 IP</strong>를 Binance API Management → Trusted IPs에 추가하세요. (집/회사 IP ❌)</p>
+              <div class="api-ip-whitelist__row">
+                <code id="platformOutboundIp" class="api-ip-whitelist__ip">조회 중…</code>
+                <button type="button" id="copyPlatformIpBtn" class="btn btn--simple-ghost btn--sm">복사</button>
+              </div>
+            </div>
             <div class="form-group"><label for="apiKey">API Key</label><input type="text" id="apiKey" autocomplete="off"></div>
             <div class="form-group"><label for="apiSecret">API Secret</label><input type="password" id="apiSecret" autocomplete="off"></div>
             <div class="form-group">
@@ -339,13 +347,13 @@
   <script src="js/futures-strategy.js?v=20260719a"></script>
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
-  <script src="js/futures-api-client.js?v=20260718q"></script>
+  <script src="js/futures-api-client.js?v=20260718r"></script>
   <script src="js/auth.js?v=20260718a"></script>
   <script src="js/risk-sizing.js?v=20260717b"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
-  <script src="js/futures-bot-app.js?v=20260718w"></script>
+  <script src="js/futures-bot-app.js?v=20260718x"></script>
   <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>
 </html>

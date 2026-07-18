@@ -24,6 +24,7 @@ from bot.db import get_db, init_db
 from bot.exchange import BinanceFuturesClient
 from bot.models import User
 from bot.platform_config import auth_required, database_url
+from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
     bot_diagnostics,
@@ -97,12 +98,13 @@ def _connect_session(api_key: str, api_secret: str, *, use_testnet: bool | None 
     try:
         balance = client.get_usdt_balance()
     except Exception as exc:
-        hint = (
-            " 테스트넷 키·테스트넷 선택을 확인하세요."
-            if testnet
-            else " 실거래 키·실거래 선택, Futures 권한, IP 화이트리스트(VPS IP)를 확인하세요."
-        )
-        raise HTTPException(status_code=401, detail=f"Invalid API key ({label}): {exc}{hint}") from exc
+        msg = str(exc)
+        req_ip = parse_binance_request_ip(msg)
+        if "Invalid API-key, IP, or permissions" in msg or "-2015" in msg:
+            hint = binance_ip_whitelist_hint(request_ip=req_ip, use_testnet=testnet)
+            raise HTTPException(status_code=401, detail=hint) from exc
+        label = "Testnet" if testnet else "Mainnet"
+        raise HTTPException(status_code=401, detail=f"Invalid API key ({label}): {exc}") from exc
     logger.info("%s connected — balance $%.2f USDT", label, balance)
     return TradingSession(config=config, client=client)
 
@@ -147,6 +149,7 @@ PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/register",
     "/api/auth/login",
+    "/api/platform/outbound-ip",
 }
 
 
@@ -352,6 +355,22 @@ def health(
         "strategyAi": ai,
         "bot": bot,
         "botDiagnostics": bot_diagnostics(),
+        "outboundIp": get_outbound_ip(),
+    }
+
+
+@app.get("/api/platform/outbound-ip")
+def platform_outbound_ip() -> dict[str, Any]:
+    ip = get_outbound_ip()
+    return {
+        "ok": True,
+        "ip": ip,
+        "hint": (
+            "Binance API Management → Restrict access to trusted IPs → "
+            "아래 IP를 추가하세요 (집/회사 IP가 아닌 이 서버 IP)."
+            if ip
+            else "PLATFORM_OUTBOUND_IP를 .env에 설정하거나 서버에서 인터넷 조회가 가능해야 합니다."
+        ),
     }
 
 

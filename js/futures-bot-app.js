@@ -1540,7 +1540,25 @@ const FuturesBotApp = (() => {
     return Boolean(FuturesPaper.getPosition());
   }
 
-  function getApiUseTestnet() {
+  async function loadPlatformOutboundIp() {
+    const box = $('#apiIpWhitelist');
+    const ipEl = $('#platformOutboundIp');
+    if (!box || !ipEl) return;
+    try {
+      const data = await FuturesApiClient.getPlatformOutboundIp();
+      const ip = data?.ip || '';
+      if (ip) {
+        ipEl.textContent = ip;
+        box.classList.remove('hidden');
+      } else {
+        ipEl.textContent = 'IP 조회 실패 — VPS .env에 PLATFORM_OUTBOUND_IP 설정';
+        box.classList.remove('hidden');
+      }
+    } catch {
+      ipEl.textContent = 'IP 조회 실패';
+      box.classList.remove('hidden');
+    }
+  }
     return $('#apiEnv')?.value === 'testnet';
   }
 
@@ -2403,7 +2421,11 @@ const FuturesBotApp = (() => {
       addLog(`연결 성공 (${exchangeEnvLabel()}) — 잔고 $${data.balance.toFixed(2)} USDT (${storeHint})`, 'info');
       updateUI();
     } catch (err) {
-      addLog(`연결 실패: ${err.message}`, 'loss');
+      String(err.message || err)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line, i) => addLog(i === 0 ? `연결 실패: ${line}` : line, 'loss'));
     }
   }
 
@@ -3185,6 +3207,7 @@ const FuturesBotApp = (() => {
     await AppAuth.init();
     const bootHealth = await FuturesApiClient.getHealth();
     await AppAuth.refreshFromHealth(bootHealth);
+    await loadPlatformOutboundIp();
     if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
       addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
     } else if (AppAuth.isRequired()) {
@@ -3239,6 +3262,16 @@ const FuturesBotApp = (() => {
 
     $('#connectApiBtn').addEventListener('click', connectApi);
     $('#disconnectApiBtn').addEventListener('click', disconnectApi);
+    $('#copyPlatformIpBtn')?.addEventListener('click', async () => {
+      const ip = $('#platformOutboundIp')?.textContent?.trim();
+      if (!ip || ip.includes('조회')) return;
+      try {
+        await navigator.clipboard.writeText(ip);
+        addLog(`서버 IP 복사됨: ${ip} — Binance Trusted IPs에 붙여넣기`, 'info');
+      } catch {
+        addLog(`서버 IP: ${ip}`, 'info');
+      }
+    });
     $('#startBotBtn').addEventListener('click', startBot);
     $('#stopBotBtn').addEventListener('click', stopBot);
     $('#closeBtn').addEventListener('click', manualClose);

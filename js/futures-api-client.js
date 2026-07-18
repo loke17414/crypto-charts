@@ -59,6 +59,10 @@ const FuturesApiClient = (() => {
     }
   }
 
+  async function getPlatformOutboundIp() {
+    return request('/api/platform/outbound-ip');
+  }
+
   async function checkServer() {
     const data = await getHealth();
     return data?.ok === true;
@@ -256,6 +260,7 @@ const FuturesApiClient = (() => {
     API_BASE,
     checkServer,
     getHealth,
+    getPlatformOutboundIp,
     connect,
     reconnect,
     disconnect,

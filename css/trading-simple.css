@@ -1466,6 +1466,40 @@
   font-size: 0.82rem;
 }
 
+.trading-page--simple .api-ip-whitelist {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid rgba(220, 53, 69, 0.25);
+  border-radius: var(--simple-radius-sm);
+  background: rgba(220, 53, 69, 0.05);
+}
+
+.trading-page--simple .api-ip-whitelist__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #c0392b;
+}
+
+.trading-page--simple .api-ip-whitelist__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.trading-page--simple .api-ip-whitelist__ip {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  background: var(--simple-surface);
+  border: 1px solid var(--simple-border);
+  font-size: 0.82rem;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
 .trading-page--simple .bot-status--on {
   color: var(--green);
 }
