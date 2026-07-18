@@ -13,8 +13,8 @@
   --simple-radius: 8px;
   --simple-radius-sm: 6px;
   --simple-header-h: 2rem;
-  --simple-chart-share: 46%;
-  --simple-panel-min-w: 320px;
+  --simple-chart-share: 84%;
+  --simple-panel-min-w: 200px;
   --simple-split-gap: 0.65rem;
   --simple-split-border: var(--simple-border);
   --simple-chevron-size: 0.42rem;
