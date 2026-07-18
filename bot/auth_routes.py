@@ -30,10 +30,7 @@ def _user_payload(user: User) -> dict[str, Any]:
     return {"id": user.id, "email": user.email}
 
 
-def get_current_user(
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    db: Session = Depends(get_db),
-) -> User:
+def _user_from_authorization(authorization: str | None, db: Session) -> User:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Login required")
     token = authorization[7:].strip()
@@ -46,6 +43,25 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+def get_current_user(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User:
+    return _user_from_authorization(authorization, db)
+
+
+def get_optional_user(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Return logged-in user, or None when AUTH_REQUIRED=false and no token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        if auth_required():
+            raise HTTPException(status_code=401, detail="Login required")
+        return None
+    return _user_from_authorization(authorization, db)
 
 
 @router.post("/register")
@@ -80,5 +96,15 @@ def login(body: LoginBody, db: Session = Depends(get_db)) -> dict[str, Any]:
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"ok": True, "user": _user_payload(user), "authRequired": auth_required()}
+def me(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    from bot.user_credentials import has_credentials
+
+    return {
+        "ok": True,
+        "user": _user_payload(user),
+        "authRequired": auth_required(),
+        "credentialsSaved": has_credentials(db, user.id),
+    }

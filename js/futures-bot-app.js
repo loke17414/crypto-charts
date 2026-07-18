@@ -1795,17 +1795,29 @@ const FuturesBotApp = (() => {
       $('#disconnectApiBtn').disabled = false;
       $('#apiKey').disabled = true;
       $('#apiSecret').disabled = true;
-      if (health.credentialsSaved) {
-        $('#apiKey').placeholder = '서버에 저장됨';
-        $('#apiSecret').placeholder = '서버에 저장됨';
-      }
+      $('#apiKey').placeholder = '서버에 저장됨';
+      $('#apiSecret').placeholder = '서버에 저장됨';
       setModeBadge();
       addLog('서버 API 세션 연결됨 (브라우저를 닫아도 유지)', 'info');
       startStatusPolling();
-    } else if (health.credentialsSaved) {
-      $('#apiKey').placeholder = '비워두면 저장된 키로 연결';
-      $('#apiSecret').placeholder = '비워두면 저장된 키로 연결';
-      addLog('API 키가 서버에 저장되어 있습니다. 연결 버튼으로 재연결하세요.', 'info');
+    } else {
+      let userSaved = false;
+      if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
+        try {
+          const me = await FuturesApiClient.authMe();
+          userSaved = Boolean(me?.credentialsSaved);
+          if (userSaved) {
+            $('#apiKey').placeholder = '비워두면 계정 저장 키로 연결';
+            $('#apiSecret').placeholder = '비워두면 계정 저장 키로 연결';
+            addLog('API 키가 계정에 암호화 저장되어 있습니다. 연결로 재연결하세요.', 'info');
+          }
+        } catch { /* ignore */ }
+      }
+      if (!userSaved && health.credentialsSaved) {
+        $('#apiKey').placeholder = '비워두면 저장된 키로 연결';
+        $('#apiSecret').placeholder = '비워두면 저장된 키로 연결';
+        addLog('API 키가 서버에 저장되어 있습니다. 연결 버튼으로 재연결하세요.', 'info');
+      }
     }
 
     if (health.bot?.running) {
@@ -2300,14 +2312,28 @@ const FuturesBotApp = (() => {
       readFormSettings();
       let data;
       if (!apiKey || !apiSecret) {
-        const health = await FuturesApiClient.getHealth();
-        if (!health?.credentialsSaved) {
+        let saved = false;
+        if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
+          try {
+            const me = await FuturesApiClient.authMe();
+            saved = Boolean(me?.credentialsSaved);
+          } catch { /* ignore */ }
+        }
+        if (!saved) {
+          const health = await FuturesApiClient.getHealth();
+          saved = Boolean(health?.credentialsSaved);
+        }
+        if (!saved) {
           addLog('API Key와 Secret을 입력하세요.', 'loss');
           return;
         }
         data = await FuturesApiClient.reconnect();
         addLog('저장된 API 키로 재연결', 'info');
       } else {
+        if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+          addLog('로그인 후 API 키를 연결하세요.', 'loss');
+          return;
+        }
         data = await FuturesApiClient.connect(apiKey, apiSecret);
       }
       state.mode = 'testnet';
@@ -2324,12 +2350,13 @@ const FuturesBotApp = (() => {
       $('#disconnectApiBtn').disabled = false;
       $('#apiKey').disabled = true;
       $('#apiSecret').disabled = true;
-      $('#apiKey').placeholder = '서버에 저장됨';
-      $('#apiSecret').placeholder = '서버에 저장됨';
+      $('#apiKey').placeholder = data.perUser ? '계정에 암호화 저장됨' : '서버에 저장됨';
+      $('#apiSecret').placeholder = data.perUser ? '계정에 암호화 저장됨' : '서버에 저장됨';
       setModeBadge();
       updateApiServerStatus(true, true);
       startStatusPolling();
-      addLog(`테스트넷 연결 성공 — 잔고 $${data.balance.toFixed(2)} USDT (키 서버 저장됨)`, 'info');
+      const storeHint = data.perUser ? '계정 암호화 저장' : '서버 .env 저장';
+      addLog(`연결 성공 — 잔고 $${data.balance.toFixed(2)} USDT (${storeHint})`, 'info');
       updateUI();
     } catch (err) {
       addLog(`연결 실패: ${err.message}`, 'loss');

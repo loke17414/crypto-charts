@@ -3,23 +3,28 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session as DbSession
 from starlette.responses import JSONResponse
 
-from bot.auth_routes import router as auth_router
+from bot.auth_routes import get_optional_user, router as auth_router
 from bot.auth_service import decode_access_token
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
-from bot.db import init_db
+from bot.crypto_vault import vault_ready
+from bot.db import get_db, init_db
 from bot.exchange import BinanceFuturesClient
+from bot.models import User
 from bot.platform_config import auth_required, database_url
+from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
     ENTRY_GATE_FILE,
     bot_diagnostics,
@@ -42,43 +47,81 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Session:
+class TradingSession:
     config: BotConfig
     client: BinanceFuturesClient
+    user_id: int | None = None  # None = legacy .env session
 
 
-_session: Session | None = None
+# user_id → session; LEGACY_SESSION_KEY for AUTH_REQUIRED=false /.env mode
+LEGACY_SESSION_KEY = 0
+_sessions: dict[int, TradingSession] = {}
 
 
-def _connect_session(api_key: str, api_secret: str) -> Session:
-    config = BotConfig.from_credentials(api_key, api_secret, use_testnet=True)
+def _use_testnet_flag() -> bool:
+    return os.getenv("BINANCE_TESTNET", "true").lower() in ("1", "true", "yes")
+
+
+def _session_key(user: User | None) -> int:
+    return user.id if user is not None else LEGACY_SESSION_KEY
+
+
+def _get_session(user: User | None) -> TradingSession | None:
+    return _sessions.get(_session_key(user))
+
+
+def _set_session(user: User | None, session: TradingSession) -> None:
+    key = _session_key(user)
+    session.user_id = user.id if user else None
+    _sessions[key] = session
+
+
+def _clear_session(user: User | None) -> None:
+    _sessions.pop(_session_key(user), None)
+
+
+def _any_session_connected() -> bool:
+    return bool(_sessions)
+
+
+def _connect_session(api_key: str, api_secret: str, *, use_testnet: bool | None = None) -> TradingSession:
+    testnet = _use_testnet_flag() if use_testnet is None else use_testnet
+    config = BotConfig.from_credentials(api_key, api_secret, use_testnet=testnet)
     client = BinanceFuturesClient(config)
+    label = "Testnet" if testnet else "Mainnet"
     if not client.ping():
-        raise HTTPException(status_code=502, detail="Cannot reach Binance Futures Testnet")
+        raise HTTPException(status_code=502, detail=f"Cannot reach Binance Futures {label}")
     try:
         balance = client.get_usdt_balance()
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Invalid API key: {exc}") from exc
-    logger.info("Testnet connected — balance $%.2f USDT", balance)
-    return Session(config=config, client=client)
+    logger.info("%s connected — balance $%.2f USDT", label, balance)
+    return TradingSession(config=config, client=client)
 
 
 def auto_connect_from_env() -> bool:
-    global _session
     creds = load_binance_credentials()
     if not creds:
         return False
     api_key, api_secret = creds
     try:
-        _session = _connect_session(api_key, api_secret)
+        session = _connect_session(api_key, api_secret)
+        _set_session(None, session)
     except HTTPException as exc:
         logger.warning("Auto-connect failed: %s", exc.detail)
         return False
     except Exception as exc:
         logger.warning("Auto-connect failed: %s", exc)
         return False
-    logger.info("Auto-connected from .env")
+    logger.info("Auto-connected from .env (legacy session)")
     return True
+
+
+def require_trading_session(user: User | None = Depends(get_optional_user)) -> TradingSession:
+    session = _get_session(user)
+    if not session:
+        raise HTTPException(status_code=401, detail="API key not connected")
+    return session
 
 
 @asynccontextmanager
@@ -187,12 +230,6 @@ class DisconnectBody(BaseModel):
     clear_saved_keys: bool = False
 
 
-def _require_session() -> Session:
-    if not _session:
-        raise HTTPException(status_code=401, detail="API key not connected")
-    return _session
-
-
 def _levels_at_entry(
     side: str,
     entry_price: float,
@@ -273,9 +310,10 @@ def health() -> dict[str, Any]:
         "ok": True,
         "apiVersion": 2,
         "authRequired": auth_required(),
-        "connected": _session is not None,
+        "connected": _any_session_connected(),
         "credentialsSaved": credentials_configured(),
-        "testnet": True,
+        "vaultReady": vault_ready(),
+        "testnet": _use_testnet_flag(),
         "database": {
             "ok": db_ok,
             "driver": database_url().split(":", 1)[0],
@@ -367,72 +405,128 @@ def strategy_ai_history_clear() -> dict[str, Any]:
 
 
 @app.post("/api/connect")
-def connect(body: ConnectBody) -> dict[str, Any]:
-    global _session
-
+def connect(
+    body: ConnectBody,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    use_testnet = _use_testnet_flag()
     try:
-        persist_binance_credentials(body.api_key, body.api_secret)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f".env 저장 실패: {exc}") from exc
+        session = _connect_session(body.api_key, body.api_secret, use_testnet=use_testnet)
+    except HTTPException:
+        raise
 
-    _session = _connect_session(body.api_key, body.api_secret)
-    balance = _session.client.get_usdt_balance()
+    if user is not None:
+        try:
+            save_credentials(db, user.id, body.api_key, body.api_secret, use_testnet=use_testnet)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"키 저장 실패: {exc}") from exc
+        _set_session(user, session)
+        message = "Binance 연결됨 — 키가 계정에 암호화 저장되었습니다."
+    else:
+        try:
+            persist_binance_credentials(body.api_key, body.api_secret)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f".env 저장 실패: {exc}") from exc
+        _set_session(None, session)
+        message = "Binance 연결됨 — 키가 서버 .env에 저장되었습니다 (레거시)."
 
+    balance = session.client.get_usdt_balance()
     return {
         "ok": True,
         "balance": balance,
-        "testnet": True,
+        "testnet": use_testnet,
         "credentialsSaved": True,
-        "message": "Binance Futures Testnet connected — 키가 서버 .env에 저장되었습니다.",
+        "perUser": user is not None,
+        "message": message,
     }
 
 
 @app.post("/api/reconnect")
-def reconnect() -> dict[str, Any]:
+def reconnect(
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    if user is not None:
+        try:
+            creds = load_credentials(db, user.id)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if not creds:
+            raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
+        api_key, api_secret, use_testnet = creds
+        session = _connect_session(api_key, api_secret, use_testnet=use_testnet)
+        _set_session(user, session)
+        balance = session.client.get_usdt_balance()
+        return {
+            "ok": True,
+            "balance": balance,
+            "testnet": use_testnet,
+            "credentialsSaved": True,
+            "perUser": True,
+            "message": "Reconnected from encrypted account credentials",
+        }
+
     if not auto_connect_from_env():
         raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
-    balance = _session.client.get_usdt_balance()
+    session = _get_session(None)
+    assert session is not None
+    balance = session.client.get_usdt_balance()
     return {
         "ok": True,
         "balance": balance,
-        "testnet": True,
+        "testnet": session.config.use_testnet,
         "credentialsSaved": True,
+        "perUser": False,
         "message": "Reconnected from saved .env credentials",
     }
 
 
 @app.post("/api/disconnect")
-def disconnect(body: DisconnectBody | None = None) -> dict[str, Any]:
-    global _session
-    stop_bot()
-    _session = None
+def disconnect(
+    body: DisconnectBody | None = None,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    if user is None:
+        stop_bot()
+    _clear_session(user)
     if body and body.clear_saved_keys:
+        if user is not None:
+            delete_credentials(db, user.id)
+            logger.info("User %s credentials removed from DB", user.id)
+            return {"ok": True, "credentialsSaved": False, "perUser": True}
         clear_binance_credentials()
-        logger.info("Testnet disconnected — saved keys removed")
-        return {"ok": True, "credentialsSaved": False}
-    logger.info("Testnet session cleared (saved keys kept)")
-    return {"ok": True, "credentialsSaved": credentials_configured()}
+        logger.info("Legacy .env keys removed")
+        return {"ok": True, "credentialsSaved": False, "perUser": False}
+    saved = has_credentials(db, user.id) if user is not None else credentials_configured()
+    logger.info("Session cleared (saved keys kept)")
+    return {"ok": True, "credentialsSaved": saved, "perUser": user is not None}
 
 
 @app.get("/api/status")
-def status() -> dict[str, Any]:
-    if not _session:
-        return {"connected": False, "testnet": True}
+def status(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    session = _get_session(user)
+    if not session:
+        return {"connected": False, "testnet": _use_testnet_flag(), "perUser": user is not None}
 
-    client = _session.client
+    client = session.client
     balance = client.get_usdt_balance()
     wallet_balance = client.get_account_equity()
     pos = client.get_position()
 
     result: dict[str, Any] = {
         "connected": True,
-        "testnet": True,
+        "testnet": session.config.use_testnet,
+        "perUser": user is not None,
         "balance": balance,
         "walletBalance": wallet_balance,
-        "symbol": _session.config.symbol,
-        "leverage": _session.config.leverage,
+        "symbol": session.config.symbol,
+        "leverage": session.config.leverage,
         "position": None,
     }
 
@@ -452,17 +546,18 @@ def status() -> dict[str, Any]:
 
 
 @app.post("/api/setup")
-def setup(body: SetupBody) -> dict[str, Any]:
-    global _session
-    session = _require_session()
-
+def setup(
+    body: SetupBody,
+    user: User | None = Depends(get_optional_user),
+    session: TradingSession = Depends(require_trading_session),
+) -> dict[str, Any]:
     config = session.config.with_trading_params(
         leverage=body.leverage,
         margin_type=body.margin_type,
         symbol=body.symbol,
     )
     client = BinanceFuturesClient(config)
-    _session = Session(config=config, client=client)
+    _set_session(user, TradingSession(config=config, client=client))
 
     try:
         client.setup_leverage_and_margin()
@@ -473,15 +568,16 @@ def setup(body: SetupBody) -> dict[str, Any]:
 
 
 @app.post("/api/order/open")
-def open_order(body: OpenBody) -> dict[str, Any]:
-    global _session
-    session = _require_session()
-
+def open_order(
+    body: OpenBody,
+    user: User | None = Depends(get_optional_user),
+    session: TradingSession = Depends(require_trading_session),
+) -> dict[str, Any]:
     config = session.config.with_trading_params(
         leverage=body.leverage,
     )
     client = BinanceFuturesClient(config)
-    _session = Session(config=config, client=client)
+    _set_session(user, TradingSession(config=config, client=client))
 
     if client.get_position():
         raise HTTPException(status_code=400, detail="Position already open")
@@ -558,8 +654,10 @@ def open_order(body: OpenBody) -> dict[str, Any]:
 
 
 @app.post("/api/order/sltp")
-def set_sl_tp_order(body: SlTpBody) -> dict[str, Any]:
-    session = _require_session()
+def set_sl_tp_order(
+    body: SlTpBody,
+    session: TradingSession = Depends(require_trading_session),
+) -> dict[str, Any]:
     client = session.client
     pos = client.get_position()
 
@@ -587,8 +685,10 @@ def set_sl_tp_order(body: SlTpBody) -> dict[str, Any]:
 
 
 @app.post("/api/order/close")
-def close_order(body: CloseOrderBody = CloseOrderBody()) -> dict[str, Any]:
-    session = _require_session()
+def close_order(
+    body: CloseOrderBody = CloseOrderBody(),
+    session: TradingSession = Depends(require_trading_session),
+) -> dict[str, Any]:
     client = session.client
     pos = client.get_position()
 
@@ -652,12 +752,37 @@ def get_bot_status() -> dict[str, Any]:
 
 
 @app.post("/api/bot/start")
-def bot_start(body: BotStartBody | None = None) -> dict[str, Any]:
-    if not _session:
-        if not auto_connect_from_env():
-            raise HTTPException(status_code=401, detail="API key not connected — connect testnet first")
+def bot_start(
+    body: BotStartBody | None = None,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    session = _get_session(user)
+    if not session:
+        if user is not None:
+            try:
+                creds = load_credentials(db, user.id)
+            except ValueError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            if not creds:
+                raise HTTPException(status_code=401, detail="API key not connected — connect first")
+            api_key, api_secret, use_testnet = creds
+            session = _connect_session(api_key, api_secret, use_testnet=use_testnet)
+            _set_session(user, session)
+        elif not auto_connect_from_env():
+            raise HTTPException(status_code=401, detail="API key not connected — connect first")
+        else:
+            session = _get_session(None)
+    assert session is not None
     live = body.live_trading if body else True
     try:
+        if user is not None:
+            return start_bot(
+                live_trading=live,
+                api_key=session.config.api_key,
+                api_secret=session.config.api_secret,
+                use_testnet=session.config.use_testnet,
+            )
         return start_bot(live_trading=live)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

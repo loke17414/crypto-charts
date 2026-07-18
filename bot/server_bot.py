@@ -222,7 +222,13 @@ def save_strategy_json(payload: dict[str, Any]) -> Path:
     return path
 
 
-def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
+def start_bot(
+    *,
+    live_trading: bool = True,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+    use_testnet: bool | None = None,
+) -> dict[str, Any]:
     global _bot_proc
 
     if is_running():
@@ -255,14 +261,21 @@ def start_bot(*, live_trading: bool = True) -> dict[str, Any]:
         env["DRY_RUN"] = "false"
     else:
         env.setdefault("DRY_RUN", "true")
-    # Bot subprocess must use the same keys as the connected UI session.
+    # Prefer caller-supplied keys (per-user vault); fall back to .env.
     from bot.credentials import load_binance_credentials
 
-    creds = load_binance_credentials()
-    if creds:
-        env["BINANCE_API_KEY"] = creds[0]
-        env["BINANCE_API_SECRET"] = creds[1]
-    env.setdefault("BINANCE_TESTNET", "true")
+    if api_key and api_secret:
+        env["BINANCE_API_KEY"] = api_key
+        env["BINANCE_API_SECRET"] = api_secret
+    else:
+        creds = load_binance_credentials()
+        if creds:
+            env["BINANCE_API_KEY"] = creds[0]
+            env["BINANCE_API_SECRET"] = creds[1]
+    if use_testnet is not None:
+        env["BINANCE_TESTNET"] = "true" if use_testnet else "false"
+    else:
+        env.setdefault("BINANCE_TESTNET", "true")
     _bot_proc = subprocess.Popen(
         [node, str(bot_script)],
         cwd=str(ROOT),
