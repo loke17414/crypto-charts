@@ -613,18 +613,21 @@ function resetManualPriceScale() {
   resetPriceScaleToAuto();
 }
 
-const TV_COLORS = {
-  bg: '#131722',
-  text: '#d1d4dc',
-  grid: '#1e222d',
-  border: '#2a2e39',
-  up: '#0ecb81',
-  down: '#f6465d',
-  crosshair: '#758696',
-  volumeUp: 'rgba(14, 203, 129, 0.45)',
-  volumeDown: 'rgba(246, 70, 93, 0.45)',
-  line: '#f0b90b',
-};
+const TV_COLORS = (() => {
+  const soft = document.body.classList.contains('trading-page--simple');
+  return {
+    bg: soft ? '#16181d' : '#131722',
+    text: soft ? '#eceef2' : '#d1d4dc',
+    grid: soft ? '#22262e' : '#1e222d',
+    border: soft ? '#2a2e36' : '#2a2e39',
+    up: '#0ecb81',
+    down: '#f6465d',
+    crosshair: '#758696',
+    volumeUp: 'rgba(14, 203, 129, 0.45)',
+    volumeDown: 'rgba(246, 70, 93, 0.45)',
+    line: '#f0b90b',
+  };
+})();
 
 function usesEmbeddedIndicatorPanes() {
   return isTradingPage && Boolean(document.querySelector('.indicator-panes--in-chart'));

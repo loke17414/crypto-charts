@@ -367,9 +367,14 @@ const IndicatorManager = (() => {
     layoutInChartSubScales();
     return subCharts[id];
   }
+  const softUi = document.body.classList.contains('trading-page--simple');
   const TV = {
-    bg: '#131722', text: '#d1d4dc', grid: '#1e222d', border: '#2a2e39',
-    up: '#26a69a', down: '#ef5350',
+    bg: softUi ? '#16181d' : '#131722',
+    text: softUi ? '#eceef2' : '#d1d4dc',
+    grid: softUi ? '#22262e' : '#1e222d',
+    border: softUi ? '#2a2e36' : '#2a2e39',
+    up: '#26a69a',
+    down: '#ef5350',
   };
 
   let mainChart = null;
