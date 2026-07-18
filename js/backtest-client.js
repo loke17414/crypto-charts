@@ -13,7 +13,9 @@ const BacktestClient = (() => {
     for (let i = scripts.length - 1; i >= 0; i--) {
       const src = scripts[i].src || '';
       if (src.includes('backtest-client.js')) {
-        return src.replace(/backtest-client\.js.*$/, 'backtest.worker.js');
+        const ver = src.match(/[?&]v=([^&]+)/)?.[1];
+        const base = src.replace(/backtest-client\.js.*$/, 'backtest.worker.js');
+        return ver ? `${base}?v=${ver}` : base;
       }
     }
     return new URL('js/backtest.worker.js', window.location.href).href;

@@ -367,7 +367,7 @@ const IndicatorManager = (() => {
     layoutInChartSubScales();
     return subCharts[id];
   }
-  const softUi = document.body.classList.contains('trading-page--simple');
+  const softUi = document.body?.classList?.contains('trading-page--simple') ?? false;
   const TV = {
     bg: softUi ? '#15171c' : '#131722',
     text: softUi ? '#eceef2' : '#d1d4dc',

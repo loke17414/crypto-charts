@@ -4,6 +4,7 @@
 
 self.window = self;
 self.document = {
+  body: { classList: { contains: () => false, add() {}, remove() {}, toggle() {} } },
   createElement: () => ({
     style: {},
     classList: { add() {}, remove() {}, toggle() {} },
@@ -44,6 +45,13 @@ try {
   self.postMessage({ type: 'error', error: `Worker script load failed: ${err.message}` });
 }
 
+if (!self.BacktestEngine?.runBacktestJob) {
+  self.postMessage({
+    type: 'error',
+    error: 'BacktestEngine failed to initialize in worker',
+  });
+}
+
 const cancelled = new Set();
 
 self.onmessage = async (event) => {
@@ -56,6 +64,15 @@ self.onmessage = async (event) => {
   }
 
   if (type !== 'run') return;
+
+  if (!self.BacktestEngine?.runBacktestJob) {
+    self.postMessage({
+      type: 'error',
+      jobId,
+      error: 'BacktestEngine is not available in worker',
+    });
+    return;
+  }
 
   const shouldStop = () => cancelled.has(jobId);
   const onProgress = (progress) => {
