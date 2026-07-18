@@ -1559,6 +1559,8 @@ const FuturesBotApp = (() => {
       box.classList.remove('hidden');
     }
   }
+
+  function getApiUseTestnet() {
     return $('#apiEnv')?.value === 'testnet';
   }
 

@@ -2,6 +2,7 @@ const AppAuth = (() => {
   const TOKEN_KEY = 'crypto-charts-auth-token';
   const USER_KEY = 'crypto-charts-auth-user';
   let authRequired = false;
+  let initialized = false;
 
   function getToken() {
     return localStorage.getItem(TOKEN_KEY) || '';
@@ -76,6 +77,8 @@ const AppAuth = (() => {
   }
 
   async function init() {
+    if (initialized) return;
+    initialized = true;
     syncUi();
     document.getElementById('authLoginBtn')?.addEventListener('click', async () => {
       const email = document.getElementById('authEmail')?.value?.trim();
@@ -127,3 +130,7 @@ const AppAuth = (() => {
 })();
 
 window.AppAuth = AppAuth;
+
+document.addEventListener('DOMContentLoaded', () => {
+  AppAuth.init();
+});
