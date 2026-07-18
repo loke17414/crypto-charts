@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DbSession
 from starlette.responses import JSONResponse
 
-from bot.auth_routes import get_optional_user, router as auth_router
+from bot.auth_routes import get_optional_user, peek_optional_user, router as auth_router
 from bot.auth_service import decode_access_token
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
@@ -26,15 +26,15 @@ from bot.models import User
 from bot.platform_config import auth_required, database_url
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
-    ENTRY_GATE_FILE,
     bot_diagnostics,
     bot_status,
-    clear_expired_entry_gate,
+    clear_entry_gate,
     is_running,
     pause_bot_entry,
     restore_bot_if_needed,
     save_strategy_json,
     start_bot,
+    stop_all_bots,
     stop_bot,
     _strategy_interval,
 )
@@ -128,10 +128,11 @@ def require_trading_session(user: User | None = Depends(get_optional_user)) -> T
 async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database ready (%s)", database_url().split(":", 1)[0])
-    auto_connect_from_env()
+    if not auth_required():
+        auto_connect_from_env()
     restore_bot_if_needed()
     yield
-    stop_bot()
+    stop_all_bots()
 
 
 PUBLIC_API_PATHS = {
@@ -292,7 +293,10 @@ def _shift_sl_tp_to_fill(
 
 
 @app.get("/api/health")
-def health() -> dict[str, Any]:
+def health(
+    user: User | None = Depends(peek_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
     from sqlalchemy import text
 
     from bot.db import engine
@@ -306,12 +310,26 @@ def health() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Database health check failed: %s", exc)
 
+    # Never leak another user's bot status on the public health endpoint.
+    if user is not None:
+        bot = bot_status(user.id)
+        connected = _get_session(user) is not None
+        creds_saved = has_credentials(db, user.id)
+    elif auth_required():
+        bot = {"running": False, "persisted": False}
+        connected = False
+        creds_saved = False
+    else:
+        bot = bot_status(None)
+        connected = _any_session_connected()
+        creds_saved = credentials_configured()
+
     return {
         "ok": True,
         "apiVersion": 2,
         "authRequired": auth_required(),
-        "connected": _any_session_connected(),
-        "credentialsSaved": credentials_configured(),
+        "connected": connected,
+        "credentialsSaved": creds_saved,
         "vaultReady": vault_ready(),
         "testnet": _use_testnet_flag(),
         "database": {
@@ -319,7 +337,7 @@ def health() -> dict[str, Any]:
             "driver": database_url().split(":", 1)[0],
         },
         "strategyAi": ai,
-        "bot": bot_status(),
+        "bot": bot,
         "botDiagnostics": bot_diagnostics(),
     }
 
@@ -492,8 +510,8 @@ def disconnect(
     user: User | None = Depends(get_optional_user),
     db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if user is None:
-        stop_bot()
+    # Stop only this user's bot (legacy: the single shared bot).
+    stop_bot(user.id if user is not None else None)
     _clear_session(user)
     if body and body.clear_saved_keys:
         if user is not None:
@@ -691,16 +709,18 @@ def close_order(
 ) -> dict[str, Any]:
     client = session.client
     pos = client.get_position()
+    uid = session.user_id
 
     if not pos:
         raise HTTPException(status_code=400, detail="No open position")
 
     # Pause BEFORE closing on the exchange. Otherwise the headless bot can see
     # a flat account + live entry signal and reopen in the same tick window.
-    if is_running() and body.manual:
+    if is_running(uid) and body.manual:
         pause_bot_entry(
+            user_id=uid,
             manual=True,
-            interval=_strategy_interval(),
+            interval=_strategy_interval(uid),
             bar_time=body.bar_time,
             blocked_signal=body.blocked_signal or pos["side"],
         )
@@ -723,32 +743,34 @@ def close_order(
 
 
 @app.post("/api/strategy/sync")
-def strategy_sync(body: StrategySyncBody) -> dict[str, Any]:
+def strategy_sync(
+    body: StrategySyncBody,
+    user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
     if not body.strategy:
         raise HTTPException(status_code=400, detail="strategy payload required")
-    path = save_strategy_json(body.strategy)
-    return {"ok": True, "path": str(path)}
+    path = save_strategy_json(body.strategy, user_id=user.id if user else None)
+    return {"ok": True, "path": str(path), "userId": user.id if user else None}
 
 
 @app.post("/api/bot/pause-entry")
-def bot_pause_entry() -> dict[str, Any]:
-    if not is_running():
+def bot_pause_entry(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    uid = user.id if user else None
+    if not is_running(uid):
         return {"ok": True, "running": False, "message": "서버 봇이 실행 중이 아닙니다."}
-    gate = pause_bot_entry(manual=True, interval=_strategy_interval())
+    gate = pause_bot_entry(user_id=uid, manual=True, interval=_strategy_interval(uid))
     return {"ok": True, "running": True, "gate": gate}
 
 
 @app.post("/api/bot/clear-entry-pause")
-def bot_clear_entry_pause() -> dict[str, Any]:
-    clear_expired_entry_gate()
-    if ENTRY_GATE_FILE.exists():
-        ENTRY_GATE_FILE.unlink(missing_ok=True)
+def bot_clear_entry_pause(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    clear_entry_gate(user.id if user else None)
     return {"ok": True, "message": "진입 일시정지 해제"}
 
 
 @app.get("/api/bot/status")
-def get_bot_status() -> dict[str, Any]:
-    return {"ok": True, **bot_status()}
+def get_bot_status(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    return {"ok": True, **bot_status(user.id if user else None)}
 
 
 @app.post("/api/bot/start")
@@ -775,22 +797,24 @@ def bot_start(
             session = _get_session(None)
     assert session is not None
     live = body.live_trading if body else True
+    uid = user.id if user is not None else None
     try:
         if user is not None:
             return start_bot(
+                user_id=uid,
                 live_trading=live,
                 api_key=session.config.api_key,
                 api_secret=session.config.api_secret,
                 use_testnet=session.config.use_testnet,
             )
-        return start_bot(live_trading=live)
+        return start_bot(user_id=None, live_trading=live)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/bot/stop")
-def bot_stop() -> dict[str, Any]:
-    return stop_bot()
+def bot_stop(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    return stop_bot(user.id if user else None)
 
 
 def main() -> None:

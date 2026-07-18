@@ -51,10 +51,11 @@ function normalizeSlotsFromFile(slots) {
   });
 }
 
-function loadStrategy(rootDir) {
+function loadStrategy(rootDir, botHome) {
   const explicit = process.env.STRATEGY_FILE;
   const candidates = [
     explicit,
+    path.join(botHome, 'strategy.json'),
     path.join(rootDir, 'strategy.json'),
     path.join(__dirname, 'strategy.json'),
   ].filter(Boolean);
@@ -71,9 +72,22 @@ function loadStrategy(rootDir) {
   return { path: null, settings: null };
 }
 
+function resolveBotHome(rootDir) {
+  const explicit = (process.env.BOT_HOME || '').trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return rootDir;
+}
+
 function loadConfig() {
   const rootDir = path.join(__dirname, '..');
   loadDotEnv(rootDir);
+
+  const botHome = resolveBotHome(rootDir);
+  try {
+    fs.mkdirSync(botHome, { recursive: true });
+  } catch { /* best-effort */ }
 
   const dryRun = bool(process.env.DRY_RUN, false);
   const useTestnet = bool(process.env.BINANCE_TESTNET, true);
@@ -87,7 +101,7 @@ function loadConfig() {
     );
   }
 
-  const { path: strategyPath, settings: strategyFile } = loadStrategy(rootDir);
+  const { path: strategyPath, settings: strategyFile } = loadStrategy(rootDir, botHome);
 
   // Risk / execution params: strategy file wins, then .env, then defaults.
   const s = strategyFile || {};
@@ -118,6 +132,7 @@ function loadConfig() {
 
   return {
     rootDir,
+    botHome,
     dryRun,
     useTestnet,
     apiKey,

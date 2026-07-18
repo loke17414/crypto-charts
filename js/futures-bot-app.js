@@ -1820,14 +1820,21 @@ const FuturesBotApp = (() => {
       }
     }
 
-    if (health.bot?.running) {
+    // Prefer authenticated /api/bot/status so we never adopt another user's bot.
+    let myBot = health.bot;
+    if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
+      try {
+        myBot = await FuturesApiClient.getBotStatus();
+      } catch { /* fall back to health.bot */ }
+    }
+    if (myBot?.running) {
       serverBotActive = true;
-      serverBotLive = health.bot.liveTrading !== false && !health.bot.dryRun;
+      serverBotLive = myBot.liveTrading !== false && !myBot.dryRun;
       botRunning = true;
       $('#startBotBtn').disabled = true;
       $('#stopBotBtn').disabled = false;
       const mode = serverBotLive ? '테스트넷 실거래' : 'DRY_RUN 시뮬레이션';
-      addLog(`서버 봇 실행 중 (${mode}) — 브라우저를 닫아도 24/7 계속`, 'info');
+      addLog(`내 서버 봇 실행 중 (${mode}) — 브라우저를 닫아도 24/7 계속`, 'info');
       if (!serverBotLive) serverBotDryWarned = true;
     }
 

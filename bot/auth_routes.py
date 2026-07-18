@@ -64,6 +64,19 @@ def get_optional_user(
     return _user_from_authorization(authorization, db)
 
 
+def peek_optional_user(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Like get_optional_user but never 401 — for public endpoints (e.g. /api/health)."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        return _user_from_authorization(authorization, db)
+    except HTTPException:
+        return None
+
+
 @router.post("/register")
 def register(body: RegisterBody, db: Session = Depends(get_db)) -> dict[str, Any]:
     try:

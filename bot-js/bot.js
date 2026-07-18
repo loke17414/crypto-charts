@@ -28,9 +28,10 @@ const cfg = loadConfig();
 const brain = buildRuntime();
 const { FuturesStrategy, StrategyEngine, RiskSizing } = brain;
 
-const STATE_FILE = path.join(cfg.rootDir, 'bot-js-state.json');
-const ENTRY_GATE_FILE = path.join(cfg.rootDir, 'bot-entry-gate.json');
-const LOG_DIR = path.join(cfg.rootDir, 'logs');
+// BOT_HOME isolates per-user state/gate/logs (Phase 2-C). Falls back to repo root.
+const STATE_FILE = path.join(cfg.botHome, 'bot-js-state.json');
+const ENTRY_GATE_FILE = path.join(cfg.botHome, 'bot-entry-gate.json');
+const LOG_DIR = path.join(cfg.botHome, 'logs');
 const entryGate = createEntryGate({ gateFile: ENTRY_GATE_FILE, log: (m, l) => log(m, l) });
 
 function log(msg, level = 'INFO') {

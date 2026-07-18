@@ -59,3 +59,12 @@ def master_encryption_key() -> str:
 def app_origin() -> str:
     """Allowed CORS origin for production (Phase 2-E). Default * for local."""
     return os.getenv("APP_ORIGIN", "*").strip() or "*"
+
+
+def max_concurrent_bots() -> int:
+    """Hard cap on simultaneous per-user Node bot processes (Phase 2-C)."""
+    raw = os.getenv("MAX_CONCURRENT_BOTS", "50").strip()
+    try:
+        return max(1, min(500, int(raw)))
+    except ValueError:
+        return 50
