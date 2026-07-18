@@ -613,56 +613,24 @@ const IndicatorManager = (() => {
     return s;
   }
 
-  function createBandSeries(id, params, def) {
+  function createBandSeries(id, params) {
     const lw = params.lineWidth || 1.5;
     const midColor = hexToRgba(params.color, 0.65);
     const lineColors = [params.color, midColor, params.color];
-    const withFill = def?.bandFill;
-
-    if (overlaySeries[id] && withFill && !overlaySeries[id].fillLower) {
-      Object.values(overlaySeries[id]).forEach((s) => mainChart.removeSeries(s));
-      delete overlaySeries[id];
-    }
 
     if (overlaySeries[id]) {
-      ['upper', 'middle', 'lower'].forEach((k, i) => {
-        overlaySeries[id][k]?.applyOptions(bandLineOptions(lineColors[i], lw));
-      });
-      if (withFill) {
-        const fillColor = hexToRgba(params.color, params.fillOpacity ?? 0.1);
-        overlaySeries[id].fillLower?.applyOptions({ topColor: fillColor });
-        overlaySeries[id].fillUpper?.applyOptions({ topColor: TV.bg });
+      if (overlaySeries[id].fillLower || overlaySeries[id].fillUpper) {
+        Object.values(overlaySeries[id]).forEach((s) => mainChart.removeSeries(s));
+        delete overlaySeries[id];
+      } else {
+        ['upper', 'middle', 'lower'].forEach((k, i) => {
+          overlaySeries[id][k]?.applyOptions(bandLineOptions(lineColors[i], lw));
+        });
+        return;
       }
-      return;
     }
 
     overlaySeries[id] = {};
-
-    if (withFill) {
-      const fillColor = hexToRgba(params.color, params.fillOpacity ?? 0.1);
-      overlaySeries[id].fillLower = mainChart.addAreaSeries({
-        lineColor: 'transparent',
-        topColor: fillColor,
-        bottomColor: 'transparent',
-        invertFilledArea: true,
-        lineWidth: 0,
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        autoscaleInfoProvider: autoscaleOff(),
-      });
-      overlaySeries[id].fillUpper = mainChart.addAreaSeries({
-        lineColor: 'transparent',
-        topColor: TV.bg,
-        bottomColor: 'transparent',
-        invertFilledArea: true,
-        lineWidth: 0,
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        autoscaleInfoProvider: autoscaleOff(),
-      });
-    }
 
     ['upper', 'middle', 'lower'].forEach((k, i) => {
       overlaySeries[id][k] = mainChart.addLineSeries(bandLineOptions(lineColors[i], lw));
@@ -932,11 +900,7 @@ const IndicatorManager = (() => {
     const data = def.compute(candles, params);
 
     if (def.type === 'overlay-band') {
-      createBandSeries(id, params, def);
-      if (def.bandFill && overlaySeries[id].fillLower) {
-        overlaySeries[id].fillLower.setData(data.lower || []);
-        overlaySeries[id].fillUpper.setData(data.upper || []);
-      }
+      createBandSeries(id, params);
       overlaySeries[id].upper.setData(data.upper || []);
       overlaySeries[id].middle.setData(data.middle || []);
       overlaySeries[id].lower.setData(data.lower || []);
@@ -1396,8 +1360,6 @@ const IndicatorManager = (() => {
       pushSeriesTail(entry.upper, data.upper, tail);
       pushSeriesTail(entry.middle, data.middle, tail);
       pushSeriesTail(entry.lower, data.lower, tail);
-      if (entry.fillLower) pushSeriesTail(entry.fillLower, data.lower, tail);
-      if (entry.fillUpper) pushSeriesTail(entry.fillUpper, data.upper, tail);
       return;
     }
 
