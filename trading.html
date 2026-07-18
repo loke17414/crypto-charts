@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718r">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718t">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -201,9 +201,12 @@
             <div class="control-section__label control-section__label--sub">봇 진입 분봉</div>
             <div class="bot-interval-picker__buttons" id="botIntervalPicker" role="group">
               <button type="button" class="btn btn--tab active" data-bot-interval="chart">차트</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="1m">1m</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="5m">5m</button>
               <button type="button" class="btn btn--tab" data-bot-interval="15m">15m</button>
               <button type="button" class="btn btn--tab" data-bot-interval="1h">1h</button>
               <button type="button" class="btn btn--tab" data-bot-interval="4h">4h</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="1d">1d</button>
             </div>
             <p class="api-hint bot-interval-hint">봇이 신호를 보고 진입할 봉 주기입니다. 차트와 다르면 시작 시 차트가 전환됩니다.</p>
           </div>

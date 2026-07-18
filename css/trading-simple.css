@@ -884,13 +884,12 @@
 }
 
 .trading-page--simple .bot-interval-block .bot-interval-picker__buttons {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.3rem;
 }
 
 .trading-page--simple .bot-interval-block .bot-interval-picker__buttons .btn--tab {
-  flex: 1;
   min-width: 0;
   padding: 0.4rem 0.35rem;
   font-size: 0.72rem;
