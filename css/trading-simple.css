@@ -27,6 +27,9 @@
   --radius: var(--simple-radius);
   color: var(--text-primary);
   background: var(--simple-bg);
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
 }
 
 .trading-page--simple .app {
@@ -81,9 +84,12 @@
 .trading-page--simple .trading-main--simple {
   display: grid;
   grid-template-columns: 1fr min(220px, 18vw);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
   flex: 1;
   min-height: 0;
   height: calc(100dvh - var(--simple-header-h));
+  max-height: calc(100dvh - var(--simple-header-h));
   overflow: hidden;
   background: var(--simple-bg);
 }
@@ -92,7 +98,10 @@
   position: relative;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .trading-page--simple .trading-chart-zone--canvas {
@@ -873,10 +882,33 @@
 .trading-page--simple .bot-control-panel {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   background: var(--simple-panel);
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.trading-page--simple .bot-control-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.trading-page--simple .bot-control-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.trading-page--simple .bot-control-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.trading-page--simple .bot-control-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .trading-page--simple .control-section {
@@ -885,6 +917,7 @@
 }
 
 .trading-page--simple .control-section--primary {
+  flex: 0 0 auto;
   flex-shrink: 0;
   padding: 0.85rem 0.95rem;
   background: transparent;
@@ -894,6 +927,7 @@
 .trading-page--simple .control-accordions {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   margin: 0.55rem 0.65rem 0.75rem;
   border: 1px solid var(--simple-border-soft);
   border-radius: var(--simple-radius);
@@ -1122,25 +1156,20 @@
 }
 
 .trading-page--simple .log-section {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  display: block;
 }
 
 .trading-page--simple .log-section[open] {
-  min-height: 140px;
+  min-height: 0;
 }
 
 .trading-page--simple .log-section .control-section__body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  display: block;
 }
 
 .trading-page--simple .log-section .trade-log {
-  flex: 1;
   min-height: 100px;
   max-height: 180px;
   font-size: 0.68rem;
@@ -1192,11 +1221,18 @@
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 13fr) minmax(0, 7fr);
     height: calc(100dvh - var(--simple-header-h));
+    max-height: calc(100dvh - var(--simple-header-h));
+  }
+
+  .trading-page--simple .trading-chart-zone {
+    height: 100%;
+    max-height: 100%;
   }
 
   .trading-page--simple .bot-control-panel {
-    max-height: none;
+    height: 100%;
+    max-height: 100%;
     min-height: 0;
-    border-top: 1px solid var(--simple-border);
+    border-top: 1px solid var(--simple-border-soft);
   }
 }
