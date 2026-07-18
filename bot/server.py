@@ -327,18 +327,32 @@ def health(
         logger.warning("Database health check failed: %s", exc)
 
     # Never leak another user's bot status on the public health endpoint.
+    session_testnet: bool | None = None
     if user is not None:
         bot = bot_status(user.id)
-        connected = _get_session(user) is not None
+        session = _get_session(user)
+        connected = session is not None
         creds_saved = has_credentials(db, user.id)
+        if session is not None:
+            session_testnet = bool(session.config.use_testnet)
+        elif creds_saved:
+            try:
+                creds = load_credentials(db, user.id)
+                if creds:
+                    session_testnet = bool(creds[2])
+            except ValueError:
+                session_testnet = None
     elif auth_required():
         bot = {"running": False, "persisted": False}
         connected = False
         creds_saved = False
     else:
         bot = bot_status(None)
-        connected = _any_session_connected()
+        session = _get_session(None)
+        connected = session is not None
         creds_saved = credentials_configured()
+        if session is not None:
+            session_testnet = bool(session.config.use_testnet)
 
     return {
         "ok": True,
@@ -347,7 +361,9 @@ def health(
         "connected": connected,
         "credentialsSaved": creds_saved,
         "vaultReady": vault_ready(),
+        # env default (legacy) — UI must prefer sessionTestnet when present
         "testnet": _use_testnet_flag(),
+        "sessionTestnet": session_testnet,
         "database": {
             "ok": db_ok,
             "driver": database_url().split(":", 1)[0],

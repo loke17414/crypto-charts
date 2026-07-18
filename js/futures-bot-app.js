@@ -1573,6 +1573,11 @@ const FuturesBotApp = (() => {
     if (useTestnet === undefined || useTestnet === null) return;
     exchangeUseTestnet = Boolean(useTestnet);
     setApiEnvSelect(exchangeUseTestnet);
+    // state.mode === 'testnet' means "exchange API connected" (legacy name), not Binance testnet.
+    if (isTestnetMode()) {
+      setModeBadge();
+      updateApiServerStatus(true, true);
+    }
   }
 
   function isTestnetMode() {
@@ -1581,6 +1586,11 @@ const FuturesBotApp = (() => {
 
   function exchangeEnvLabel() {
     return exchangeUseTestnet ? '테스트넷' : '실거래';
+  }
+
+  /** Live/testnet label for bot logs (not DRY_RUN). */
+  function liveTradingLabel() {
+    return exchangeUseTestnet ? '테스트넷 주문' : '실거래';
   }
 
   function syncFromChart() {
@@ -1683,6 +1693,12 @@ const FuturesBotApp = (() => {
     if (!isTestnetMode()) return null;
     const hadPosition = Boolean(testnetStatus?.position);
     testnetStatus = await FuturesApiClient.getStatus();
+    if (testnetStatus?.connected && typeof testnetStatus.testnet === 'boolean') {
+      // Keep badge/status in sync with the actual session (mainnet vs testnet).
+      if (exchangeUseTestnet !== testnetStatus.testnet) {
+        syncExchangeEnv(testnetStatus.testnet);
+      }
+    }
     // Adopt exchange-registered SL/TP trigger prices as the source of truth.
     const pos = testnetStatus?.position;
     if (pos) {
@@ -1773,7 +1789,7 @@ const FuturesBotApp = (() => {
             if (st.dryRun && !serverBotDryWarned) {
               serverBotDryWarned = true;
               addLog(
-                '서버 봇이 DRY_RUN 모드입니다 — 신호만 잡히고 실제 테스트넷 주문은 없습니다. 봇을 정지한 뒤 다시 시작하면 실거래 모드로 실행됩니다.',
+                `서버 봇이 DRY_RUN 모드입니다 — 신호만 잡히고 실제 ${exchangeEnvLabel()} 주문은 없습니다. 봇을 정지한 뒤 다시 시작하면 주문 모드로 실행됩니다.`,
                 'warn',
               );
             }
@@ -1824,14 +1840,16 @@ const FuturesBotApp = (() => {
       return health;
     }
 
-    updateApiServerStatus(true, health.connected);
-
     if (health.connected) {
       state.mode = 'testnet';
       FuturesApiClient.setConnected(true);
+      // Prefer session/credentials flag over .env BINANCE_TESTNET (health.testnet).
+      if (typeof health.sessionTestnet === 'boolean') {
+        syncExchangeEnv(health.sessionTestnet);
+      }
       try {
         const st = await FuturesApiClient.getStatus();
-        syncExchangeEnv(st?.testnet);
+        if (typeof st?.testnet === 'boolean') syncExchangeEnv(st.testnet);
       } catch { /* ignore */ }
       await refreshTestnetStatus();
       sessionStartEquity = await getEquity();
@@ -1843,9 +1861,11 @@ const FuturesBotApp = (() => {
       $('#apiKey').placeholder = '서버에 저장됨';
       $('#apiSecret').placeholder = '서버에 저장됨';
       setModeBadge();
-      addLog('서버 API 세션 연결됨 (브라우저를 닫아도 유지)', 'info');
+      updateApiServerStatus(true, true);
+      addLog(`서버 API 세션 연결됨 (${exchangeEnvLabel()}) — 브라우저를 닫아도 유지`, 'info');
       startStatusPolling();
     } else {
+      updateApiServerStatus(true, false);
       let userSaved = false;
       if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
         try {
@@ -1881,7 +1901,7 @@ const FuturesBotApp = (() => {
       botRunning = true;
       $('#startBotBtn').disabled = true;
       $('#stopBotBtn').disabled = false;
-      const mode = serverBotLive ? '테스트넷 실거래' : 'DRY_RUN 시뮬레이션';
+      const mode = serverBotLive ? liveTradingLabel() : 'DRY_RUN 시뮬레이션';
       addLog(`내 서버 봇 실행 중 (${mode}) — 브라우저를 닫아도 24/7 계속`, 'info');
       if (!serverBotLive) serverBotDryWarned = true;
     }
@@ -2398,8 +2418,8 @@ const FuturesBotApp = (() => {
         }
         data = await FuturesApiClient.connect(apiKey, apiSecret, useTestnet);
       }
-      syncExchangeEnv(data.testnet);
       state.mode = 'testnet';
+      syncExchangeEnv(typeof data.testnet === 'boolean' ? data.testnet : useTestnet);
       const marginPreview = await calcTradeMarginForTrade();
       await FuturesApiClient.setup({
         leverage: state.leverage,
@@ -2913,7 +2933,7 @@ const FuturesBotApp = (() => {
         $('#stopBotBtn').disabled = false;
         startStatusPolling();
         addLog(
-          `서버 봇 시작 (테스트넷 실거래) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입`,
+          `서버 봇 시작 (${liveTradingLabel()}) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입`,
           'info',
         );
         // Enter right away if the chart already shows a live signal.
@@ -2964,7 +2984,7 @@ const FuturesBotApp = (() => {
 
   async function manualOpen(side) {
     if (!isTestnetMode()) {
-      addLog('수동 주문은 테스트넷 연결 후 사용할 수 있습니다.', 'info');
+      addLog('수동 주문은 API 연결 후 사용할 수 있습니다.', 'info');
       return;
     }
     if (await checkAccountLossLimit()) return;
@@ -3115,7 +3135,7 @@ const FuturesBotApp = (() => {
 
   function resetWallet() {
     if (isTestnetMode()) {
-      addLog('테스트넷 모드에서는 모의 계좌 초기화를 사용할 수 없습니다.', 'info');
+      addLog('거래소 연결 모드에서는 모의 계좌 초기화를 사용할 수 없습니다.', 'info');
       return;
     }
     if (!confirm('모의 계좌를 초기화할까요? (포지션·거래내역 삭제)')) return;
@@ -3213,7 +3233,7 @@ const FuturesBotApp = (() => {
     if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
       addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
     } else if (AppAuth.isRequired()) {
-      setApiEnvSelect(false);
+      syncExchangeEnv(false);
     }
 
     readFormSettings();
@@ -3254,7 +3274,7 @@ const FuturesBotApp = (() => {
     autoConfirmSlTpFromStrategy();
     updateSlTpStrategyHint();
     syncPreviewFromLastSignal();
-    if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 테스트넷 키 연결 가능', 'info');
+    if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 실거래/테스트넷 키 연결 가능', 'info');
 
     document.querySelectorAll('[data-chart-ind]').forEach((btn) => {
       btn.addEventListener('click', () => toggleChartIndicator(btn.dataset.chartInd));
