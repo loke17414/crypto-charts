@@ -11,8 +11,10 @@ const FloatingPanels = (() => {
   function applyChartFit(panel, canvas) {
     panel.style.left = '0';
     panel.style.top = '0';
-    panel.style.width = `${canvas.clientWidth}px`;
-    panel.style.height = `${canvas.clientHeight}px`;
+    panel.style.right = '0';
+    panel.style.bottom = '0';
+    panel.style.width = '100%';
+    panel.style.height = '100%';
     notifyChartResize();
   }
 
