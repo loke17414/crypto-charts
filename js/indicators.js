@@ -358,6 +358,11 @@ const IndicatorManager = (() => {
       resizeMainChart();
     });
 
+    wrap.querySelector('.indicator-pane__chart')?.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      resetSubPanePriceScale(id);
+    });
+
     const handle = wrap.querySelector('.indicator-pane__resize-handle');
     if (!handle) return;
     handle.addEventListener('mousedown', (e) => {
@@ -750,13 +755,27 @@ const IndicatorManager = (() => {
       rightPriceScale: {
         borderColor: TV.border,
         scaleMargins: def?.subMargins || { top: 0.1, bottom: 0.1 },
+        autoScale: true,
       },
       timeScale: {
         borderColor: TV.border,
         visible: false,
         rightOffset: def?.rightOffset ?? 5,
       },
+      handleScroll: false,
+      handleScale: {
+        axisPressedMouseMove: { time: false, price: true },
+        axisDoubleClickReset: { time: false, price: true },
+        mouseWheel: false,
+        pinch: false,
+      },
     };
+  }
+
+  function resetSubPanePriceScale(id) {
+    const sc = subCharts[id];
+    if (!sc?.chart || sc.inChart) return;
+    sc.chart.priceScale('right').applyOptions({ autoScale: true });
   }
 
   function subPaneSortKey(id) {
@@ -818,8 +837,6 @@ const IndicatorManager = (() => {
       layout: { background: { type: 'solid', color: TV.bg }, textColor: TV.text, fontSize: 10 },
       grid: { vertLines: { color: TV.grid }, horzLines: { color: TV.grid } },
       ...chartOpts,
-      handleScroll: false,
-      handleScale: false,
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       width: el.clientWidth,
       height: chartH,
