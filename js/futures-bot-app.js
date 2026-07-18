@@ -2212,21 +2212,23 @@ const FuturesBotApp = (() => {
     const barTime = lastCandles.at(-1)?.time;
     const key = `${result.signal}:${barTime}`;
 
-    if (serverBotActive) {
-      const secs = 3;
-      if (serverEntryGate?.active) {
-        const reason = serverEntryGate.reason === 'manual_close'
-          ? '수동 청산 후 재진입 보류'
-          : '진입 일시정지';
-        logEntrySkipOnce(`gate:${key}`, `${result.signal} 신호 — 서버 ${reason} (게이트 활성)`);
-        return;
-      }
-      const mode = serverBotLive
-        ? `${result.signal} 신호 — 서버 봇이 ${secs}초마다 진입 확인 중`
-        : `${result.signal} 신호 — DRY_RUN(시뮬레이션). 봇 정지 후 다시 시작하세요`;
-      logEntrySkipOnce(`server:${key}`, mode);
+    // DRY_RUN server bot never places orders — do not pretend the client will.
+    if (serverBotActive && !serverBotLive) {
+      logEntrySkipOnce(
+        `dry:${key}`,
+        `${result.signal} 신호 — DRY_RUN(시뮬레이션). 봇 정지 후 다시 시작하면 실거래 모드로 실행됩니다`,
+      );
       return;
     }
+
+    if (serverBotActive && serverEntryGate?.active) {
+      const reason = serverEntryGate.reason === 'manual_close'
+        ? '수동 청산 후 재진입 보류'
+        : '진입 일시정지';
+      logEntrySkipOnce(`gate:${key}`, `${result.signal} 신호 — 서버 ${reason} (게이트 활성)`);
+      return;
+    }
+
     if (autoEntryBusy || liveExitBusy) return;
     if (Date.now() < autoEntryRetryAt) return;
     if (isManualCloseBlocked(result)) {
@@ -2250,13 +2252,15 @@ const FuturesBotApp = (() => {
 
     autoEntryBusy = true;
     try {
-      addLog(`${result.signal} 신호 감지 — 즉시 진입 시도 (${result.reason})`, 'info');
+      // Browser open: enter immediately from the chart signal. Server bot (if
+      // running) skips when a position already exists — avoids waiting on the
+      // server poll while the UI already shows a live entry signal.
+      const via = serverBotActive ? '차트 신호 → 즉시 진입' : '즉시 진입';
+      addLog(`${result.signal} 신호 감지 — ${via} (${result.reason})`, 'info');
       await executeSignal(result);
       if (hasOpenPosition()) {
         lastAutoEntryKey = key;
       } else {
-        // Entry did not go through (logged inside executeSignal) — retry while
-        // the signal is still valid instead of blacklisting this bar.
         autoEntryRetryAt = Date.now() + 15_000;
       }
       updateUI();
@@ -2776,6 +2780,13 @@ const FuturesBotApp = (() => {
     await applyBotIntervalOnStart();
     sessionStartEquity = await getEquity();
 
+    // Drop leftover browser-side pauses so a fresh start can enter on the
+    // current signal instead of waiting out a previous manual-close gate.
+    if (typeof EntryPause !== 'undefined') EntryPause.clear();
+    lastAutoEntryKey = null;
+    autoEntryRetryAt = 0;
+    autoConfirmSlTpFromStrategy();
+
     if (isTestnetMode()) {
       try {
         await syncStrategyToServer();
@@ -2792,14 +2803,17 @@ const FuturesBotApp = (() => {
         serverBotActive = true;
         serverBotLive = true;
         serverBotDryWarned = false;
+        serverEntryGate = null;
         botRunning = true;
         $('#startBotBtn').disabled = true;
         $('#stopBotBtn').disabled = false;
         startStatusPolling();
         addLog(
-          `서버 봇 시작 (테스트넷 실거래) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x`,
+          `서버 봇 시작 (테스트넷 실거래) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입`,
           'info',
         );
+        // Enter right away if the chart already shows a live signal.
+        updateSignalDisplay();
       } catch (err) {
         const hint = /Node\.js|node/i.test(err.message)
           ? ' → VPS SSH: sudo apt install -y nodejs && sudo systemctl restart crypto-web'
@@ -2817,6 +2831,7 @@ const FuturesBotApp = (() => {
       );
       botTick();
       botTimer = setInterval(botTick, state.pollSeconds * 1000);
+      updateSignalDisplay();
     }
     updateUI();
   }
@@ -3037,6 +3052,12 @@ const FuturesBotApp = (() => {
             `봉 주기 ${botIntervalLabel(btn.dataset.botInterval)} — 다음 봇 시작부터 적용됩니다.`,
             'info',
           );
+          // Keep server strategy interval in sync if an explicit TF is chosen
+          // while the bot is already running (chart mode follows live chart).
+          if (btn.dataset.botInterval !== 'chart' && INTERVALS[btn.dataset.botInterval]) {
+            state.interval = btn.dataset.botInterval;
+            scheduleServerStrategySync();
+          }
         }
       });
     }
@@ -3124,8 +3145,6 @@ const FuturesBotApp = (() => {
     $('#startBotBtn').addEventListener('click', startBot);
     $('#stopBotBtn').addEventListener('click', stopBot);
     $('#closeBtn').addEventListener('click', manualClose);
-    $('#longBtn')?.addEventListener('click', () => manualOpen('LONG'));
-    $('#shortBtn')?.addEventListener('click', () => manualOpen('SHORT'));
     $('#resetBtn')?.addEventListener('click', resetWallet);
 
     const macdLineFilterEl = $('#useMacdLineFilter');

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260718p">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260718r">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -197,14 +197,18 @@
           </div>
           <button type="button" id="closeBtn" class="btn btn--simple-ghost btn--block btn--sm bot-close-btn">수동 청산</button>
 
-          <div class="bot-manual-order">
-            <div class="control-section__label control-section__label--sub">수동 주문</div>
-            <div class="trading-actions trading-actions--manual">
-              <button type="button" id="longBtn" class="btn btn--primary">LONG</button>
-              <button type="button" id="shortBtn" class="btn btn--short">SHORT</button>
+          <div class="bot-interval-block">
+            <div class="control-section__label control-section__label--sub">봇 진입 분봉</div>
+            <div class="bot-interval-picker__buttons" id="botIntervalPicker" role="group">
+              <button type="button" class="btn btn--tab active" data-bot-interval="chart">차트</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="15m">15m</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="1h">1h</button>
+              <button type="button" class="btn btn--tab" data-bot-interval="4h">4h</button>
             </div>
-            <button type="button" id="resetBtn" class="btn btn--simple-ghost btn--block btn--sm bot-reset-btn">모의 초기화</button>
+            <p class="api-hint bot-interval-hint">봇이 신호를 보고 진입할 봉 주기입니다. 차트와 다르면 시작 시 차트가 전환됩니다.</p>
           </div>
+
+          <button type="button" id="resetBtn" class="btn btn--simple-ghost btn--block btn--sm bot-reset-btn">모의 초기화</button>
         </div>
 
         <div class="control-accordions">
@@ -265,12 +269,6 @@
           <input type="number" id="rsiOversold" value="25" min="10" max="50">
           <input type="number" id="rsiOverbought" value="70" min="50" max="90">
           <input type="number" id="pollSeconds" value="60" min="10" step="10">
-          <div class="bot-interval-picker__buttons" id="botIntervalPicker" role="group">
-            <button type="button" class="btn btn--tab active" data-bot-interval="chart">차트</button>
-            <button type="button" class="btn btn--tab" data-bot-interval="15m">15m</button>
-            <button type="button" class="btn btn--tab" data-bot-interval="1h">1h</button>
-            <button type="button" class="btn btn--tab" data-bot-interval="4h">4h</button>
-          </div>
         </div>
 
         <input type="hidden" id="stopLoss" value="1.5">
@@ -322,7 +320,7 @@
   <script src="js/entry-pause.js?v=20260717a"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718l"></script>
-  <script src="js/futures-bot-app.js?v=20260718g"></script>
+  <script src="js/futures-bot-app.js?v=20260718r"></script>
   <script src="js/strategy-ai.js?v=20260718j"></script>
 </body>
 </html>
