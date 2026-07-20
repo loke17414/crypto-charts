@@ -55,9 +55,38 @@ else
 fi
 echo "    Root:   $ROOT"
 
+# Preflight: domain must resolve to THIS VPS (not Cloudflare proxy IPs)
+echo "==> DNS preflight"
+VPS_IP="$(curl -4 -sf --max-time 5 ifconfig.me 2>/dev/null || curl -4 -sf --max-time 5 icanhazip.com 2>/dev/null || true)"
+VPS_IP="$(echo "$VPS_IP" | tr -d '[:space:]')"
+RESOLVED="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"
+if [ -z "$RESOLVED" ]; then
+  RESOLVED="$(dig +short A "$DOMAIN" 2>/dev/null | grep -E '^[0-9.]+$' | tr '\n' ' ')"
+fi
+echo "    VPS public IPv4: ${VPS_IP:-unknown}"
+echo "    ${DOMAIN} A records: ${RESOLVED:-none}"
+
+if [ -n "$VPS_IP" ] && [ -n "$RESOLVED" ]; then
+  if ! echo " $RESOLVED " | grep -q " ${VPS_IP} "; then
+    echo ""
+    echo "ERROR: ${DOMAIN} does not point to this VPS (${VPS_IP})."
+    echo "Let's Encrypt challenge fails when DNS goes to Cloudflare proxy (orange cloud)"
+    echo "or another CDN IP (e.g. 104.21.x / 172.67.x)."
+    echo ""
+    echo "Fix in Cloudflare DNS:"
+    echo "  1) A record @  → ${VPS_IP}"
+    echo "  2) Proxy status → DNS only (grey cloud), NOT Proxied (orange)"
+    echo "  3) Wait 1–5 minutes, then re-run this script"
+    echo ""
+    echo "Optional www: A www → ${VPS_IP} (also grey cloud)"
+    exit 1
+  fi
+fi
+echo "    DNS OK (domain points at this VPS)"
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y nginx certbot
+apt-get install -y nginx certbot dnsutils curl
 
 mkdir -p /var/www/certbot
 
@@ -141,12 +170,13 @@ set -e
 
 if [ "$CERTBOT_RC" -ne 0 ]; then
   echo ""
-  echo "ERROR: certbot failed (exit $CERTBOT_RC)."
-  echo "Common email fix — retry with Gmail, or without email:"
-  echo "  sudo bash deploy/setup-https.sh ${DOMAIN} you@gmail.com"
-  echo "  sudo bash deploy/setup-https.sh ${DOMAIN} none"
+  echo "ERROR: certbot failed (exit $CERTBOT_RC) — often 'Some challenges have failed'."
   echo ""
-  echo "Also check: DNS A ${DOMAIN} → this VPS, ports 80/443 open."
+  echo "Checklist:"
+  echo "  1) Cloudflare: A @ → ${VPS_IP:-this-vps-ip}, Proxy = DNS only (grey cloud)"
+  echo "  2) Firewall / Vultr: allow TCP 80 and 443 inbound"
+  echo "  3) Test locally:  curl -I http://${DOMAIN}/.well-known/acme-challenge/"
+  echo "  4) Retry:         sudo bash deploy/setup-https.sh ${DOMAIN} none"
   exit "$CERTBOT_RC"
 fi
 
