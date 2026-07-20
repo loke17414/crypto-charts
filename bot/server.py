@@ -51,6 +51,7 @@ from bot.server_bot import (
     is_running,
     pause_bot_entry,
     restore_bot_if_needed,
+    load_strategy_json,
     save_strategy_json,
     start_bot,
     stop_all_bots,
@@ -936,6 +937,18 @@ def close_order(
         logger.warning("Failed to cancel open orders after close: %s", exc)
 
     return {"ok": True, "closed": pos["side"], "quantity": pos["quantity"]}
+
+
+@app.get("/api/strategy")
+def strategy_get(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+    """Return saved strategy.json for UI restore after page reload."""
+    data = load_strategy_json(user.id if user else None)
+    return {
+        "ok": True,
+        "strategy": data,
+        "userId": user.id if user else None,
+        "hasStrategy": bool(data),
+    }
 
 
 @app.post("/api/strategy/sync")

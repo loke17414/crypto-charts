@@ -215,6 +215,10 @@ const FuturesApiClient = (() => {
     });
   }
 
+  async function getStrategy() {
+    return request('/api/strategy');
+  }
+
   async function syncStrategy(strategy) {
     return request('/api/strategy/sync', {
       method: 'POST',
@@ -316,6 +320,7 @@ const FuturesApiClient = (() => {
     getStrategyAiHistory,
     clearStrategyAiHistory,
     configureOpenAiKey,
+    getStrategy,
     syncStrategy,
     getBotStatus,
     startServerBot,

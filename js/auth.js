@@ -131,6 +131,7 @@ const AppAuth = (() => {
         await login(email, password);
         if (typeof FuturesBotApp !== 'undefined') {
           await FuturesBotApp.restoreSessionFromServer?.();
+          await FuturesBotApp.restoreStrategyPersistence?.();
         }
         if (typeof StrategyAI !== 'undefined') {
           await StrategyAI.reloadForUser?.();
@@ -154,6 +155,7 @@ const AppAuth = (() => {
         await register(email, password);
         if (typeof FuturesBotApp !== 'undefined') {
           await FuturesBotApp.restoreSessionFromServer?.();
+          await FuturesBotApp.restoreStrategyPersistence?.();
         }
         if (typeof StrategyAI !== 'undefined') {
           await StrategyAI.reloadForUser?.();

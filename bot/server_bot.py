@@ -276,6 +276,23 @@ def save_strategy_json(payload: dict[str, Any], user_id: int | None = None) -> P
     return path
 
 
+def load_strategy_json(user_id: int | None = None) -> dict[str, Any] | None:
+    """Load persisted strategy for UI restore (per-user or legacy root)."""
+    path = strategy_file(user_id)
+    if not path.exists() and bot_key(user_id) == LEGACY_BOT_KEY:
+        legacy = ROOT / "strategy.json"
+        if legacy.exists():
+            path = legacy
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read strategy.json user=%s: %s", bot_key(user_id), exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _count_running() -> int:
     return sum(1 for k in list(_bots) if is_running(k))
 

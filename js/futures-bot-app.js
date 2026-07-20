@@ -97,12 +97,47 @@ const FuturesBotApp = (() => {
 
   const ENTRY_RULES_KEY = 'crypto-charts-entry-rules';
   const STRATEGY_SLOTS_KEY = 'crypto-charts-strategy-slots';
+  const STRATEGY_FORM_KEY = 'crypto-charts-strategy-form';
   const MAX_STRATEGY_SLOTS = 6;
+
+  function strategyStorageSuffix() {
+    try {
+      const id = typeof AppAuth !== 'undefined' ? AppAuth.getUser?.()?.id : null;
+      return id != null ? `:${id}` : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function storageKey(base) {
+    return `${base}${strategyStorageSuffix()}`;
+  }
+
+  function readLocalJson(base) {
+    try {
+      let raw = localStorage.getItem(storageKey(base));
+      // Fallback to legacy unscoped key (pre user-scoped persistence)
+      if (!raw && strategyStorageSuffix()) raw = localStorage.getItem(base);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLocalJson(base, value) {
+    try {
+      const key = storageKey(base);
+      if (value == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(value));
+    } catch { /* ignore quota */ }
+  }
 
   function loadStrategySlots() {
     try {
-      const raw = localStorage.getItem(STRATEGY_SLOTS_KEY);
-      if (!raw) return null;
+      const parsed = readLocalJson(STRATEGY_SLOTS_KEY);
+      if (!parsed) return null;
+      if (!Array.isArray(parsed)) return null;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return null;
       return parsed
@@ -126,9 +161,7 @@ const FuturesBotApp = (() => {
   }
 
   function saveStrategySlots() {
-    try {
-      localStorage.setItem(STRATEGY_SLOTS_KEY, JSON.stringify(state.strategySlots));
-    } catch { /* ignore */ }
+    writeLocalJson(STRATEGY_SLOTS_KEY, state.strategySlots);
   }
 
   function newSlotId() {
@@ -172,9 +205,8 @@ const FuturesBotApp = (() => {
 
   function loadStrategyStorage() {
     try {
-      const raw = localStorage.getItem(ENTRY_RULES_KEY);
-      if (!raw) return { entryRules: null, exitRules: null };
-      const parsed = JSON.parse(raw);
+      const parsed = readLocalJson(ENTRY_RULES_KEY);
+      if (!parsed) return { entryRules: null, exitRules: null };
       if (parsed && (parsed.long || parsed.short) && !parsed.entryRules) {
         return {
           entryRules: window.StrategyEngine?.sanitizeEntryRules?.(parsed) ?? parsed,
@@ -194,16 +226,153 @@ const FuturesBotApp = (() => {
 
   function saveStrategyStorage(entryRules, exitRules) {
     if (!entryRules && !exitRules) {
-      localStorage.removeItem(ENTRY_RULES_KEY);
+      writeLocalJson(ENTRY_RULES_KEY, null);
       return;
     }
-    const payload = {
+    writeLocalJson(ENTRY_RULES_KEY, {
       entryRules: entryRules
         ? (window.StrategyEngine?.sanitizeEntryRules?.(entryRules) ?? entryRules)
         : null,
       exitRules: exitRules || null,
-    };
-    localStorage.setItem(ENTRY_RULES_KEY, JSON.stringify(payload));
+    });
+  }
+
+  function saveFormSettingsStorage() {
+    readFormSettings();
+    writeLocalJson(STRATEGY_FORM_KEY, {
+      leverage: state.leverage,
+      riskPerTradePct: state.riskPerTradePct,
+      maxAccountLossPct: state.maxAccountLossPct,
+      allowShort: state.allowShort,
+      stopLossPct: state.stopLossPct,
+      takeProfitPct: state.takeProfitPct,
+      rsiPeriod: state.rsiPeriod,
+      rsiOversold: state.rsiOversold,
+      rsiOverbought: state.rsiOverbought,
+      pollSeconds: state.pollSeconds,
+      symbol: state.symbol,
+      interval: state.interval,
+    });
+  }
+
+  function loadFormSettingsStorage() {
+    const parsed = readLocalJson(STRATEGY_FORM_KEY);
+    if (!parsed || typeof parsed !== 'object') return false;
+    applyFormFieldsFromPayload(parsed);
+    return true;
+  }
+
+  function applyFormFieldsFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    if (payload.leverage != null) setFieldValue('leverage', payload.leverage);
+    if (payload.riskPerTradePct != null) setFieldValue('riskPerTrade', payload.riskPerTradePct);
+    if (payload.maxAccountLossPct != null) setFieldValue('maxAccountLoss', payload.maxAccountLossPct);
+    if (payload.allowShort != null) setFieldValue('allowShort', payload.allowShort);
+    if (payload.stopLossPct != null) setFieldValue('stopLoss', payload.stopLossPct);
+    if (payload.takeProfitPct != null) setFieldValue('takeProfit', payload.takeProfitPct);
+    if (payload.rsiPeriod != null) setFieldValue('rsiPeriod', payload.rsiPeriod);
+    if (payload.rsiOversold != null) setFieldValue('rsiOversold', payload.rsiOversold);
+    if (payload.rsiOverbought != null) setFieldValue('rsiOverbought', payload.rsiOverbought);
+    if (payload.pollSeconds != null) setFieldValue('pollSeconds', payload.pollSeconds);
+    readFormSettings();
+  }
+
+  function hydrateStrategyFromPayload(payload, { source = 'local' } = {}) {
+    if (!payload || typeof payload !== 'object') return false;
+    applyFormFieldsFromPayload(payload);
+
+    let slots = null;
+    if (Array.isArray(payload.strategySlots) && payload.strategySlots.length) {
+      slots = payload.strategySlots
+        .filter((s) => s && typeof s === 'object')
+        .slice(0, MAX_STRATEGY_SLOTS)
+        .map((s, i) => normalizeIncomingSlot(s, i));
+    }
+
+    const entryRules = payload.entryRules
+      ? (window.StrategyEngine?.sanitizeEntryRules?.(payload.entryRules) ?? payload.entryRules)
+      : null;
+    const exitRules = payload.exitRules
+      ? (window.StrategyEngine?.sanitizeExitRules?.(payload.exitRules) ?? payload.exitRules)
+      : null;
+
+    if (slots?.length) {
+      state.strategySlots = slots;
+    } else if (entryRulesHaveSignals(entryRules)) {
+      state.strategySlots = [{
+        id: newSlotId(),
+        name: '조건 1',
+        enabled: true,
+        entryRules,
+        exitRules: exitRules ?? null,
+      }];
+    } else if (!slots) {
+      // Keep existing slots if payload has no strategy body
+      if (!entryRules && !exitRules) return false;
+    }
+
+    if (entryRules) state.entryRules = entryRules;
+    if (exitRules !== undefined && payload.exitRules !== undefined) state.exitRules = exitRules;
+
+    syncStateEntryRulesFromSlots();
+    saveStrategySlots();
+    saveStrategyStorage(state.entryRules, state.exitRules);
+    saveFormSettingsStorage();
+    renderStrategySlotsPanel();
+    updateStrategyAiSlotOptions();
+    updateStrategyRulesDisplay();
+    updateChartIndicatorButtons();
+    updateSignalDisplay();
+    updateUI();
+    addLog(
+      source === 'server'
+        ? '서버에 저장된 AI 전략 조건을 복원했습니다.'
+        : '브라우저에 저장된 전략 조건을 불러왔습니다.',
+      'info',
+    );
+    return true;
+  }
+
+  function persistStrategyLocally() {
+    saveStrategySlots();
+    saveStrategyStorage(state.entryRules, state.exitRules);
+    saveFormSettingsStorage();
+  }
+
+  async function restoreStrategyPersistence() {
+    // 1) Local cache first (fast paint)
+    loadFormSettingsStorage();
+    const stored = loadStrategyStorage();
+    if (stored.entryRules || stored.exitRules) {
+      state.entryRules = stored.entryRules;
+      state.exitRules = stored.exitRules;
+    }
+    migrateLegacyRulesToSlots();
+    renderStrategySlotsPanel();
+    updateStrategyAiSlotOptions();
+    updateStrategyRulesDisplay();
+
+    const hasLocal = entryRulesHaveSignals(state.entryRules)
+      || (state.strategySlots || []).some((s) => entryRulesHaveSignals(s.entryRules));
+
+    // 2) Server is source of truth when logged in / API available
+    try {
+      if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+        return hasLocal;
+      }
+      const data = await FuturesApiClient.getStrategy();
+      if (data?.strategy && (data.strategy.entryRules || data.strategy.strategySlots?.length)) {
+        hydrateStrategyFromPayload(data.strategy, { source: 'server' });
+        return true;
+      }
+      // Local exists but server empty — seed server once so reopen/other devices work
+      if (hasLocal) {
+        await syncStrategyToServer();
+      }
+    } catch {
+      /* offline / old API — keep local */
+    }
+    return hasLocal;
   }
 
   function loadEntryRules() {
@@ -887,10 +1056,12 @@ const FuturesBotApp = (() => {
     optNew.textContent = '+ 새 조건으로 저장';
     select.appendChild(optNew);
 
-    if (prev && [...select.options].some((o) => o.value === prev)) {
+    // Prefer a real slot with signals over lingering "__new__" after reload.
+    if (prev && prev !== '__new__' && [...select.options].some((o) => o.value === prev)) {
       select.value = prev;
     } else if (state.strategySlots.length) {
-      select.value = state.strategySlots[0].id;
+      const withSignals = state.strategySlots.find((s) => entryRulesHaveSignals(s.entryRules));
+      select.value = (withSignals || state.strategySlots[0]).id;
     } else {
       select.value = '__new__';
     }
@@ -1106,6 +1277,7 @@ const FuturesBotApp = (() => {
       autoConfirmSlTpFromStrategy({ log: true });
       syncPreviewFromLastSignal();
     }
+    persistStrategyLocally();
     scheduleServerStrategySync();
     return { applied: true };
   }
@@ -1960,22 +2132,27 @@ const FuturesBotApp = (() => {
     return strategy;
   }
 
-  // 서버 봇이 이미 돌고 있을 때 SL/TP·진입 조건이 바뀌면 strategy.json을
-  // 다시 올린다 (봇은 파일 변경을 감지해 다음 체크부터 새 설정 적용).
-  // 예전에는 봇 시작 시 한 번만 보내서, 실행 중 GPT/수동 변경이 서버 봇에
-  // 영영 반영되지 않았다.
+  // Persist strategy.json whenever settings change (page reload restore),
+  // and if the server bot is running, log that it will pick up the file.
   let serverStrategySyncTimer = null;
   function scheduleServerStrategySync() {
-    if (!isTestnetMode() || !serverBotActive) return;
+    persistStrategyLocally();
     clearTimeout(serverStrategySyncTimer);
     serverStrategySyncTimer = setTimeout(async () => {
       try {
+        if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+          return;
+        }
         await syncStrategyToServer();
-        addLog('변경된 전략을 실행 중인 서버 봇에 반영했습니다 (다음 체크부터 적용).', 'info');
+        if (isTestnetMode() && serverBotActive) {
+          addLog('변경된 전략을 서버에 저장했습니다 (실행 중 봇은 다음 체크부터 적용).', 'info');
+        }
       } catch (err) {
-        addLog(`서버 봇 전략 반영 실패: ${err.message} — 봇을 재시작하면 적용됩니다.`, 'loss');
+        if (serverBotActive) {
+          addLog(`서버 전략 저장 실패: ${err.message} — 봇을 재시작하면 적용됩니다.`, 'loss');
+        }
       }
-    }, 1200);
+    }, 800);
   }
 
   function resetClientSessionState({ keepLog = false } = {}) {
@@ -3461,13 +3638,6 @@ const FuturesBotApp = (() => {
     }
 
     readFormSettings();
-    const stored = loadStrategyStorage();
-    state.entryRules = stored.entryRules;
-    state.exitRules = stored.exitRules;
-    if (state.entryRules || state.exitRules) saveStrategyStorage(state.entryRules, state.exitRules);
-    migrateLegacyRulesToSlots();
-    renderStrategySlotsPanel();
-    updateStrategyAiSlotOptions();
     $('#addStrategySlotBtn')?.addEventListener('click', () => {
       const slot = addStrategySlot();
       if (slot) {
@@ -3475,7 +3645,6 @@ const FuturesBotApp = (() => {
         onStrategySlotsChanged({ recompute: false });
       }
     });
-    updateStrategyRulesDisplay();
     updateChartIndicatorButtons();
     updateMacdLineFilterUi();
     updateRsiEntryFilterUi();
@@ -3483,6 +3652,7 @@ const FuturesBotApp = (() => {
     sessionStartEquity = await getEquity();
 
     await restoreSessionFromServer();
+    await restoreStrategyPersistence();
     setModeBadge();
 
     if ((Chart.getCandles() || []).length) {
@@ -3667,6 +3837,7 @@ const FuturesBotApp = (() => {
     exportStrategyForServer,
     getStrategySlots,
     restoreSessionFromServer,
+    restoreStrategyPersistence,
     resetClientSessionState,
   };
 })();
