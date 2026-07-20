@@ -2725,9 +2725,16 @@ const FuturesBotApp = (() => {
     const targetLoss = plan?.targetLoss ?? RiskSizing.targetLossUsdt(equity, state.riskPerTradePct);
     const lossPctOfEquity = equity > 0 ? (lossAtSl / equity) * 100 : 0;
 
+    const feePct = plan?.feePct ?? RiskSizing?.TRADING_FEE_PCT ?? 0.1;
+    const effSl = plan?.effectiveStopLossPct
+      ?? (slPct != null && RiskSizing?.effectiveStopLossPct
+        ? RiskSizing.effectiveStopLossPct(slPct, feePct)
+        : null);
     $('#notionalInfo').innerHTML =
       `증거금 $${marginPreview.toFixed(0)} (${state.leverage}x) · ` +
-      `<span class="text-muted">SL ${slPct != null ? slPct.toFixed(2) : '—'}% · 손절 시 -$${lossAtSl.toFixed(2)} (목표 -$${targetLoss.toFixed(2)}, ${lossPctOfEquity.toFixed(2)}%)</span>`;
+      `<span class="text-muted">SL ${slPct != null ? slPct.toFixed(2) : '—'}%` +
+      `${effSl != null ? `+수수료${feePct}%→${effSl.toFixed(2)}%` : ''} · ` +
+      `손절 시 -$${lossAtSl.toFixed(2)} (목표 -$${targetLoss.toFixed(2)}, ${lossPctOfEquity.toFixed(2)}%)</span>`;
 
     if (sessionStartEquity > 0) {
       const dd = ((sessionStartEquity - equity) / sessionStartEquity) * 100;

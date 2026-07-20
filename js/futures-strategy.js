@@ -68,16 +68,29 @@ const FuturesStrategy = (() => {
 
     let takeProfitPrice = null;
     const tp = exitRule.takeProfit;
+    const feePct = window.RiskSizing?.TRADING_FEE_PCT ?? 0.1;
     if (tp?.type === 'risk_reward') {
       const ratio = parseFloat(tp.ratio) || 1.5;
+      // Net RR after round-trip fee 0.1%: reward = ratio*(risk+fee)+fee
+      const tpDist = (risk) => (
+        window.RiskSizing?.takeProfitDistanceForRiskReward?.(entry, risk, ratio, feePct)
+        ?? (() => {
+          const feeAbs = entry * (feePct / 100);
+          return ratio * (risk + feeAbs) + feeAbs;
+        })()
+      );
       if (side === 'LONG') {
         const risk = entry - stopPrice;
         if (risk <= 0) return null;
-        takeProfitPrice = entry + risk * ratio;
+        const dist = tpDist(risk);
+        if (!(dist > 0)) return null;
+        takeProfitPrice = entry + dist;
       } else {
         const risk = stopPrice - entry;
         if (risk <= 0) return null;
-        takeProfitPrice = entry - risk * ratio;
+        const dist = tpDist(risk);
+        if (!(dist > 0)) return null;
+        takeProfitPrice = entry - dist;
       }
     }
 
@@ -96,6 +109,7 @@ const FuturesStrategy = (() => {
       takeProfitPrice,
       stopLossPct,
       takeProfitPct,
+      feePct,
       dynamic: true,
     };
   }

@@ -85,7 +85,8 @@ ExitRule:
 }
 - candle_extreme offset 1 = candle immediately before entry bar (재진입 직전 봉)
 - atr stop = entry -/+ ATR(period) * mult (변동성 기반 손절)
-- risk_reward ratio 1.5 = TP distance is 1.5x SL distance from entry
+- risk_reward ratio 1.5 = net TP/SL after round-trip fee 0.1%
+  (engine sets TP so (reward-fee)/(risk+fee)=ratio; risk sizing also adds 0.1% fee to SL%)
 
 RuleGroup:
 {
