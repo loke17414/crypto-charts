@@ -189,6 +189,46 @@ def _near_level(price: float | None, level: float | None, tol_pct: float = 0.6) 
     return abs(price - level) / level * 100 <= tol_pct
 
 
+def _bos_choch_at(
+    klines: list[list[Any]],
+    index: int,
+    prior_bias: str,
+    high_px: float | None,
+    low_px: float | None,
+) -> list[dict[str, Any]]:
+    if index < 1 or index >= len(klines):
+        return []
+    c_now = float(klines[index][4])
+    c_prev = float(klines[index - 1][4])
+    offset = index - (len(klines) - 1)
+    events: list[dict[str, Any]] = []
+    if prior_bias == "bullish" and high_px is not None and c_prev <= high_px and c_now > high_px:
+        events.append({
+            "type": "BoS", "side": "bullish", "kind": "bos_above_swing_high",
+            "strength": "strong", "offset": offset, "level": _round(high_px),
+            "reason": "상승 추세 중 전고점 종가 돌파 → 구조 돌파(BoS, 추세 지속)",
+        })
+    if prior_bias == "bearish" and low_px is not None and c_prev >= low_px and c_now < low_px:
+        events.append({
+            "type": "BoS", "side": "bearish", "kind": "bos_below_swing_low",
+            "strength": "strong", "offset": offset, "level": _round(low_px),
+            "reason": "하락 추세 중 전저점 종가 이탈 → 구조 돌파(BoS, 추세 지속)",
+        })
+    if prior_bias == "bullish" and low_px is not None and c_prev >= low_px and c_now < low_px:
+        events.append({
+            "type": "CHOCH", "side": "bearish", "kind": "choch_below_swing_low",
+            "strength": "strong", "offset": offset, "level": _round(low_px),
+            "reason": "상승 추세 중 전저점 종가 이탈 → 구조 전환(CHOCH)",
+        })
+    if prior_bias == "bearish" and high_px is not None and c_prev <= high_px and c_now > high_px:
+        events.append({
+            "type": "CHOCH", "side": "bullish", "kind": "choch_above_swing_high",
+            "strength": "strong", "offset": offset, "level": _round(high_px),
+            "reason": "하락 추세 중 전고점 종가 돌파 → 구조 전환(CHOCH)",
+        })
+    return events
+
+
 def _analyze_trend_reversal(
     klines: list[list[Any]],
     swings: dict[str, Any],
@@ -201,8 +241,10 @@ def _analyze_trend_reversal(
             "priorBias": prior_bias,
             "phase": "unclear",
             "signals": [],
+            "bos": [],
+            "choch": [],
             "latest": None,
-            "note": "Need prior bias + against-trend candle or CHOCH for trend reversal.",
+            "note": "Need prior bias + against-trend candle, BoS, or CHOCH.",
         }
 
     last_high = swings.get("lastSwingHigh")
@@ -210,29 +252,23 @@ def _analyze_trend_reversal(
     high_px = last_high["price"] if isinstance(last_high, dict) else None
     low_px = last_low["price"] if isinstance(last_low, dict) else None
     o1, h1, l1, c1 = (float(klines[-1][j]) for j in (1, 2, 3, 4))
-    _o0, _h0, _l0, c0 = (float(klines[-2][j]) for j in (1, 2, 3, 4))
     signals: list[dict[str, Any]] = []
+    bos: list[dict[str, Any]] = []
+    choch: list[dict[str, Any]] = []
 
-    if prior_bias == "bullish" and low_px is not None and c0 >= low_px and c1 < low_px:
-        signals.append({
-            "side": "bearish",
-            "kind": "choch_below_swing_low",
-            "strength": "strong",
-            "offset": 0,
-            "level": _round(low_px),
-            "patterns": recent[-1].get("patterns", []) if recent else [],
-            "reason": "상승 추세 중 전저점 종가 이탈 → 구조 전환(CHOCH)",
-        })
-    if prior_bias == "bearish" and high_px is not None and c0 <= high_px and c1 > high_px:
-        signals.append({
-            "side": "bullish",
-            "kind": "choch_above_swing_high",
-            "strength": "strong",
-            "offset": 0,
-            "level": _round(high_px),
-            "patterns": recent[-1].get("patterns", []) if recent else [],
-            "reason": "하락 추세 중 전고점 종가 돌파 → 구조 전환(CHOCH)",
-        })
+    last_idx = len(klines) - 1
+    for i in range(max(1, last_idx - 7), last_idx + 1):
+        for ev in _bos_choch_at(klines, i, prior_bias, high_px, low_px):
+            ev["patterns"] = _candle_patterns_at(klines, i)
+            if ev["type"] == "BoS":
+                bos.append(ev)
+            else:
+                choch.append(ev)
+            signals.append({
+                "side": ev["side"], "kind": ev["kind"], "type": ev["type"],
+                "strength": ev["strength"], "offset": ev["offset"], "level": ev["level"],
+                "patterns": ev["patterns"], "reason": ev["reason"],
+            })
 
     for bar in recent[-5:]:
         pats = set(bar.get("patterns") or [])
@@ -277,12 +313,15 @@ def _analyze_trend_reversal(
         seen.add(key)
         unique.append(s)
 
-    has_strong = any(s.get("strength") == "strong" for s in unique)
+    has_choch = any(s.get("type") == "CHOCH" or str(s.get("kind", "")).startswith("choch_") for s in unique)
+    has_bos = any(s.get("type") == "BoS" or str(s.get("kind", "")).startswith("bos_") for s in unique)
     has_medium = any(s.get("strength") == "medium" for s in unique)
     if prior_bias == "sideways" and not unique:
         phase = "unclear"
-    elif has_strong:
-        phase = "structure_break"
+    elif has_choch:
+        phase = "choch"
+    elif has_bos:
+        phase = "bos"
     elif has_medium:
         phase = "potential_reversal"
     elif unique:
@@ -301,7 +340,9 @@ def _analyze_trend_reversal(
     return {
         "priorBias": prior_bias,
         "phase": phase,
-        "signals": unique[:6],
+        "signals": unique[:8],
+        "bos": bos[:4],
+        "choch": choch[:4],
         "latest": {
             "offset": 0,
             "dir": latest.get("dir") if latest else None,
@@ -319,10 +360,69 @@ def _analyze_trend_reversal(
             "nearSwingLow": _near_level(l1, low_px) or _near_level(c1, low_px),
         },
         "note": (
-            "phase: continuation|early_warning|potential_reversal|structure_break|unclear. "
-            "추세전환 캔들 = priorBias 역행 engulfing/hammer/shooting/pin (스윙 고·저점 근처 이상적). "
-            "CHOCH = 상승중 전저점 종가 이탈 또는 하락중 전고점 종가 돌파."
+            "phase: continuation|early_warning|potential_reversal|bos|choch|unclear. "
+            "BoS=with-trend swing break; CHOCH=against-trend swing break. "
+            "추세전환 캔들 = priorBias 역행 engulfing/hammer/shooting/pin."
         ),
+    }
+
+
+def _build_strategy_log(
+    recent: list[dict[str, Any]],
+    structure: dict[str, Any],
+) -> dict[str, Any]:
+    trend = structure.get("trend") or {}
+    rev = structure.get("trendReversal") or {}
+    swings = structure.get("swings") or {}
+    lines: list[str] = []
+    lines.append(
+        f"추세 priorBias={rev.get('priorBias') or trend.get('direction') or '—'} · "
+        f"structure={trend.get('structure') or '—'} · phase={rev.get('phase') or '—'}"
+    )
+    sh = swings.get("lastSwingHigh")
+    sl = swings.get("lastSwingLow")
+    sh_s = f"${sh['price']} ({sh.get('barsAgo')}봉전)" if isinstance(sh, dict) else "—"
+    sl_s = f"${sl['price']} ({sl.get('barsAgo')}봉전)" if isinstance(sl, dict) else "—"
+    lines.append(f"스윙 전고점={sh_s} · 전저점={sl_s}")
+    bos = rev.get("bos") or []
+    choch = rev.get("choch") or []
+    lines.append(
+        "BoS: " + (
+            " | ".join(f"{e.get('kind')} offset={e.get('offset')} @{e.get('level')}" for e in bos)
+            if bos else "없음 (최근 8봉)"
+        )
+    )
+    lines.append(
+        "CHOCH: " + (
+            " | ".join(f"{e.get('kind')} offset={e.get('offset')} @{e.get('level')}" for e in choch)
+            if choch else "없음 (최근 8봉)"
+        )
+    )
+    for bar in recent[-8:]:
+        pats = [p for p in (bar.get("patterns") or []) if p not in {"bullish", "bearish"}]
+        if not pats and bar.get("shape") not in (None, "balanced", "full_body"):
+            pats = [bar["shape"]]
+        if not pats:
+            continue
+        lines.append(
+            f"패턴 offset={bar.get('offset')} {bar.get('dir')}: {', '.join(pats)} "
+            f"(몸{bar.get('bodyPct')}%/윗{bar.get('upperWickPct')}%/아랫{bar.get('lowerWickPct')}%)"
+        )
+    if len(lines) <= 4:
+        lines.append("패턴: 최근 8봉에 특수 패턴 없음")
+    return {
+        "updatedAt": None,
+        "lines": lines,
+        "text": "\n".join(lines),
+        "bos": bos,
+        "choch": choch,
+        "trendReversal": {
+            "priorBias": rev.get("priorBias"),
+            "phase": rev.get("phase"),
+            "againstTrend": (rev.get("latest") or {}).get("againstTrend"),
+            "signals": rev.get("signals") or [],
+        },
+        "note": "strategyLog digest for patterns/BoS/CHOCH — prefer over inventing from OHLC alone.",
     }
 
 
@@ -659,6 +759,9 @@ def build_market_context(
         server_struct = _build_structure(klines, closes, highs, lows, rsi_vals, price)
         ctx["structure"]["trendReversal"] = server_struct.get("trendReversal")
         ctx["structure"].setdefault("trend", server_struct.get("trend"))
+    if not ctx.get("strategyLog") and isinstance(ctx.get("structure"), dict):
+        recent = ctx.get("recentCandles15") or _format_recent_candles(klines, 15)
+        ctx["strategyLog"] = _build_strategy_log(recent, ctx["structure"])
     if not ctx.get("timeframe"):
         ctx["timeframe"] = _timeframe_info(interval)
 

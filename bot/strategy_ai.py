@@ -229,15 +229,22 @@ MARKET DATA & BACKTEST (critical for accuracy):
 - structure.fvg / structure.divergence: FVG zones and RSI/MACD divergence flags.
 - structure.trend: direction (bullish/bearish/sideways), HH/HL structure, EMA7/25/99 stack, ADX14.
   Use trend.direction + structure for trend questions — not recentHigh/recentLow alone.
-- structure.trendReversal (CRITICAL for 추세전환 / 전환 캔들):
+- structure.trendReversal (CRITICAL for 추세전환 / 전환 캔들 / BoS / CHOCH):
   priorBias = prior trend from structure/MA (NOT a single candle direction).
-  phase = continuation | early_warning | potential_reversal | structure_break | unclear.
-  signals[] = precomputed CHOCH / against-trend reversal candles with offset, patterns, strength, reason.
+  phase = continuation | early_warning | potential_reversal | bos | choch | unclear.
+  bos[] = Break of Structure (with-trend swing break — continuation).
+  choch[] = Change of Character (against-trend swing break — reversal).
+  signals[] = BoS/CHOCH + against-trend reversal candles with offset, patterns, strength, reason.
   latest.againstTrend = true when the current bar is a reversal candle opposing priorBias.
-  ALWAYS read trendReversal for "추세전환", "전환 캔들", "반전", "장악형", "해머/슈팅스타로 전환".
+  ALWAYS read trendReversal + strategyLog for "추세전환", "BoS", "CHOCH", "전환 캔들", "반전".
   Do NOT call a random opposite-color candle a trend reversal — need against priorBias +
   (engulfing/hammer/shooting/pin OR shape long_*_wick) ideally near swing high/low, OR CHOCH.
+  BoS: bullish prior + close above lastSwingHigh, OR bearish prior + close below lastSwingLow.
   CHOCH: bullish prior + close below lastSwingLow, OR bearish prior + close above lastSwingHigh.
+- strategyLog (CRITICAL human digest — same text shown in UI 전략 로그):
+  lines/text summarize ALL recent candle patterns, BoS, CHOCH, reversal candles, and indicators.
+  indicators block: rsi14, ema7/25/99, macd, atr14, adx14, stoch, active chart indicators.
+  Prefer strategyLog.lines + indicators over recomputing from raw OHLC.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 
 CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common GPT mistake):

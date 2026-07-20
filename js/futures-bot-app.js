@@ -366,6 +366,98 @@ const FuturesBotApp = (() => {
     };
   }
 
+  function lastSeriesValue(series) {
+    if (!series) return null;
+    const pt = Array.isArray(series) ? series.at(-1) : series;
+    if (pt == null) return null;
+    const v = typeof pt === 'object' ? pt.value : pt;
+    return Number.isFinite(v) ? v : null;
+  }
+
+  function getIndicatorSnapshotForAi(candles) {
+    const snap = {
+      rsi14: null,
+      ema7: null,
+      ema25: null,
+      ema99: null,
+      macd: null,
+      atr14: null,
+      adx14: null,
+      stoch: null,
+      active: [],
+    };
+    if (!candles?.length || !window.TA) return snap;
+
+    const r = (v, d = 2) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
+
+    snap.rsi14 = r(lastSeriesValue(TA.rsi?.(candles, state.rsiPeriod || 14)), 1);
+    snap.ema7 = r(lastSeriesValue(TA.emaLine?.(candles, 7)));
+    snap.ema25 = r(lastSeriesValue(TA.emaLine?.(candles, 25)));
+    snap.ema99 = r(lastSeriesValue(TA.emaLine?.(candles, 99)));
+    snap.atr14 = r(lastSeriesValue(TA.atr?.(candles, 14)));
+    if (TA.dmi) {
+      snap.adx14 = r(lastSeriesValue(TA.dmi(candles, 14)?.adx), 1);
+    } else {
+      snap.adx14 = r(lastSeriesValue(TA.adx?.(candles, 14)), 1);
+    }
+
+    if (TA.macd) {
+      const m = TA.macd(candles);
+      snap.macd = {
+        macd: r(lastSeriesValue(m?.macd), 4),
+        signal: r(lastSeriesValue(m?.signal), 4),
+        histogram: r(lastSeriesValue(m?.histogram), 4),
+      };
+    }
+    if (TA.stochastic) {
+      const s = TA.stochastic(candles);
+      snap.stoch = {
+        k: r(lastSeriesValue(s?.k), 1),
+        d: r(lastSeriesValue(s?.d), 1),
+      };
+    }
+
+    try {
+      snap.active = window.CryptoCharts?.getActiveIndicators?.() || [];
+    } catch (_) {
+      snap.active = [];
+    }
+    return snap;
+  }
+
+  let lastStrategyLogBarTime = null;
+  let lastStrategyLogPayload = null;
+
+  function renderStrategyLogPanel(strategyLog) {
+    const el = document.getElementById('strategyLog');
+    if (!el || !strategyLog?.lines?.length) return;
+    el.innerHTML = '';
+    for (const line of strategyLog.lines) {
+      const item = document.createElement('div');
+      item.className = 'trade-log__item trade-log__item--info strategy-log__item';
+      item.textContent = line;
+      el.appendChild(item);
+    }
+  }
+
+  function refreshStrategyLog(force = false) {
+    const candles = lastCandles.length ? lastCandles : (Chart.getCandles() || []);
+    if (!candles.length || !window.ChartStructure?.analyzeForAi) return null;
+    const barTime = candles.at(-1)?.time;
+    if (!force && barTime != null && barTime === lastStrategyLogBarTime && lastStrategyLogPayload) {
+      return lastStrategyLogPayload;
+    }
+    const structure = ChartStructure.analyzeForAi(candles, { recentCount: 15, fvgLookback: 30 });
+    const indicators = getIndicatorSnapshotForAi(candles);
+    const strategyLog = window.ChartStructure.buildStrategyLog
+      ? ChartStructure.buildStrategyLog(candles, structure, indicators)
+      : { ...(structure.strategyLog || {}), indicators, lines: structure.strategyLog?.lines || [] };
+    lastStrategyLogBarTime = barTime;
+    lastStrategyLogPayload = { structure, indicators, strategyLog };
+    renderStrategyLogPanel(strategyLog);
+    return lastStrategyLogPayload;
+  }
+
   function getMarketContextForAi() {
     readFormSettings();
     syncFromChart();
@@ -380,12 +472,9 @@ const FuturesBotApp = (() => {
     const base = closes[closes.length - 1 - lookback] || price;
     const changePct = base ? ((price - base) / base) * 100 : 0;
 
-    let rsi14 = null;
-    if (window.TA?.rsi) {
-      const rsiSeries = TA.rsi(candles, state.rsiPeriod || 14);
-      const last = rsiSeries?.at(-1);
-      rsi14 = last?.value ?? last ?? null;
-    }
+    const packed = refreshStrategyLog(true);
+    const indicators = packed?.indicators || getIndicatorSnapshotForAi(candles);
+    const rsi14 = indicators.rsi14;
 
     const last20 = candles.slice(-20);
     const upBars = last20.filter((c, i, arr) => i > 0 && c.close > arr[i - 1].close).length;
@@ -404,9 +493,21 @@ const FuturesBotApp = (() => {
       recentHigh: rangeHigh,
       recentLow: rangeLow,
       recentRangeNote: 'recentHigh/recentLow = simple max/min of last ~24 bars. NOT confirmed swing highs/lows. For 전고점/전저점 ALWAYS use structure.swings.',
+      indicators,
     };
 
-    if (window.ChartStructure?.analyzeForAi) {
+    if (packed?.structure) {
+      const structure = packed.structure;
+      ctx.recentCandles15 = structure.recentCandles;
+      ctx.structure = {
+        swings: structure.swings,
+        fvg: structure.fvg,
+        divergence: structure.divergence,
+        trend: structure.trend,
+        trendReversal: structure.trendReversal,
+      };
+      ctx.strategyLog = packed.strategyLog;
+    } else if (window.ChartStructure?.analyzeForAi) {
       const structure = ChartStructure.analyzeForAi(candles, { recentCount: 15, fvgLookback: 30 });
       ctx.recentCandles15 = structure.recentCandles;
       ctx.structure = {
@@ -416,6 +517,7 @@ const FuturesBotApp = (() => {
         trend: structure.trend,
         trendReversal: structure.trendReversal,
       };
+      ctx.strategyLog = ChartStructure.buildStrategyLog?.(candles, structure, indicators) || structure.strategyLog;
     }
 
     ctx.timeframe = timeframeInfoForAi(state.interval);
@@ -2363,6 +2465,7 @@ const FuturesBotApp = (() => {
     }
     syncPreviewSlTpOverlay(result);
     if (hasOpenPosition()) ensurePositionSlTpOverlay();
+    refreshStrategyLog(false);
     maybeAutoEnterOnSignal(result);
   }
 

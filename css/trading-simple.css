@@ -1434,6 +1434,21 @@
   overflow-y: auto;
 }
 
+.trading-page--simple .strategy-log {
+  max-height: 220px;
+  white-space: pre-wrap;
+}
+
+.trading-page--simple .strategy-log__hint {
+  margin: 0 0 0.35rem;
+  font-size: 0.65rem;
+}
+
+.trading-page--simple .strategy-log__item {
+  border-left-color: var(--simple-accent, var(--accent));
+  margin-bottom: 0.2rem;
+}
+
 .trading-page--simple .control-advanced {
   flex-shrink: 0;
 }

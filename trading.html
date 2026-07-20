@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260719e">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260720a">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -288,8 +288,16 @@
           </div>
         </details>
 
+        <details class="control-section control-section--fold log-section" open>
+          <summary class="control-section__summary"><span class="control-section__summary-text">전략 로그</span></summary>
+          <div class="control-section__body">
+            <p class="api-hint strategy-log__hint">캔들패턴 · BoS/CHOCH · 지표 요약 (GPT에도 동일 전달)</p>
+            <div id="strategyLog" class="trade-log strategy-log" aria-live="polite"></div>
+          </div>
+        </details>
+
         <details class="control-section control-section--fold log-section">
-          <summary class="control-section__summary"><span class="control-section__summary-text">로그</span></summary>
+          <summary class="control-section__summary"><span class="control-section__summary-text">거래 로그</span></summary>
           <div class="control-section__body">
             <div id="tradeLog" class="trade-log"></div>
           </div>
@@ -337,7 +345,7 @@
   <script src="js/indicator-catalog.js?v=20260714e"></script>
   <script src="js/indicators.js?v=20260719b"></script>
   <script src="js/candle-patterns.js"></script>
-  <script src="js/chart-structure.js?v=20260720d"></script>
+  <script src="js/chart-structure.js?v=20260720e"></script>
   <script src="js/strategy-engine.js?v=20260719a"></script>
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
@@ -354,7 +362,7 @@
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
-  <script src="js/futures-bot-app.js?v=20260720f"></script>
+  <script src="js/futures-bot-app.js?v=20260720g"></script>
   <script src="js/strategy-ai.js?v=20260720b"></script>
 </body>
 </html>

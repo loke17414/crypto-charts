@@ -19,24 +19,27 @@
     return 'balanced';
   }
 
-  const REVERSAL_PATTERN_NAMES = [
-    'engulfing_bull', 'engulfing_bear',
+  const ALL_PATTERN_NAMES = [
+    'bullish', 'bearish', 'doji',
     'hammer', 'inverted_hammer', 'shooting_star',
-    'pin_bar_bull', 'pin_bar_bear',
-    'doji', 'outside_bar',
+    'engulfing_bull', 'engulfing_bear',
     'marubozu_bull', 'marubozu_bear',
+    'pin_bar_bull', 'pin_bar_bear',
+    'inside_bar', 'outside_bar',
+    'three_white_soldiers', 'three_black_crows',
   ];
   const BULL_REVERSAL_PATTERNS = new Set([
-    'engulfing_bull', 'hammer', 'pin_bar_bull', 'marubozu_bull',
+    'engulfing_bull', 'hammer', 'pin_bar_bull', 'marubozu_bull', 'three_white_soldiers',
   ]);
   const BEAR_REVERSAL_PATTERNS = new Set([
-    'engulfing_bear', 'shooting_star', 'pin_bar_bear', 'marubozu_bear', 'inverted_hammer',
+    'engulfing_bear', 'shooting_star', 'pin_bar_bear', 'marubozu_bear',
+    'inverted_hammer', 'three_black_crows',
   ]);
 
   function detectPatternsAt(candles, index) {
     if (!Array.isArray(candles) || index < 0 || index >= candles.length) return [];
     if (window.CandlePatterns?.match) {
-      return REVERSAL_PATTERN_NAMES.filter((name) => CandlePatterns.match(candles, index, name));
+      return ALL_PATTERN_NAMES.filter((name) => CandlePatterns.match(candles, index, name));
     }
     // Lightweight fallback when CandlePatterns is unavailable
     const cur = candles[index];
@@ -119,13 +122,74 @@
     return (Math.abs(price - level) / level) * 100 <= tolPct;
   }
 
+  function detectBosChochAt(candles, index, priorBias, highPx, lowPx) {
+    const cur = candles[index];
+    const prev = candles[index - 1];
+    if (!cur || !prev) return [];
+    const offset = index - (candles.length - 1);
+    const events = [];
+    // BoS = continuation break with prior trend
+    if (priorBias === 'bullish' && Number.isFinite(highPx)
+      && prev.close <= highPx && cur.close > highPx) {
+      events.push({
+        type: 'BoS',
+        side: 'bullish',
+        kind: 'bos_above_swing_high',
+        strength: 'strong',
+        offset,
+        level: round(highPx),
+        reason: '상승 추세 중 전고점 종가 돌파 → 구조 돌파(BoS, 추세 지속)',
+      });
+    }
+    if (priorBias === 'bearish' && Number.isFinite(lowPx)
+      && prev.close >= lowPx && cur.close < lowPx) {
+      events.push({
+        type: 'BoS',
+        side: 'bearish',
+        kind: 'bos_below_swing_low',
+        strength: 'strong',
+        offset,
+        level: round(lowPx),
+        reason: '하락 추세 중 전저점 종가 이탈 → 구조 돌파(BoS, 추세 지속)',
+      });
+    }
+    // CHOCH = counter-trend break (change of character)
+    if (priorBias === 'bullish' && Number.isFinite(lowPx)
+      && prev.close >= lowPx && cur.close < lowPx) {
+      events.push({
+        type: 'CHOCH',
+        side: 'bearish',
+        kind: 'choch_below_swing_low',
+        strength: 'strong',
+        offset,
+        level: round(lowPx),
+        reason: '상승 추세 중 전저점 종가 이탈 → 구조 전환(CHOCH)',
+      });
+    }
+    if (priorBias === 'bearish' && Number.isFinite(highPx)
+      && prev.close <= highPx && cur.close > highPx) {
+      events.push({
+        type: 'CHOCH',
+        side: 'bullish',
+        kind: 'choch_above_swing_high',
+        strength: 'strong',
+        offset,
+        level: round(highPx),
+        reason: '하락 추세 중 전고점 종가 돌파 → 구조 전환(CHOCH)',
+      });
+    }
+    return events;
+  }
+
   function analyzeTrendReversal(candles, trend, swings, recentCandles) {
     const empty = {
       priorBias: 'sideways',
       phase: 'unclear',
       signals: [],
+      bos: [],
+      choch: [],
       latest: null,
-      note: 'Trend-reversal needs prior bias + against-trend candle (engulfing/hammer/shooting/pin) ideally at swing extreme, or CHOCH (close breaks last swing against prior trend).',
+      note: 'BoS=with-trend swing break (continuation). CHOCH=against-trend swing break (reversal). Reversal candles need priorBias + engulfing/hammer/shooting/pin ideally at swing extreme.',
     };
     if (!Array.isArray(candles) || candles.length < 5) return empty;
 
@@ -136,34 +200,30 @@
     const lowPx = lastLow?.price ?? null;
     const lastIdx = candles.length - 1;
     const last = candles[lastIdx];
-    const prev = candles[lastIdx - 1];
     const tape = Array.isArray(recentCandles) ? recentCandles : formatRecentCandles(candles, 8);
     const signals = [];
+    const bos = [];
+    const choch = [];
 
-    // CHOCH / structure break against prior bias (stronger than a single reversal candle)
-    if (priorBias === 'bullish' && Number.isFinite(lowPx) && prev && last
-      && prev.close >= lowPx && last.close < lowPx) {
-      signals.push({
-        side: 'bearish',
-        kind: 'choch_below_swing_low',
-        strength: 'strong',
-        offset: 0,
-        level: round(lowPx),
-        patterns: tape.at(-1)?.patterns || detectPatternsAt(candles, lastIdx),
-        reason: '상승 추세 중 전저점(lastSwingLow) 종가 이탈 → 구조 전환(CHOCH)',
-      });
-    }
-    if (priorBias === 'bearish' && Number.isFinite(highPx) && prev && last
-      && prev.close <= highPx && last.close > highPx) {
-      signals.push({
-        side: 'bullish',
-        kind: 'choch_above_swing_high',
-        strength: 'strong',
-        offset: 0,
-        level: round(highPx),
-        patterns: tape.at(-1)?.patterns || detectPatternsAt(candles, lastIdx),
-        reason: '하락 추세 중 전고점(lastSwingHigh) 종가 돌파 → 구조 전환(CHOCH)',
-      });
+    // Scan recent bars for BoS / CHOCH (not only the live bar)
+    const scanStart = Math.max(1, lastIdx - 7);
+    for (let i = scanStart; i <= lastIdx; i++) {
+      const events = detectBosChochAt(candles, i, priorBias, highPx, lowPx);
+      for (const ev of events) {
+        ev.patterns = detectPatternsAt(candles, i);
+        if (ev.type === 'BoS') bos.push(ev);
+        else choch.push(ev);
+        signals.push({
+          side: ev.side,
+          kind: ev.kind,
+          type: ev.type,
+          strength: ev.strength,
+          offset: ev.offset,
+          level: ev.level,
+          patterns: ev.patterns,
+          reason: ev.reason,
+        });
+      }
     }
 
     // Scan recent bars for against-trend reversal candles
@@ -215,11 +275,13 @@
       unique.push(s);
     }
 
-    const hasStrong = unique.some((s) => s.strength === 'strong');
+    const hasChoch = unique.some((s) => s.type === 'CHOCH' || String(s.kind || '').startsWith('choch_'));
+    const hasBos = unique.some((s) => s.type === 'BoS' || String(s.kind || '').startsWith('bos_'));
     const hasMedium = unique.some((s) => s.strength === 'medium');
     let phase = 'continuation';
     if (priorBias === 'sideways' && !unique.length) phase = 'unclear';
-    else if (hasStrong) phase = 'structure_break';
+    else if (hasChoch) phase = 'choch';
+    else if (hasBos) phase = 'bos';
     else if (hasMedium) phase = 'potential_reversal';
     else if (unique.length) phase = 'early_warning';
 
@@ -234,7 +296,9 @@
     return {
       priorBias,
       phase,
-      signals: unique.slice(0, 6),
+      signals: unique.slice(0, 8),
+      bos: bos.slice(0, 4),
+      choch: choch.slice(0, 4),
       latest: latestBar ? {
         offset: 0,
         dir: latestBar.dir,
@@ -251,10 +315,134 @@
         nearSwingHigh: nearLevelPct(last?.high, highPx) || nearLevelPct(last?.close, highPx),
         nearSwingLow: nearLevelPct(last?.low, lowPx) || nearLevelPct(last?.close, lowPx),
       },
-      note: 'phase: continuation|early_warning|potential_reversal|structure_break|unclear. '
-        + '추세전환 캔들 = priorBias에 역행하는 engulfing/hammer/shooting/pin (이상적으로 스윙 고·저점 근처). '
-        + '구조 전환(CHOCH) = 상승중 전저점 종가 이탈 또는 하락중 전고점 종가 돌파. '
-        + 'Trust this block for 추세전환 — do not invent from dir alone.',
+      note: 'phase: continuation|early_warning|potential_reversal|bos|choch|unclear. '
+        + 'BoS = priorBias 방향 스윙 돌파(추세 지속). CHOCH = priorBias 역방향 스윙 돌파(추세 전환). '
+        + '추세전환 캔들 = priorBias 역행 engulfing/hammer/shooting/pin (스윙 고·저점 근처 이상적). '
+        + 'Trust bos/choch/signals — do not invent structure breaks from a single candle.',
+    };
+  }
+
+  function patternLabelKo(name) {
+    return window.CandlePatterns?.patternLabel?.(name) || name;
+  }
+
+  function buildStrategyLog(candles, analysis, indicators = null) {
+    /** Human + machine digest for UI 전략 로그 and GPT market_context.strategyLog */
+    const recent = analysis?.recentCandles || formatRecentCandles(candles, 15);
+    const trend = analysis?.trend || {};
+    const rev = analysis?.trendReversal || {};
+    const swings = analysis?.swings || {};
+    const lines = [];
+    const patternRows = [];
+
+    lines.push(
+      `추세 priorBias=${rev.priorBias || trend.direction || '—'} · `
+      + `structure=${trend.structure || '—'} · MA=${trend.maAlignment || '—'} · `
+      + `ADX=${trend.adx14 ?? '—'} · phase=${rev.phase || '—'}`,
+    );
+
+    const sh = swings.lastSwingHigh;
+    const sl = swings.lastSwingLow;
+    lines.push(
+      `스윙 전고점=${sh ? `$${sh.price} (${sh.barsAgo}봉전)` : '—'} · `
+      + `전저점=${sl ? `$${sl.price} (${sl.barsAgo}봉전)` : '—'}`,
+    );
+
+    const bos = rev.bos || [];
+    const choch = rev.choch || [];
+    if (bos.length) {
+      lines.push(`BoS: ${bos.map((e) => `${e.kind} offset=${e.offset} @$${e.level}`).join(' | ')}`);
+    } else {
+      lines.push('BoS: 없음 (최근 8봉)');
+    }
+    if (choch.length) {
+      lines.push(`CHOCH: ${choch.map((e) => `${e.kind} offset=${e.offset} @$${e.level}`).join(' | ')}`);
+    } else {
+      lines.push('CHOCH: 없음 (최근 8봉)');
+    }
+
+    const revSignals = (rev.signals || []).filter((s) => !String(s.kind || '').startsWith('bos_') && !String(s.kind || '').startsWith('choch_'));
+    if (revSignals.length) {
+      lines.push(`전환캔들: ${revSignals.map((s) => `${s.kind} offset=${s.offset} [${(s.patterns || []).join(',')}]`).join(' | ')}`);
+    } else {
+      lines.push('전환캔들: 없음');
+    }
+
+    // All patterns on recent tape (skip bare bullish/bearish alone unless sole pattern)
+    for (const bar of recent.slice(-8)) {
+      const pats = (bar.patterns || []).filter((p) => p !== 'bullish' && p !== 'bearish');
+      if (!pats.length && bar.shape && bar.shape !== 'balanced' && bar.shape !== 'full_body') {
+        pats.push(bar.shape);
+      }
+      if (!pats.length) continue;
+      const labels = pats.map(patternLabelKo).join(', ');
+      const row = {
+        offset: bar.offset,
+        dir: bar.dir,
+        shape: bar.shape,
+        patterns: bar.patterns || [],
+        labels,
+        bodyPct: bar.bodyPct,
+        upperWickPct: bar.upperWickPct,
+        lowerWickPct: bar.lowerWickPct,
+      };
+      patternRows.push(row);
+      lines.push(
+        `패턴 offset=${bar.offset} ${bar.dir}: ${labels} `
+        + `(몸${bar.bodyPct}%/윗${bar.upperWickPct}%/아랫${bar.lowerWickPct}%)`,
+      );
+    }
+    if (!patternRows.length) {
+      lines.push('패턴: 최근 8봉에 특수 패턴 없음');
+    }
+
+    if (indicators && typeof indicators === 'object') {
+      const indBits = [];
+      if (indicators.rsi14 != null) indBits.push(`RSI14=${indicators.rsi14}`);
+      if (indicators.ema7 != null) indBits.push(`EMA7=${indicators.ema7}`);
+      if (indicators.ema25 != null) indBits.push(`EMA25=${indicators.ema25}`);
+      if (indicators.ema99 != null) indBits.push(`EMA99=${indicators.ema99}`);
+      if (indicators.macd) {
+        const m = indicators.macd;
+        indBits.push(`MACD=${m.macd ?? '—'}/${m.signal ?? '—'}/h=${m.histogram ?? '—'}`);
+      }
+      if (indicators.atr14 != null) indBits.push(`ATR14=${indicators.atr14}`);
+      if (indicators.adx14 != null) indBits.push(`ADX14=${indicators.adx14}`);
+      if (indicators.stoch) {
+        indBits.push(`Stoch=${indicators.stoch.k ?? '—'}/${indicators.stoch.d ?? '—'}`);
+      }
+      if (indicators.active?.length) {
+        indBits.push(`차트활성=${indicators.active.map((a) => a.name || a.id).join(',')}`);
+      }
+      if (indBits.length) lines.push(`지표: ${indBits.join(' · ')}`);
+    }
+
+    const fvg = analysis?.fvg;
+    if (fvg?.priceInZones?.length) {
+      lines.push(`FVG 가격존: ${fvg.priceInZones.map((z) => `${z.side} ${z.bottom}-${z.top}`).join(' | ')}`);
+    }
+    const div = analysis?.divergence;
+    if (div?.rsi?.bullish || div?.rsi?.bearish || div?.macd?.bullish || div?.macd?.bearish) {
+      const rsiDiv = [div.rsi?.bullish && '상승', div.rsi?.bearish && '하락'].filter(Boolean).join('/') || '없음';
+      const macdDiv = [div.macd?.bullish && '상승', div.macd?.bearish && '하락'].filter(Boolean).join('/') || '없음';
+      lines.push(`다이버전스: RSI(${rsiDiv}) · MACD(${macdDiv})`);
+    }
+
+    return {
+      updatedAt: Date.now(),
+      lines,
+      text: lines.join('\n'),
+      patterns: patternRows,
+      bos,
+      choch,
+      trendReversal: {
+        priorBias: rev.priorBias,
+        phase: rev.phase,
+        againstTrend: rev.latest?.againstTrend ?? false,
+        signals: rev.signals || [],
+      },
+      indicators: indicators || null,
+      note: 'strategyLog is the authoritative digest for patterns/BoS/CHOCH/indicators. Prefer these lines over inventing from OHLC alone.',
     };
   }
 
@@ -656,7 +844,10 @@
     const ema99 = emaVal(99);
 
     let adx14 = null;
-    if (window.TA?.adx) {
+    if (window.TA?.dmi) {
+      const pt = TA.dmi(candles, 14)?.adx?.at(-1);
+      adx14 = pt?.value ?? pt ?? null;
+    } else if (window.TA?.adx) {
       const pt = TA.adx(candles, 14)?.at(-1);
       adx14 = pt?.value ?? pt ?? null;
     }
@@ -813,8 +1004,7 @@
       lastLow,
     };
     const trendReversal = analyzeTrendReversal(candles, trend, swingPack, recent);
-
-    return {
+    const pack = {
       recentCandles: recent,
       recentCandlesNote: 'Oldest→newest. offset 0=current bar, -1=previous. bodyPct/upperWickPct/lowerWickPct are % of (high-low) and sum≈100. shape=long_lower_wick|long_upper_wick|upper_rejection|lower_rejection|full_body|balanced. patterns=matched candle patterns. Do NOT treat offset -1 as a swing high/low.',
       swings: {
@@ -848,6 +1038,8 @@
       trend,
       trendReversal,
     };
+    pack.strategyLog = buildStrategyLog(candles, pack, null);
+    return pack;
   }
 
   function catalogForAi() {
@@ -876,6 +1068,7 @@
     swingLevelsAsOf,
     analyzeTrend,
     analyzeTrendReversal,
+    buildStrategyLog,
     buildBacktestStructureCache,
     analyzeForAi,
     evaluateFvg,
