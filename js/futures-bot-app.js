@@ -136,10 +136,7 @@ const FuturesBotApp = (() => {
   function loadStrategySlots() {
     try {
       const parsed = readLocalJson(STRATEGY_SLOTS_KEY);
-      if (!parsed) return null;
-      if (!Array.isArray(parsed)) return null;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return null;
+      if (!parsed || !Array.isArray(parsed)) return null;
       return parsed
         .filter((s) => s && typeof s === 'object')
         .slice(0, MAX_STRATEGY_SLOTS)
@@ -3643,48 +3640,55 @@ const FuturesBotApp = (() => {
     bindBacktestClient();
     bindUiEvents();
 
-    await AppAuth.init();
-    const bootHealth = await FuturesApiClient.getHealth();
-    await AppAuth.refreshFromHealth(bootHealth);
-    await loadPlatformOutboundIp();
-    if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
-      addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
-    } else if (AppAuth.isRequired()) {
-      syncExchangeEnv(false);
-    }
-
-    readFormSettings();
-    $('#addStrategySlotBtn')?.addEventListener('click', () => {
-      const slot = addStrategySlot();
-      if (slot) {
-        addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
-        onStrategySlotsChanged({ recompute: false });
+    try {
+      await AppAuth.init();
+      const bootHealth = await FuturesApiClient.getHealth();
+      await AppAuth.refreshFromHealth(bootHealth);
+      updateApiServerStatus(Boolean(bootHealth?.ok), Boolean(bootHealth?.connected));
+      await loadPlatformOutboundIp();
+      if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+        addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
+      } else if (AppAuth.isRequired()) {
+        syncExchangeEnv(false);
       }
-    });
-    updateChartIndicatorButtons();
-    updateMacdLineFilterUi();
-    updateRsiEntryFilterUi();
-    updateSwingLevelsUi();
-    sessionStartEquity = await getEquity();
 
-    await restoreSessionFromServer();
-    await restoreStrategyPersistence();
-    setModeBadge();
+      readFormSettings();
+      $('#addStrategySlotBtn')?.addEventListener('click', () => {
+        const slot = addStrategySlot();
+        if (slot) {
+          addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
+          onStrategySlotsChanged({ recompute: false });
+        }
+      });
+      updateChartIndicatorButtons();
+      updateMacdLineFilterUi();
+      updateRsiEntryFilterUi();
+      updateSwingLevelsUi();
+      sessionStartEquity = await getEquity();
 
-    if ((Chart.getCandles() || []).length) {
-      onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
+      await restoreSessionFromServer();
+      await restoreStrategyPersistence();
+      setModeBadge();
+
+      if ((Chart.getCandles() || []).length) {
+        onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
+      }
+
+      addLog('Orbinex 차트 연동됨', 'info');
+      if (Chart.available()) {
+        syncChartIndicators();
+        Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
+      }
+      updateConfirmSlTpUi();
+      autoConfirmSlTpFromStrategy();
+      updateSlTpStrategyHint();
+      syncPreviewFromLastSignal();
+      if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 실거래/테스트넷 키 연결 가능', 'info');
+    } catch (err) {
+      console.error('FuturesBotApp.init failed', err);
+      updateApiServerStatus(await FuturesApiClient.checkServer().catch(() => false), false);
+      addLog(`앱 초기화 오류: ${err?.message || err}`, 'loss');
     }
-
-    addLog('Orbinex 차트 연동됨', 'info');
-    if (Chart.available()) {
-      syncChartIndicators();
-      Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
-    }
-    updateConfirmSlTpUi();
-    autoConfirmSlTpFromStrategy();
-    updateSlTpStrategyHint();
-    syncPreviewFromLastSignal();
-    if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 실거래/테스트넷 키 연결 가능', 'info');
 
     document.querySelectorAll('[data-chart-ind]').forEach((btn) => {
       btn.addEventListener('click', () => toggleChartIndicator(btn.dataset.chartInd));
@@ -3692,8 +3696,8 @@ const FuturesBotApp = (() => {
     $('#hideUnusedIndicatorsBtn')?.addEventListener('click', hideUnusedChartIndicators);
     $('#exportStrategyBtn')?.addEventListener('click', exportStrategyForServer);
 
-    $('#connectApiBtn').addEventListener('click', connectApi);
-    $('#disconnectApiBtn').addEventListener('click', disconnectApi);
+    $('#connectApiBtn')?.addEventListener('click', connectApi);
+    $('#disconnectApiBtn')?.addEventListener('click', disconnectApi);
     $('#copyPlatformIpBtn')?.addEventListener('click', async () => {
       const ip = $('#platformOutboundIp')?.textContent?.trim();
       if (!ip || ip.includes('조회')) return;
