@@ -263,6 +263,32 @@ const FuturesApiClient = (() => {
     return request('/api/auth/me');
   }
 
+  async function billingMe() {
+    return request('/api/billing/me');
+  }
+
+  async function billingStatus() {
+    return request('/api/billing/status');
+  }
+
+  async function billingPrepare() {
+    return request('/api/billing/prepare', { method: 'POST', body: '{}' });
+  }
+
+  async function billingConfirm({ authKey, customerKey }) {
+    return request('/api/billing/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ authKey, customerKey }),
+    });
+  }
+
+  async function billingCancel({ immediate = false } = {}) {
+    return request('/api/billing/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ immediate }),
+    });
+  }
+
   function isConnected() {
     return connected;
   }
@@ -299,6 +325,11 @@ const FuturesApiClient = (() => {
     authRegister,
     authLogin,
     authMe,
+    billingMe,
+    billingStatus,
+    billingPrepare,
+    billingConfirm,
+    billingCancel,
     isConnected,
     setConnected,
   };

@@ -27,6 +27,12 @@ class User(Base):
     openai_credential: Mapped["OpenAiCredential | None"] = relationship(
         "OpenAiCredential", back_populates="user", uselist=False
     )
+    subscription: Mapped["Subscription | None"] = relationship(
+        "Subscription", back_populates="user", uselist=False
+    )
+    usage_quota: Mapped["UsageQuota | None"] = relationship(
+        "UsageQuota", back_populates="user", uselist=False
+    )
 
 
 class ExchangeCredential(Base):
@@ -67,3 +73,49 @@ class OpenAiCredential(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="openai_credential")
+
+
+class Subscription(Base):
+    """Toss Payments billing-key subscription (free by default)."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_subscriptions_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), default="free", nullable=False)  # free | pro
+    status: Mapped[str] = mapped_column(String(32), default="inactive", nullable=False)
+    toss_customer_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    toss_billing_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="subscription")
+
+
+class UsageQuota(Base):
+    """Weekly free-tier counters (bot runtime + GPT calls)."""
+
+    __tablename__ = "usage_quotas"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_usage_quotas_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    week_start: Mapped[str] = mapped_column(String(32), nullable=False, default="")  # YYYY-MM-DD
+    bot_seconds_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gpt_calls_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bot_session_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="usage_quota")

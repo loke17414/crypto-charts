@@ -1267,6 +1267,40 @@
   font-size: 0.78rem;
 }
 
+.trading-page--simple .billing-panel {
+  margin: 0 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--simple-border-soft);
+  border-radius: var(--simple-radius-sm);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.trading-page--simple .billing-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.trading-page--simple .billing-panel__plan.is-pro {
+  color: var(--simple-accent, #f97316);
+}
+
+.trading-page--simple .billing-panel__quota,
+.trading-page--simple .billing-panel__note {
+  margin: 0.15rem 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.trading-page--simple .billing-panel .auth-panel__actions {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
 .trading-page--simple .auth-panel .bot-control-row {
   margin-top: 0.35rem;
 }

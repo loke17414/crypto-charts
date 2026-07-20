@@ -805,9 +805,12 @@ def select_openai_model(
     *,
     current_settings: dict[str, Any] | None = None,
     web_research: list[dict[str, Any]] | None = None,
+    force_mini: bool = False,
 ) -> tuple[str, str]:
     """Return (model_name, route_reason). Uses mini by default; 4o for hard strategy edits."""
     _api_key, default_model, complex_model = _openai_models()
+    if force_mini:
+        return default_model, "free_tier_mini"
     routing = _model_routing_mode()
     if routing in {"off", "false", "0", "single", "mini", "default"}:
         return default_model, "single"
@@ -1596,6 +1599,7 @@ def interpret_strategy(
     backtest_snapshot: dict[str, Any] | None = None,
     api_key: str | None = None,
     user_id: int | None = None,
+    force_mini: bool = False,
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
@@ -1623,6 +1627,7 @@ def interpret_strategy(
         prompt.strip(),
         current_settings=raw_settings,
         web_research=web_research,
+        force_mini=force_mini,
     )
     logger.info("Strategy AI route: model=%s reason=%s user=%s", chosen_model, route_reason, user_id)
 

@@ -122,3 +122,63 @@ def register_rate_limit() -> tuple[int, int]:
     except ValueError:
         window = 3600
     return max_calls, window
+
+
+def toss_secret_key() -> str:
+    return os.getenv("TOSS_SECRET_KEY", "").strip().strip('"').strip("'")
+
+
+def toss_client_key() -> str:
+    return os.getenv("TOSS_CLIENT_KEY", "").strip().strip('"').strip("'")
+
+
+def toss_pro_amount_krw() -> int:
+    """Monthly Pro price in KRW (Toss billing charge amount)."""
+    try:
+        return max(100, int(os.getenv("TOSS_PRO_AMOUNT_KRW", "29000").strip()))
+    except ValueError:
+        return 29000
+
+
+def toss_pro_order_name() -> str:
+    return os.getenv("TOSS_PRO_ORDER_NAME", "Orbinex Pro 월간 구독").strip() or "Orbinex Pro 월간 구독"
+
+
+def billing_configured() -> bool:
+    """True when Toss billing keys are set (client + secret)."""
+    return bool(toss_secret_key() and toss_client_key())
+
+
+def billing_enforce() -> bool:
+    """
+    Enforce free-tier quotas for logged-in users.
+    Default: on when AUTH_REQUIRED=true, else off (local single-tenant).
+    Override with BILLING_ENFORCE=true|false.
+    """
+    raw = os.getenv("BILLING_ENFORCE", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return auth_required()
+
+
+def free_bot_seconds_per_week() -> int:
+    """Free plan bot runtime per week. Default 48h."""
+    try:
+        hours = float(os.getenv("FREE_BOT_HOURS_PER_WEEK", "48").strip())
+    except ValueError:
+        hours = 48.0
+    return max(0, int(hours * 3600))
+
+
+def free_gpt_calls_per_week() -> int:
+    try:
+        return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "20").strip()))
+    except ValueError:
+        return 20
+
+
+def billing_week_timezone() -> str:
+    """IANA tz for weekly quota reset. Default Asia/Seoul."""
+    return os.getenv("BILLING_WEEK_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"

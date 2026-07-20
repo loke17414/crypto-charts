@@ -135,6 +135,9 @@ const AppAuth = (() => {
         if (typeof StrategyAI !== 'undefined') {
           await StrategyAI.reloadForUser?.();
         }
+        if (typeof AppBilling !== 'undefined') {
+          await AppBilling.refresh?.();
+        }
       } catch (err) {
         alert(err.message || '로그인 실패');
       }
@@ -155,12 +158,18 @@ const AppAuth = (() => {
         if (typeof StrategyAI !== 'undefined') {
           await StrategyAI.reloadForUser?.();
         }
+        if (typeof AppBilling !== 'undefined') {
+          await AppBilling.refresh?.();
+        }
       } catch (err) {
         alert(err.message || '회원가입 실패');
       }
     });
     document.getElementById('authLogoutBtn')?.addEventListener('click', () => {
       logout();
+      if (typeof AppBilling !== 'undefined') {
+        AppBilling.refresh?.();
+      }
     });
   }
 

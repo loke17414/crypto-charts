@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260720d">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260720e">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -233,6 +233,19 @@
             </div>
             <div id="authLoggedIn" class="hidden">
               <p class="auth-panel__user"><span class="text-muted">로그인:</span> <strong id="authUserEmail">—</strong></p>
+              <div id="billingPanel" class="billing-panel hidden">
+                <div class="billing-panel__row">
+                  <span class="text-muted">플랜</span>
+                  <strong id="billingPlanLabel" class="billing-panel__plan">—</strong>
+                </div>
+                <p id="billingBotQuota" class="billing-panel__quota api-hint">봇 가동: —</p>
+                <p id="billingGptQuota" class="billing-panel__quota api-hint">GPT: —</p>
+                <p id="billingNote" class="billing-panel__note api-hint">구독 정보를 불러오는 중…</p>
+                <div class="auth-panel__actions">
+                  <button type="button" id="billingUpgradeBtn" class="btn btn--simple-primary btn--block btn--sm hidden">Pro 구독 (토스)</button>
+                  <button type="button" id="billingCancelBtn" class="btn btn--simple-ghost btn--block btn--sm hidden">구독 해지</button>
+                </div>
+              </div>
               <button type="button" id="authLogoutBtn" class="btn btn--simple-ghost btn--block btn--sm">로그아웃</button>
             </div>
           </div>
@@ -365,8 +378,9 @@
   <script src="js/futures-strategy.js?v=20260720a"></script>
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
-  <script src="js/futures-api-client.js?v=20260720e"></script>
-  <script src="js/auth.js?v=20260720a"></script>
+  <script src="js/futures-api-client.js?v=20260720h"></script>
+  <script src="js/auth.js?v=20260720b"></script>
+  <script src="js/billing.js?v=20260720b"></script>
   <script src="js/risk-sizing.js?v=20260720a"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>

@@ -17,13 +17,31 @@ from starlette.responses import JSONResponse
 
 from bot.auth_routes import get_optional_user, peek_optional_user, router as auth_router
 from bot.auth_service import decode_access_token
+from bot.billing_routes import router as billing_router
+from bot.billing_service import (
+    assert_can_start_bot,
+    assert_can_use_gpt,
+    ensure_subscription,
+    is_pro,
+    mark_bot_started,
+    mark_bot_stopped,
+    record_gpt_call,
+    should_force_stop_bot,
+)
 from bot.config import BotConfig
 from bot.credentials import clear_binance_credentials, credentials_configured, load_binance_credentials, persist_binance_credentials
 from bot.crypto_vault import vault_ready
 from bot.db import get_db, init_db
 from bot.exchange import BinanceFuturesClient
 from bot.models import User
-from bot.platform_config import app_origin, auth_required, cors_allow_origins, database_url
+from bot.platform_config import (
+    app_origin,
+    auth_required,
+    billing_configured,
+    billing_enforce,
+    cors_allow_origins,
+    database_url,
+)
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
@@ -150,6 +168,11 @@ async def lifespan(app: FastAPI):
         "Login token expiry: %s",
         "never (ACCESS_TOKEN_EXPIRE_MINUTES=0)" if expire_m == 0 else f"{expire_m} minutes",
     )
+    logger.info(
+        "Billing: toss=%s enforce=%s",
+        "configured" if billing_configured() else "off",
+        "on" if billing_enforce() else "off",
+    )
     if not auth_required():
         auto_connect_from_env()
     restore_bot_if_needed()
@@ -162,11 +185,13 @@ PUBLIC_API_PATHS = {
     "/api/auth/register",
     "/api/auth/login",
     "/api/platform/outbound-ip",
+    "/api/billing/status",
 }
 
 
 app = FastAPI(title="Orbinex Futures API", version="1.0", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(billing_router)
 
 
 @app.middleware("http")
@@ -520,9 +545,14 @@ def strategy_configure(
 def strategy_interpret(
     body: StrategyInterpretRequest,
     user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
 ) -> StrategyInterpretResponse:
     if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+    assert_can_use_gpt(db, user)
+    force_mini = False
+    if user is not None and billing_enforce():
+        force_mini = not is_pro(ensure_subscription(db, user.id))
     # Use platform OPENAI_API_KEY; keep chat memory scoped per user.
     try:
         result = interpret_strategy(
@@ -535,12 +565,16 @@ def strategy_interpret(
             backtest_snapshot=body.backtest_snapshot,
             api_key=None,
             user_id=user.id if user is not None else None,
+            force_mini=force_mini,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Strategy interpret failed")
         raise HTTPException(status_code=502, detail=f"전략 해석 실패: {exc}") from exc
+
+    if user is not None:
+        record_gpt_call(db, user.id)
 
     settings = StrategySettings.model_validate(result["settings"])
     return StrategyInterpretResponse(
@@ -931,8 +965,21 @@ def bot_clear_entry_pause(user: User | None = Depends(get_optional_user)) -> dic
 
 
 @app.get("/api/bot/status")
-def get_bot_status(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
-    return {"ok": True, **bot_status(user.id if user else None)}
+def get_bot_status(
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    uid = user.id if user else None
+    if uid is not None and is_running(uid) and should_force_stop_bot(db, uid):
+        mark_bot_stopped(db, uid)
+        stop_bot(uid)
+        return {
+            "ok": True,
+            **bot_status(uid),
+            "quotaStopped": True,
+            "message": "무료 주간 봇 가동 시간을 모두 사용해 봇이 정지되었습니다.",
+        }
+    return {"ok": True, **bot_status(uid)}
 
 
 @app.post("/api/bot/start")
@@ -941,6 +988,7 @@ def bot_start(
     user: User | None = Depends(get_optional_user),
     db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
+    assert_can_start_bot(db, user)
     session = _get_session(user)
     if not session:
         if user is not None:
@@ -962,20 +1010,28 @@ def bot_start(
     uid = user.id if user is not None else None
     try:
         if user is not None:
-            return start_bot(
+            result = start_bot(
                 user_id=uid,
                 live_trading=live,
                 api_key=session.config.api_key,
                 api_secret=session.config.api_secret,
                 use_testnet=session.config.use_testnet,
             )
+            if result.get("running"):
+                mark_bot_started(db, user.id)
+            return result
         return start_bot(user_id=None, live_trading=live)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/bot/stop")
-def bot_stop(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
+def bot_stop(
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    if user is not None:
+        mark_bot_stopped(db, user.id)
     return stop_bot(user.id if user else None)
 
 
