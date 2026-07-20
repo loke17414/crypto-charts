@@ -60,17 +60,36 @@ const StrategyAI = (() => {
       result.items.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
-      const bench = item.bench;
-      const benchLine = bench
-        ? `벤치 ${bench.winRate}%/${bench.trades}회 (${bench.interval}) · PnL ${bench.totalPnlPct}%`
+      const bench = item.bench || {};
+      const interval = bench.interval || '—';
+      const wr = Number.isFinite(bench.winRate) ? bench.winRate : item.winRate;
+      const pnl = Number.isFinite(bench.totalPnlPct) ? bench.totalPnlPct : item.totalPnlPct;
+      const trades = Number.isFinite(bench.trades) ? bench.trades : item.trades;
+      const pnlNum = Number(pnl);
+      const pnlClass = Number.isFinite(pnlNum)
+        ? (pnlNum > 0 ? 'is-pos' : pnlNum < 0 ? 'is-neg' : '')
         : '';
-      const liveLine = `현재 차트 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%`;
+      const pnlText = Number.isFinite(pnlNum)
+        ? `${pnlNum > 0 ? '+' : ''}${pnlNum}%`
+        : '—';
+      const intervalLabel = formatIntervalLabel(interval);
+      // Strip trailing bench noise from blurb — stats are in badges now.
+      const blurb = String(item.blurb || '')
+        .replace(/\s*·\s*백테스트[^·]*/g, '')
+        .replace(/\s*·\s*$/, '')
+        .trim();
       row.innerHTML = `
-          <div>
-            <strong>${index + 1}. ${item.name}</strong>
-            <div class="strategy-recommend__meta">${item.blurb || ''}</div>
-            ${benchLine ? `<div class="strategy-recommend__meta">${benchLine}</div>` : ''}
-            <div class="strategy-recommend__meta">${liveLine}</div>
+          <div class="strategy-recommend__main">
+            <div class="strategy-recommend__title-row">
+              <strong class="strategy-recommend__name">${index + 1}. ${item.name}</strong>
+            </div>
+            <div class="strategy-recommend__stats" aria-label="백테스트 요약">
+              <span class="strategy-recommend__badge strategy-recommend__badge--tf" title="백테스트 봉주기">${intervalLabel}</span>
+              <span class="strategy-recommend__badge strategy-recommend__badge--wr" title="승률 (${trades}회)">승률 ${wr}%</span>
+              <span class="strategy-recommend__badge strategy-recommend__badge--pnl ${pnlClass}" title="누적 PnL">PnL ${pnlText}</span>
+            </div>
+            ${blurb ? `<div class="strategy-recommend__meta">${blurb}</div>` : ''}
+            <div class="strategy-recommend__meta strategy-recommend__live">현재 차트 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%</div>
           </div>
           <div class="strategy-recommend__actions">
             <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}">적용</button>
@@ -79,6 +98,15 @@ const StrategyAI = (() => {
         `;
       list.appendChild(row);
     });
+  }
+
+  function formatIntervalLabel(interval) {
+    const map = {
+      '1m': '1분봉', '3m': '3분봉', '5m': '5분봉', '15m': '15분봉', '30m': '30분봉',
+      '1h': '1시간봉', '2h': '2시간봉', '4h': '4시간봉', '6h': '6시간봉',
+      '12h': '12시간봉', '1d': '일봉', '1w': '주봉',
+    };
+    return map[interval] || (interval ? `${interval}봉` : '봉 —');
   }
 
   function refreshRecommendedStrategies({ force = true } = {}) {
