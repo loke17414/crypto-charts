@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from bot.auth_service import authenticate_user, create_access_token, create_user, decode_access_token
 from bot.db import get_db
 from bot.models import User
-from bot.platform_config import auth_required
+from bot.platform_config import auth_required, register_rate_limit
+from bot.rate_limit import RateLimiter, client_ip
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+_reg_max, _reg_window = register_rate_limit()
+_register_limiter = RateLimiter(max_calls=_reg_max, window_seconds=_reg_window)
 
 
 class RegisterBody(BaseModel):
@@ -81,7 +85,15 @@ def peek_optional_user(
 
 
 @router.post("/register")
-def register(body: RegisterBody, db: Session = Depends(get_db)) -> dict[str, Any]:
+def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _register_limiter.check(f"register:{ip}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"가입 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
     try:
         user = create_user(db, body.email, body.password)
     except ValueError as exc:

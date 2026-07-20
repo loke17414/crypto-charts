@@ -109,3 +109,16 @@ def max_concurrent_bots() -> int:
         return max(1, min(500, int(raw)))
     except ValueError:
         return 50
+
+
+def register_rate_limit() -> tuple[int, int]:
+    """Max signup attempts per IP within window seconds. Default 5 / hour."""
+    try:
+        max_calls = max(1, int(os.getenv("REGISTER_RATE_LIMIT", "5").strip()))
+    except ValueError:
+        max_calls = 5
+    try:
+        window = max(60, int(os.getenv("REGISTER_RATE_WINDOW_SECONDS", "3600").strip()))
+    except ValueError:
+        window = 3600
+    return max_calls, window

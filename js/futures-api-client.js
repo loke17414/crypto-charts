@@ -55,6 +55,9 @@ const FuturesApiClient = (() => {
           detail || '로그인 세션이 만료되었습니다. 다시 로그인한 뒤 OpenAI 키를 저장해 주세요.',
         );
       }
+      if (res.status === 429) {
+        throw new Error(formatApiError(data, res.status) || '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+      }
       if (res.status === 404) {
         throw new Error(formatNotFoundHint(path, method));
       }
