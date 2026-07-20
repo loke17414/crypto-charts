@@ -88,7 +88,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y nginx certbot dnsutils curl
 
-mkdir -p /var/www/certbot
+# Open host firewall if ufw is active (Vultr cloud firewall is separate)
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -qi 'Status: active'; then
+  echo "==> ufw: allow 80/443"
+  ufw allow 80/tcp >/dev/null || true
+  ufw allow 443/tcp >/dev/null || true
+fi
+
+mkdir -p /var/www/certbot/.well-known/acme-challenge
 
 # Bind app to localhost so 8000/8765 are not exposed publicly
 if [ ! -f .env ]; then
@@ -147,7 +154,17 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
-echo "==> Requesting Let's Encrypt certificate (webroot)..."
+# Prove ACME path works before calling Let's Encrypt
+echo ok-preflight > /var/www/certbot/.well-known/acme-challenge/preflight
+PREFLIGHT="$(curl -sf --max-time 3 "http://127.0.0.1/.well-known/acme-challenge/preflight" -H "Host: ${DOMAIN}" || true)"
+if [ "$PREFLIGHT" != "ok-preflight" ]; then
+  echo "ERROR: nginx is not serving ACME files on port 80 (localhost)."
+  echo "Run: sudo bash deploy/diagnose-https.sh ${DOMAIN}"
+  exit 1
+fi
+echo "==> ACME path OK on localhost"
+
+# Prefer IPv4-only cert when no working IPv6
 CERTBOT_ARGS=(
   certonly
   --webroot
@@ -156,6 +173,7 @@ CERTBOT_ARGS=(
   --non-interactive
   --agree-tos
   --keep-until-expiring
+  --preferred-challenges http
 )
 if [ "$USE_EMAIL" -eq 1 ]; then
   CERTBOT_ARGS+=(--email "$EMAIL")
@@ -163,6 +181,7 @@ else
   CERTBOT_ARGS+=(--register-unsafely-without-email)
 fi
 
+echo "==> Requesting Let's Encrypt certificate (webroot)..."
 set +e
 certbot "${CERTBOT_ARGS[@]}"
 CERTBOT_RC=$?
@@ -171,12 +190,19 @@ set -e
 if [ "$CERTBOT_RC" -ne 0 ]; then
   echo ""
   echo "ERROR: certbot failed (exit $CERTBOT_RC) — often 'Some challenges have failed'."
+  echo "DNS looks OK; next suspect is Vultr firewall blocking inbound TCP 80."
   echo ""
-  echo "Checklist:"
-  echo "  1) Cloudflare: A @ → ${VPS_IP:-this-vps-ip}, Proxy = DNS only (grey cloud)"
-  echo "  2) Firewall / Vultr: allow TCP 80 and 443 inbound"
-  echo "  3) Test locally:  curl -I http://${DOMAIN}/.well-known/acme-challenge/"
-  echo "  4) Retry:         sudo bash deploy/setup-https.sh ${DOMAIN} none"
+  echo "Run diagnostics:"
+  echo "  sudo bash deploy/diagnose-https.sh ${DOMAIN}"
+  echo ""
+  echo "Vultr → Firewall Group → inbound:"
+  echo "  TCP 80  from 0.0.0.0/0"
+  echo "  TCP 443 from 0.0.0.0/0"
+  echo "Attach that group to this server, wait ~1 min, then retry:"
+  echo "  sudo bash deploy/setup-https.sh ${DOMAIN} none"
+  echo ""
+  echo "Certbot detail:"
+  tail -n 30 /var/log/letsencrypt/letsencrypt.log 2>/dev/null | sed 's/^/  /' || true
   exit "$CERTBOT_RC"
 fi
 
