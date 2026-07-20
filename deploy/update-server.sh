@@ -122,6 +122,12 @@ else
 fi
 
 PUBLIC=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+ORIGIN=$(grep -E '^APP_ORIGIN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
 echo ""
-echo "==> Done. Open: http://${PUBLIC}:8765/trading.html"
+if echo "$ORIGIN" | grep -qi '^https://'; then
+  echo "==> Done. Open: ${ORIGIN}/trading.html"
+else
+  echo "==> Done. Open: http://${PUBLIC}:8765/trading.html"
+  echo "    HTTPS (Phase 2-E): sudo bash deploy/setup-https.sh your.domain.com you@email.com"
+fi
 echo "    Then Ctrl+F5 refresh and start bot."

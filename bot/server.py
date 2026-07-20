@@ -23,7 +23,7 @@ from bot.crypto_vault import vault_ready
 from bot.db import get_db, init_db
 from bot.exchange import BinanceFuturesClient
 from bot.models import User
-from bot.platform_config import auth_required, database_url
+from bot.platform_config import app_origin, auth_required, cors_allow_origins, database_url
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
@@ -193,10 +193,12 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+_CORS_ORIGINS = cors_allow_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_CORS_ORIGINS,
+    # credentials + "*" is invalid in browsers; only enable when origins are explicit
+    allow_credentials=_CORS_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -373,6 +375,7 @@ def health(
         "ok": True,
         "apiVersion": 2,
         "authRequired": auth_required(),
+        "appOrigin": app_origin(),
         "connected": connected,
         "credentialsSaved": creds_saved,
         "vaultReady": vault_ready(),

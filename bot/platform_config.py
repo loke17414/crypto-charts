@@ -93,6 +93,15 @@ def app_origin() -> str:
     return os.getenv("APP_ORIGIN", "*").strip() or "*"
 
 
+def cors_allow_origins() -> list[str]:
+    """Parse APP_ORIGIN — comma-separated list, or ['*'] for local/dev."""
+    raw = app_origin()
+    if raw == "*":
+        return ["*"]
+    origins = [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+    return origins or ["*"]
+
+
 def max_concurrent_bots() -> int:
     """Hard cap on simultaneous per-user Node bot processes (Phase 2-C)."""
     raw = os.getenv("MAX_CONCURRENT_BOTS", "50").strip()

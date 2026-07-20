@@ -3,14 +3,17 @@
  * 다른 그룹은 이 모듈의 함수만 호출한다. 통신 오류는 의미 있는 정보이므로
  * 여기서 삼키지 않고 throw 하며, 호출한 쪽 try/catch가 사용자에게 보여준다. */
 const FuturesApiClient = (() => {
-  // Same host as the page, port 8000 — works on localhost and on a remote VPS
-  // (http://<server-ip>:8765 → API http://<server-ip>:8000).
+  // Direct launch.py: web :8765 → API :8000.
+  // Behind nginx/HTTPS (port 80/443 or https:): same-origin /api proxy.
   function resolveApiBase() {
-    if (typeof window !== 'undefined' && window.location?.hostname) {
-      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-      return `${protocol}//${window.location.hostname}:8000`;
+    if (typeof window === 'undefined' || !window.location?.hostname) {
+      return 'http://127.0.0.1:8000';
     }
-    return 'http://127.0.0.1:8000';
+    const { protocol, hostname, port } = window.location;
+    if (protocol === 'https:' || !port || port === '443' || port === '80') {
+      return '';
+    }
+    return `${protocol}//${hostname}:8000`;
   }
   const API_BASE = resolveApiBase();
   let connected = false;
