@@ -29,12 +29,16 @@ const StrategyAI = (() => {
   let conversationHistory = [];
   let aiPopupOpen = false;
 
+  let recommendRefreshToken = 0;
+  let recommendBusy = false;
+
   function openAiPopup() {
     aiPopupOpen = true;
     $('#strategyAiPopup')?.classList.remove('hidden');
     $('#strategyAiToggleBtn')?.classList.add('is-active');
     $('#strategyAiInput')?.focus();
-    refreshRecommendedStrategies();
+    // Reuse cached list if present — avoid wiping UI on every open.
+    refreshRecommendedStrategies({ force: false });
   }
 
   function getChartCandles() {
@@ -43,37 +47,20 @@ const StrategyAI = (() => {
       || [];
   }
 
-  function refreshRecommendedStrategies() {
+  function renderRecommendedList(result) {
     const list = $('#strategyRecommendList');
     const note = $('#strategyRecommendNote');
     if (!list) return;
-    if (!window.StrategyPresets?.recommend) {
-      if (note) note.textContent = '추천 전략 모듈을 불러오지 못했습니다.';
+    if (note) note.textContent = result?.note || '';
+    list.innerHTML = '';
+    if (!result?.items?.length) {
+      list.innerHTML = '<div class="api-hint">추천할 전략이 없습니다. 차트를 불러온 뒤 새로고침하세요.</div>';
       return;
     }
-    list.innerHTML = '<div class="api-hint">현재 차트에서 승률 측정 중…</div>';
-    if (note) note.textContent = '측정 중…';
-
-    // Yield to UI so the popup paints before heavy replay work.
-    requestAnimationFrame(() => {
-      const candles = getChartCandles();
-      const result = StrategyPresets.recommend(candles, {
-        minWinRate: 50,
-        minTrades: 5,
-        limit: 10,
-        maxTrades: 50,
-      });
-      window.__lastRecommendedStrategies = result;
-      if (note) note.textContent = result.note || '';
-      list.innerHTML = '';
-      if (!result.items?.length) {
-        list.innerHTML = '<div class="api-hint">추천할 전략이 없습니다. 차트를 불러온 뒤 새로고침하세요.</div>';
-        return;
-      }
-      result.items.forEach((item, index) => {
-        const row = document.createElement('div');
-        row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
-        row.innerHTML = `
+    result.items.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
+      row.innerHTML = `
           <div>
             <strong>${index + 1}. ${item.name}</strong>
             <div class="strategy-recommend__meta">${item.blurb || ''}</div>
@@ -84,8 +71,50 @@ const StrategyAI = (() => {
             <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
           </div>
         `;
-        list.appendChild(row);
-      });
+      list.appendChild(row);
+    });
+  }
+
+  function refreshRecommendedStrategies({ force = true } = {}) {
+    const list = $('#strategyRecommendList');
+    const note = $('#strategyRecommendNote');
+    if (!list) return;
+    if (!window.StrategyPresets?.recommend) {
+      if (note) note.textContent = '추천 전략 모듈을 불러오지 못했습니다.';
+      return;
+    }
+
+    const cached = window.__lastRecommendedStrategies;
+    if (!force && cached?.items?.length) {
+      renderRecommendedList(cached);
+      return;
+    }
+    if (recommendBusy && !force) return;
+
+    const token = ++recommendRefreshToken;
+    recommendBusy = true;
+    // Keep existing rows visible while measuring — do not blank the list.
+    if (!list.children.length) {
+      list.innerHTML = '<div class="api-hint">현재 차트에서 승률 측정 중…</div>';
+    }
+    if (note) note.textContent = '측정 중…';
+
+    // Yield to UI so the popup paints before heavy replay work.
+    requestAnimationFrame(() => {
+      try {
+        const candles = getChartCandles();
+        const result = StrategyPresets.recommend(candles, {
+          minWinRate: 50,
+          minTrades: 5,
+          limit: 10,
+          maxTrades: 50,
+        });
+        if (token !== recommendRefreshToken) return;
+        window.__lastRecommendedStrategies = result;
+        renderRecommendedList(result);
+      } finally {
+        if (token === recommendRefreshToken) recommendBusy = false;
+      }
     });
   }
 
@@ -641,15 +670,27 @@ const StrategyAI = (() => {
       btn.addEventListener('click', () => handlePrompt(btn.dataset.strategyAiCmd));
     });
 
-    $('#strategyRecommendRefresh')?.addEventListener('click', () => refreshRecommendedStrategies());
+    $('#strategyRecommendRefresh')?.addEventListener('click', () => {
+      refreshRecommendedStrategies({ force: true });
+    });
     $('#strategyRecommendList')?.addEventListener('click', (e) => {
       const applyBtn = e.target.closest('[data-rec-apply]');
       if (applyBtn) {
+        e.preventDefault();
+        e.stopPropagation();
         applyRecommendedDirect(applyBtn.getAttribute('data-rec-apply'));
+        // Keep list mounted after apply — re-render from cache.
+        if (window.__lastRecommendedStrategies?.items?.length) {
+          renderRecommendedList(window.__lastRecommendedStrategies);
+        }
         return;
       }
       const gptBtn = e.target.closest('[data-rec-gpt]');
-      if (gptBtn) applyRecommendedViaGpt(gptBtn.getAttribute('data-rec-gpt'));
+      if (gptBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        applyRecommendedViaGpt(gptBtn.getAttribute('data-rec-gpt'));
+      }
     });
 
     $('#strategyAiToggleBtn')?.addEventListener('click', (e) => {

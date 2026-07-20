@@ -542,12 +542,14 @@
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.4rem;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .trading-page--simple .strategy-ai-popup .chart-ai-panel__messages {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 6rem;
+  max-height: 40%;
   overflow-y: auto;
   font-size: 0.72rem;
   background: var(--simple-bg);
@@ -566,6 +568,7 @@
 }
 
 .trading-page--simple .strategy-ai-popup .strategy-ai-quick,
+.trading-page--simple .strategy-ai-popup .strategy-recommend,
 .trading-page--simple .strategy-ai-popup .strategy-ai-target,
 .trading-page--simple .strategy-ai-popup .chart-ai-panel__settings {
   flex-shrink: 0;
@@ -1477,8 +1480,9 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  max-height: 220px;
+  max-height: min(220px, 28vh);
   overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .trading-page--simple .strategy-recommend__item {
