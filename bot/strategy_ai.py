@@ -245,6 +245,10 @@ MARKET DATA & BACKTEST (critical for accuracy):
   lines/text summarize ALL recent candle patterns, BoS, CHOCH, reversal candles, and indicators.
   indicators block: rsi14, ema7/25/99, macd, atr14, adx14, stoch, active chart indicators.
   Prefer strategyLog.lines + indicators over recomputing from raw OHLC.
+- recommendedStrategies (UI 추천 전략, winRate measured on THIS chart):
+  When user says "추천전략 <id> 적용" or picks a recommended strategy, copy settings from
+  recommendedStrategies.items[].settings EXACTLY into the patch (entryRules/exitRules/allowShort).
+  Prefer items with ok:true (winRate >= 50%, trades >= 5). Do not invent different rules.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 
 CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common GPT mistake):
@@ -1485,6 +1489,39 @@ def _reconcile_patch_intent(
     return patch
 
 
+_RECOMMENDED_ID_RE = re.compile(r"추천전략\s+([a-z0-9\-]+)", re.IGNORECASE)
+
+
+def _recommended_preset_patch(
+    prompt: str,
+    market_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return exact settings from client-measured recommendedStrategies when id is named."""
+    match = _RECOMMENDED_ID_RE.search(prompt or "")
+    if not match:
+        return None
+    rid = match.group(1).strip().lower()
+    block = (market_context or {}).get("recommendedStrategies") or {}
+    for item in block.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id", "")).strip().lower() != rid:
+            continue
+        settings = item.get("settings")
+        if isinstance(settings, dict) and settings:
+            out = {
+                k: v for k, v in settings.items()
+                if k in {
+                    "entryRules", "exitRules", "allowShort",
+                    "stopLossPct", "takeProfitPct",
+                    "rsiPeriod", "rsiOversold", "rsiOverbought",
+                    "leverage", "riskPerTradePct",
+                }
+            }
+            return out or None
+    return None
+
+
 def _apply_rule_templates(
     prompt: str,
     patch: dict[str, Any],
@@ -1613,6 +1650,25 @@ def interpret_strategy(
 
     # Rule templates also run on empty patches — e.g. "1분봉 캔들 상승시 롱 진입".
     patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+    # UI recommended strategies: force exact settings when user names an id.
+    rec_patch = _recommended_preset_patch(prompt.strip(), market)
+    if rec_patch:
+        patch = {**patch, **rec_patch}
+        rec_match = _RECOMMENDED_ID_RE.search(prompt.strip())
+        rec_id = rec_match.group(1).lower() if rec_match else ""
+        rec_name = next(
+            (
+                str(it.get("name"))
+                for it in ((market.get("recommendedStrategies") or {}).get("items") or [])
+                if isinstance(it, dict) and str(it.get("id", "")).lower() == rec_id
+            ),
+            rec_id or "추천 전략",
+        )
+        summary_hint = f"추천 전략 «{rec_name}» 적용"
+        if not str(raw.get("summary") or "").strip():
+            raw["summary"] = summary_hint
+        elif "추천" not in str(raw.get("summary")):
+            raw["summary"] = f"{summary_hint}. {raw.get('summary')}"
     if patch and not changed_fields:
         changed_fields = list(patch.keys())
     changed_fields = [f for f in changed_fields if isinstance(f, str) and f in patch]

@@ -527,7 +527,49 @@ const FuturesBotApp = (() => {
       ctx.hoveredCandle = hovered;
     }
 
+    // Recommended strategies (winRate measured on this chart) for GPT "추천전략 적용"
+    if (window.__lastRecommendedStrategies?.items?.length) {
+      ctx.recommendedStrategies = {
+        note: window.__lastRecommendedStrategies.note,
+        minWinRate: 50,
+        items: window.__lastRecommendedStrategies.items.map((it) => ({
+          id: it.id,
+          name: it.name,
+          blurb: it.blurb,
+          winRate: it.winRate,
+          trades: it.trades,
+          totalPnlPct: it.totalPnlPct,
+          ok: it.ok,
+          settings: it.settings,
+          gptPrompt: it.gptPrompt,
+        })),
+      };
+    } else if (window.StrategyPresets?.listCatalog) {
+      ctx.recommendedStrategies = {
+        note: 'UI에서 추천 목록을 새로고침하면 승률이 채워집니다.',
+        catalog: StrategyPresets.listCatalog(),
+      };
+    }
+
     return ctx;
+  }
+
+  function getLastCandles() {
+    return lastCandles.length ? lastCandles : (Chart.getCandles() || []);
+  }
+
+  function applyRecommendedPreset(id, options = {}) {
+    if (!window.StrategyPresets?.getPreset) return false;
+    const preset = StrategyPresets.getPreset(id);
+    if (!preset) return false;
+    const measured = StrategyPresets.measurePreset(getLastCandles(), preset);
+    if (!measured?.settings) return false;
+    return applyStrategySettings(measured.settings, {
+      patch: measured.settings,
+      changedFields: Object.keys(measured.settings),
+      targetSlotId: options.targetSlotId || $('#strategyAiTargetSlot')?.value || '__new__',
+      summary: options.summary || `추천 전략 적용: ${measured.name}`,
+    });
   }
 
   const INTERVAL_MINUTES = {
@@ -3611,6 +3653,8 @@ const FuturesBotApp = (() => {
     getMarketContextForAi,
     getBacktestSnapshotForAi,
     applyStrategySettings,
+    applyRecommendedPreset,
+    getLastCandles,
     applyChartInterval,
     updateStrategyRulesDisplay,
     exportStrategyForServer,

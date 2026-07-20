@@ -1449,6 +1449,74 @@
   margin-bottom: 0.2rem;
 }
 
+.trading-page--simple .strategy-recommend {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--simple-border, rgba(0, 0, 0, 0.08));
+}
+
+.trading-page--simple .strategy-recommend__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.25rem;
+}
+
+.trading-page--simple .strategy-recommend__title {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.trading-page--simple .strategy-recommend__note {
+  margin: 0 0 0.35rem;
+  font-size: 0.65rem;
+}
+
+.trading-page--simple .strategy-recommend__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.trading-page--simple .strategy-recommend__item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.4rem;
+  padding: 0.4rem 0.45rem;
+  border-radius: var(--simple-radius-sm, 6px);
+  background: var(--simple-bg, rgba(0, 0, 0, 0.03));
+  font-size: 0.68rem;
+}
+
+.trading-page--simple .strategy-recommend__item.is-pass {
+  border-left: 3px solid var(--green, #22a06b);
+}
+
+.trading-page--simple .strategy-recommend__item.is-fail {
+  border-left: 3px solid var(--simple-border, #ccc);
+  opacity: 0.85;
+}
+
+.trading-page--simple .strategy-recommend__meta {
+  color: var(--text-muted, #888);
+}
+
+.trading-page--simple .strategy-recommend__actions {
+  display: flex;
+  gap: 0.25rem;
+  align-items: start;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.trading-page--simple .strategy-recommend__actions .btn {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.65rem;
+}
+
 .trading-page--simple .control-advanced {
   flex-shrink: 0;
 }

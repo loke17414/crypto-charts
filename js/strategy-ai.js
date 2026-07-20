@@ -34,6 +34,97 @@ const StrategyAI = (() => {
     $('#strategyAiPopup')?.classList.remove('hidden');
     $('#strategyAiToggleBtn')?.classList.add('is-active');
     $('#strategyAiInput')?.focus();
+    refreshRecommendedStrategies();
+  }
+
+  function getChartCandles() {
+    return window.FuturesBotApp?.getLastCandles?.()
+      || window.CryptoCharts?.getCandles?.()
+      || [];
+  }
+
+  function refreshRecommendedStrategies() {
+    const list = $('#strategyRecommendList');
+    const note = $('#strategyRecommendNote');
+    if (!list) return;
+    if (!window.StrategyPresets?.recommend) {
+      if (note) note.textContent = '추천 전략 모듈을 불러오지 못했습니다.';
+      return;
+    }
+    list.innerHTML = '<div class="api-hint">현재 차트에서 승률 측정 중…</div>';
+    if (note) note.textContent = '측정 중…';
+
+    // Yield to UI so the popup paints before heavy replay work.
+    requestAnimationFrame(() => {
+      const candles = getChartCandles();
+      const result = StrategyPresets.recommend(candles, {
+        minWinRate: 50,
+        minTrades: 5,
+        limit: 10,
+        maxTrades: 50,
+      });
+      window.__lastRecommendedStrategies = result;
+      if (note) note.textContent = result.note || '';
+      list.innerHTML = '';
+      if (!result.items?.length) {
+        list.innerHTML = '<div class="api-hint">추천할 전략이 없습니다. 차트를 불러온 뒤 새로고침하세요.</div>';
+        return;
+      }
+      result.items.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
+        row.innerHTML = `
+          <div>
+            <strong>${index + 1}. ${item.name}</strong>
+            <div class="strategy-recommend__meta">${item.blurb || ''}</div>
+            <div class="strategy-recommend__meta">승률 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%</div>
+          </div>
+          <div class="strategy-recommend__actions">
+            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}" ${item.trades < 3 ? 'disabled' : ''}>적용</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+    });
+  }
+
+  function applyRecommendedDirect(id) {
+    const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id)
+      || (() => {
+        const preset = StrategyPresets.getPreset(id);
+        if (!preset) return null;
+        return StrategyPresets.measurePreset(getChartCandles(), preset);
+      })();
+    if (!pack?.settings) {
+      addMessage('assistant', '추천 전략을 찾을 수 없습니다. 새로고침 후 다시 시도하세요.', { persist: false });
+      return;
+    }
+    const targetSlotId = $('#strategyAiTargetSlot')?.value || '__new__';
+    const result = FuturesBotApp.applyStrategySettings(pack.settings, {
+      patch: pack.settings,
+      changedFields: Object.keys(pack.settings),
+      targetSlotId,
+      summary: `추천 전략 적용: ${pack.name} (승률 ${pack.winRate}%)`,
+    });
+    if (result?.applied !== false) {
+      addMessage(
+        'assistant',
+        `✅ 추천 전략 «${pack.name}» 적용 완료 — 승률 ${pack.winRate}% · ${pack.trades}거래 (현재 차트 백테스트). GPT 대화에서도 이 전략을 기준으로 수정할 수 있습니다.`,
+      );
+    } else {
+      addMessage('assistant', formatAiError(result?.reason || '추천 전략 적용에 실패했습니다.'), { persist: false });
+    }
+  }
+
+  function applyRecommendedViaGpt(id) {
+    const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id);
+    const preset = StrategyPresets.getPreset(id);
+    const prompt = pack?.gptPrompt || preset?.gptPrompt
+      || `추천전략 ${id} 적용해줘`;
+    handlePrompt(
+      `${prompt}\n(현재 차트 백테스트 승률 ${pack?.winRate ?? '—'}%, ${pack?.trades ?? 0}거래. 설정을 그대로 적용하고 summary에 전략명을 적어줘.)`,
+    );
   }
 
   function closeAiPopup() {
@@ -550,6 +641,17 @@ const StrategyAI = (() => {
       btn.addEventListener('click', () => handlePrompt(btn.dataset.strategyAiCmd));
     });
 
+    $('#strategyRecommendRefresh')?.addEventListener('click', () => refreshRecommendedStrategies());
+    $('#strategyRecommendList')?.addEventListener('click', (e) => {
+      const applyBtn = e.target.closest('[data-rec-apply]');
+      if (applyBtn) {
+        applyRecommendedDirect(applyBtn.getAttribute('data-rec-apply'));
+        return;
+      }
+      const gptBtn = e.target.closest('[data-rec-gpt]');
+      if (gptBtn) applyRecommendedViaGpt(gptBtn.getAttribute('data-rec-gpt'));
+    });
+
     $('#strategyAiToggleBtn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleAiPopup();
@@ -592,7 +694,16 @@ const StrategyAI = (() => {
     }
   }
 
-  return { init, refreshStatus, testApiKey, clearHistory, resetForAccountSwitch, reloadForUser };
+  return {
+    init,
+    refreshStatus,
+    testApiKey,
+    clearHistory,
+    resetForAccountSwitch,
+    reloadForUser,
+    refreshRecommendedStrategies,
+    handlePrompt,
+  };
 })();
 
 window.StrategyAI = StrategyAI;
