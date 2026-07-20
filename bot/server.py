@@ -26,7 +26,6 @@ from bot.models import User
 from bot.platform_config import app_origin, auth_required, cors_allow_origins, database_url
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
-from bot.user_openai import load_openai_key, save_openai_key
 from bot.server_bot import (
     bot_diagnostics,
     bot_status,
@@ -350,13 +349,14 @@ def health(
         session = _get_session(user)
         connected = session is not None
         creds_saved = has_credentials(db, user.id)
-        user_openai = load_openai_key(db, user.id)
-        ai = ai_available(
-            verify=False,
-            api_key=user_openai,
-            key_source="user" if user_openai else "none",
-            include_env_path=False,
-        )
+        # GPT is platform-hosted (shared OPENAI_API_KEY). Per-user isolation is for Binance only.
+        ai = ai_available(verify=False, include_env_path=False)
+        ai["hosted"] = True
+        ai["keyPreview"] = None  # never show platform secret material to clients
+        ai["envPath"] = None
+        if ai.get("configured"):
+            ai["keySource"] = "platform"
+            ai["message"] = "플랫폼 GPT를 사용할 수 있습니다."
         if session is not None:
             session_testnet = bool(session.config.use_testnet)
         elif creds_saved:
@@ -447,39 +447,41 @@ def platform_outbound_ip() -> dict[str, Any]:
 def strategy_ai_status(
     verify: bool = False,
     user: User | None = Depends(get_optional_user),
-    db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if user is not None:
-        key = load_openai_key(db, user.id)
-        status = ai_available(
-            verify=verify,
-            api_key=key,
-            key_source="user" if key else "none",
-            include_env_path=False,
-        )
-        return {"ok": True, **status}
-    if auth_required():
+    if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-    return {"ok": True, **ai_available(verify=verify, include_env_path=True)}
+    # Platform-hosted GPT: one OPENAI_API_KEY for all customers.
+    status = ai_available(verify=verify, include_env_path=not auth_required())
+    status["hosted"] = True
+    if auth_required():
+        status["keyPreview"] = None
+        status["envPath"] = None
+        if status.get("configured"):
+            status["keySource"] = "platform"
+            status["message"] = status.get("message") or "플랫폼 GPT를 사용할 수 있습니다."
+    return {"ok": True, **status}
 
 
 @app.post("/api/strategy/test-key")
 def strategy_test_key(
     body: StrategyTestKeyBody | None = None,
     user: User | None = Depends(get_optional_user),
-    db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
+    if auth_required():
+        # End users do not supply keys — retest the platform key only.
+        if user is None:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+        result = test_openai_api_key(None)
+        if not result["verified"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+        return {"ok": True, **result, "hosted": True}
     try:
         candidate = (body.openai_api_key if body else "").strip()
-        if not candidate and user is not None:
-            candidate = load_openai_key(db, user.id) or ""
         result = test_openai_api_key(candidate or None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     if not result["verified"]:
         raise HTTPException(status_code=400, detail=result["message"])
-
     return {"ok": True, **result}
 
 
@@ -487,20 +489,21 @@ def strategy_test_key(
 def strategy_configure(
     body: StrategyConfigureBody,
     user: User | None = Depends(get_optional_user),
-    db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if auth_required() and user is None:
+    if auth_required():
+        # Multi-tenant: GPT is hosted by the operator via server .env — not per-user.
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "GPT는 플랫폼에서 제공합니다. "
+                "사용자는 키를 입력할 필요가 없습니다. "
+                "운영자는 서버 .env의 OPENAI_API_KEY를 설정하세요."
+            ),
+        )
+    if user is None and auth_required():
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
     try:
-        if user is not None:
-            # Per-user vault — never write another user's key into shared .env
-            status = configure_openai_api_key(body.openai_api_key, persist_env=False)
-            save_openai_key(db, user.id, body.openai_api_key)
-            status["keySource"] = "user"
-            status["envPath"] = None
-            status["message"] = "OpenAI API 키가 이 계정에 암호화 저장되었습니다."
-        else:
-            status = configure_openai_api_key(body.openai_api_key, persist_env=True)
+        status = configure_openai_api_key(body.openai_api_key, persist_env=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
@@ -517,11 +520,10 @@ def strategy_configure(
 def strategy_interpret(
     body: StrategyInterpretRequest,
     user: User | None = Depends(get_optional_user),
-    db: DbSession = Depends(get_db),
 ) -> StrategyInterpretResponse:
     if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-    api_key = load_openai_key(db, user.id) if user is not None else None
+    # Use platform OPENAI_API_KEY; keep chat memory scoped per user.
     try:
         result = interpret_strategy(
             body.prompt,
@@ -531,7 +533,7 @@ def strategy_interpret(
             interval=body.interval,
             market_context=body.market_context,
             backtest_snapshot=body.backtest_snapshot,
-            api_key=api_key,
+            api_key=None,
             user_id=user.id if user is not None else None,
         )
     except ValueError as exc:

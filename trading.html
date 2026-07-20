@@ -152,16 +152,17 @@
                   <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
                 </div>
                 <details class="chart-ai-panel__settings">
-                  <summary>GPT 연결 설정</summary>
+                  <summary>GPT 상태</summary>
                   <div id="strategyAiDetails" class="strategy-ai-details"></div>
                   <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-                  <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key">
-                    <label for="openaiApiKey">OpenAI Key</label>
+                  <p id="openaiApiKeyHint" class="strategy-ai-note strategy-ai-note--muted">플랫폼 GPT — 사용자 키 입력 불필요</p>
+                  <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key hidden">
+                    <label for="openaiApiKey">OpenAI Key (운영자/로컬 전용)</label>
                     <input type="password" id="openaiApiKey" autocomplete="off">
                   </div>
                   <div class="strategy-ai-actions chart-ai-panel__actions">
-                    <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm">테스트</button>
-                    <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm">저장</button>
+                    <button type="button" id="strategyAiTestBtn" class="btn btn--ghost btn--sm hidden">테스트</button>
+                    <button type="button" id="strategyAiKeySaveBtn" class="btn btn--simple-primary btn--sm hidden">저장</button>
                     <button type="button" id="strategyAiRetestBtn" class="btn btn--ghost btn--sm">재검사</button>
                     <button type="button" id="strategyAiClearHistoryBtn" class="btn btn--ghost btn--sm">대화 초기화</button>
                   </div>
@@ -354,6 +355,6 @@
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
   <script src="js/futures-bot-app.js?v=20260720e"></script>
-  <script src="js/strategy-ai.js?v=20260720a"></script>
+  <script src="js/strategy-ai.js?v=20260720b"></script>
 </body>
 </html>

@@ -158,6 +158,25 @@ const StrategyAI = (() => {
     const group = $('#openaiApiKeyGroup');
     const hint = $('#openaiApiKeyHint');
     const saveBtn = $('#strategyAiKeySaveBtn');
+    const testBtn = $('#strategyAiTestBtn');
+    const hosted = status?.hosted === true || status?.keySource === 'platform';
+
+    // Platform-hosted GPT: end users never enter an OpenAI key.
+    if (hosted) {
+      if (group) group.classList.add('hidden');
+      if (saveBtn) saveBtn.classList.add('hidden');
+      if (testBtn) testBtn.classList.add('hidden');
+      if (hint) {
+        hint.textContent = status?.configured
+          ? 'Orbinex 플랫폼 GPT를 사용합니다. 별도 API 키 입력이 필요 없습니다.'
+          : '플랫폼 GPT 키가 아직 설정되지 않았습니다. 운영자에게 문의하세요.';
+      }
+      return;
+    }
+
+    if (group) group.classList.remove('hidden');
+    if (saveBtn) saveBtn.classList.remove('hidden');
+    if (testBtn) testBtn.classList.remove('hidden');
     if (!input) return;
 
     const configured = Boolean(status?.configured);
@@ -165,17 +184,17 @@ const StrategyAI = (() => {
 
     if (configured && preview) {
       input.value = '';
-      input.placeholder = `이 계정에 저장됨 (${preview}) — 변경할 때만 입력`;
+      input.placeholder = `서버에 저장됨 (${preview}) — 변경할 때만 입력`;
       if (group) group.classList.add('strategy-ai-key--saved');
       if (hint) {
-        hint.textContent = '키는 로그인한 계정에만 암호화 저장됩니다. 다른 계정과 공유되지 않습니다.';
+        hint.textContent = '키는 서버 .env에 저장됩니다 (로컬/단일 운영 모드).';
       }
       if (saveBtn) saveBtn.textContent = '키 변경·저장';
     } else {
-      input.placeholder = 'sk-proj-... (이 계정에만 저장)';
+      input.placeholder = 'sk-proj-... (서버 .env 저장)';
       if (group) group.classList.remove('strategy-ai-key--saved');
       if (hint) {
-        hint.textContent = "키는 sk-로 시작합니다. 저장하면 현재 로그인 계정에만 보관됩니다.";
+        hint.textContent = "키는 sk-로 시작합니다. '검증 후 저장'하면 서버에 저장됩니다.";
       }
       if (saveBtn) saveBtn.textContent = '검증 후 저장';
     }
@@ -198,17 +217,19 @@ const StrategyAI = (() => {
       ? '하이브리드 (전략→4o, 나머지→mini)'
       : routing;
 
+    const hosted = status?.hosted === true || status?.keySource === 'platform';
     const rows = [
       ['API 서버', '온라인'],
+      ['GPT 제공', hosted ? '플랫폼 호스팅' : '직접 키 입력'],
       ['키 설정', status?.configured ? '완료' : '미설정'],
       ['키 인증', status?.authenticated ? '성공' : '실패/미검사'],
       ['GPT 호출', status?.chatReady || status?.verified ? '가능' : '불가'],
-      ['키 미리보기', status?.keyPreview || '—'],
+      ...(hosted ? [] : [['키 미리보기', status?.keyPreview || '—']]),
       ['모델 (기본)', status?.model || 'gpt-4o-mini'],
       ['모델 (복잡)', status?.modelComplex || 'gpt-4o'],
       ['라우팅', routingLabel],
-      ['키 출처', status?.keySource || 'none'],
-      ['.env 경로', status?.envPath || '—'],
+      ['키 출처', hosted ? 'platform' : (status?.keySource || 'none')],
+      ...(hosted || !status?.envPath ? [] : [['.env 경로', status.envPath]]),
       ['마지막 검사', formatCheckedAt(status?.checkedAt)],
     ];
 
@@ -484,13 +505,13 @@ const StrategyAI = (() => {
       if (status?.configured) {
         addMessage(
           'assistant',
-          `이 계정 GPT 상태: ${status.keyPreview || '키 저장됨'}. 전략을 입력해 주세요.`,
+          '플랫폼 GPT 준비됨. 전략을 입력해 주세요.',
           { persist: false },
         );
       } else {
         addMessage(
           'assistant',
-          '이 계정에는 OpenAI 키가 없습니다. GPT 연결 설정에서 키를 저장하세요.',
+          '플랫폼 GPT가 아직 없습니다. 운영자에게 문의하세요.',
           { persist: false },
         );
       }
@@ -550,22 +571,22 @@ const StrategyAI = (() => {
 
     if (conversationHistory.length) {
       restoreHistoryToUi();
-    } else if (status?.configured && status?.verified) {
+    } else if (status?.configured && (status?.verified || status?.hosted)) {
       addMessage(
         'assistant',
-        `이 계정에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 차트·백테스트 데이터를 분석해 전략을 적용합니다.`,
+        'Orbinex 플랫폼 GPT를 사용할 수 있습니다. 차트·백테스트 데이터를 분석해 전략을 적용합니다. API 키는 입력할 필요 없습니다.',
         { persist: false },
       );
     } else if (status?.configured) {
       addMessage(
         'assistant',
-        `이 계정에 키가 있지만 인증에 실패했습니다. '저장된 키 재검사'를 누르거나 키를 다시 저장하세요.`,
+        '플랫폼 GPT 키가 설정돼 있지만 인증에 실패했습니다. 운영자에게 문의하세요.',
         { persist: false },
       );
     } else {
       addMessage(
         'assistant',
-        '아래 입력창에 전략을 질문하거나 설명하세요. GPT 연결 설정은 "GPT 연결 설정"을 펼쳐 OpenAI Key를 저장하면 됩니다. 키는 현재 로그인 계정에만 저장됩니다.',
+        '플랫폼 GPT가 아직 준비되지 않았습니다. 운영자가 서버에 OPENAI_API_KEY를 설정하면 바로 사용할 수 있습니다.',
         { persist: false },
       );
     }
