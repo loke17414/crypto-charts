@@ -89,6 +89,20 @@ def _timeframe_info(interval: str) -> dict[str, Any]:
     }
 
 
+def _wick_shape_hint(body_pct: float, upper_wick_pct: float, lower_wick_pct: float) -> str:
+    if lower_wick_pct >= 60 and body_pct <= 25:
+        return "long_lower_wick"
+    if upper_wick_pct >= 60 and body_pct <= 25:
+        return "long_upper_wick"
+    if body_pct >= 70:
+        return "full_body"
+    if upper_wick_pct >= 40 and lower_wick_pct < 20:
+        return "upper_rejection"
+    if lower_wick_pct >= 40 and upper_wick_pct < 20:
+        return "lower_rejection"
+    return "balanced"
+
+
 def _format_recent_candles(
     klines: list[list[Any]],
     count: int = 15,
@@ -101,9 +115,13 @@ def _format_recent_candles(
     for i, k in enumerate(slice_k):
         o, h, l, c = float(k[1]), float(k[2]), float(k[3]), float(k[4])
         vol = float(k[5])
-        body = c - o
-        rng = h - l
-        body_pct = (body / rng * 100) if rng > 0 else 0.0
+        rng = max(h - l, 0.0)
+        body_abs = abs(c - o)
+        upper_wick = h - max(o, c)
+        lower_wick = min(o, c) - l
+        body_pct = (body_abs / rng * 100) if rng > 0 else 0.0
+        upper_wick_pct = (upper_wick / rng * 100) if rng > 0 else 0.0
+        lower_wick_pct = (lower_wick / rng * 100) if rng > 0 else 0.0
         out.append({
             "idx": start + i,
             "offset": i - len(slice_k) + 1,
@@ -114,7 +132,11 @@ def _format_recent_candles(
             "c": _round(c),
             "v": _round(vol, 0),
             "dir": "up" if c >= o else "down",
+            # Fractions of (high-low). bodyPct + upperWickPct + lowerWickPct ≈ 100.
             "bodyPct": _round(body_pct, 1),
+            "upperWickPct": _round(upper_wick_pct, 1),
+            "lowerWickPct": _round(lower_wick_pct, 1),
+            "shape": _wick_shape_hint(body_pct, upper_wick_pct, lower_wick_pct),
         })
     return out
 

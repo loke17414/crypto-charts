@@ -140,7 +140,9 @@ Operand:
 - literal: { "source":"value", "value": 30 }
 - price: { "source":"price", "field": "close"|"open"|"high"|"low"|"volume", "offset":0 }
   offset 1 = previous candle
-- candle metric: { "source":"candle", "metric":"body_pct"|"lower_wick_pct"|"change_pct"|"is_bullish", "offset":0 }
+- candle metric: { "source":"candle", "metric":"body_pct"|"upper_wick_pct"|"lower_wick_pct"|"change_pct"|"is_bullish", "offset":0 }
+  Geometry: upper_wick = high-max(open,close); lower_wick = min(open,close)-low; body = |close-open|.
+  body_pct/upper_wick_pct/lower_wick_pct are % of (high-low) and sum ≈ 100.
 - indicator: { "source":"indicator", "indicator": "<id>", "params": {...}, "field": "<field>" }
 
 MULTI-LINE INDICATORS (field is REQUIRED — pick from the indicator_catalog fields):
@@ -180,6 +182,10 @@ Examples:
 - Bullish candle: { type:"candle_pattern", pattern:"bullish" } or compare is_bullish == 1
 - Simple bullish long (양봉/캔들 상승 롱): entryRules.long = compare is_bullish == 1 OR close > open; set short.enabled=false
 - Body > 60%: compare candle.body_pct > 60
+- Long lower wick (긴 아랫꼬리): compare lower_wick_pct >= 60 AND body_pct <= 25
+  OR candle_pattern hammer / pin_bar_bull
+- Long upper wick (긴 윗꼬리): compare upper_wick_pct >= 60 AND body_pct <= 25
+  OR candle_pattern shooting_star / pin_bar_bear
 - Bollinger lower re-entry long (볼린저 하단 이탈 후 재진입 롱):
   entryRules.long.conditions = [{ "type":"band_reentry", "side":"long", "indicator":"boll", "params":{"period":20,"mult":2} }]
   exitRules.long = { "stopLoss": { "type":"candle_extreme", "field":"low", "offset":1 }, "takeProfit": { "type":"risk_reward", "ratio":1.5 } }
@@ -204,7 +210,12 @@ Rules:
 
 MARKET DATA & BACKTEST (critical for accuracy):
 - You receive market_context with OHLC candle tape and precomputed structure — NOT a chart image.
-- recentCandles15: last 15 candles oldest→newest (o,h,l,c, dir, bodyPct, offset). ALWAYS read this when user asks about "최근 N봉", candle patterns, or visual price action.
+- recentCandles15: last 15 candles oldest→newest with o,h,l,c, dir, bodyPct, upperWickPct, lowerWickPct, shape, offset.
+  ALWAYS read these wick fields for "꼬리/윗꼬리/아랫꼬리/핀바/해머/슈팅스타" or visual candle questions.
+  Do NOT recompute wicks from OHLC alone — trust upperWickPct/lowerWickPct/shape.
+  shape meanings: long_lower_wick (긴 아랫꼬리), long_upper_wick (긴 윗꼬리),
+  lower_rejection / upper_rejection, full_body, balanced.
+  Example: lowerWickPct=72, bodyPct=18, upperWickPct=10 → long lower wick (hammer/pin-bar style), NOT a full-body candle.
 - structure.swings: CONFIRMED 전고점/전저점 (pivotBars=5 both sides). Quote lastSwingHigh/lastSwingLow
   prices and barsAgo in answers. Never invent swings from a single candle or from recentHigh/recentLow.
 - structure.fvg / structure.divergence: FVG zones and RSI/MACD divergence flags.

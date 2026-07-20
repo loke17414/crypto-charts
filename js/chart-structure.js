@@ -10,14 +10,27 @@
     return Math.round(v * m) / m;
   }
 
+  function wickShapeHint(bodyPct, upperWickPct, lowerWickPct) {
+    if (lowerWickPct >= 60 && bodyPct <= 25) return 'long_lower_wick';
+    if (upperWickPct >= 60 && bodyPct <= 25) return 'long_upper_wick';
+    if (bodyPct >= 70) return 'full_body';
+    if (upperWickPct >= 40 && lowerWickPct < 20) return 'upper_rejection';
+    if (lowerWickPct >= 40 && upperWickPct < 20) return 'lower_rejection';
+    return 'balanced';
+  }
+
   function formatRecentCandles(candles, count = 15) {
     if (!Array.isArray(candles) || !candles.length) return [];
     const slice = candles.slice(-count);
     const start = candles.length - slice.length;
     return slice.map((c, i) => {
-      const body = c.close - c.open;
-      const range = c.high - c.low;
-      const bodyPct = range > 0 ? (body / range) * 100 : 0;
+      const range = Math.max(c.high - c.low, 0);
+      const bodyAbs = Math.abs(c.close - c.open);
+      const upperWick = c.high - Math.max(c.open, c.close);
+      const lowerWick = Math.min(c.open, c.close) - c.low;
+      const bodyPct = range > 0 ? (bodyAbs / range) * 100 : 0;
+      const upperWickPct = range > 0 ? (upperWick / range) * 100 : 0;
+      const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
       return {
         idx: start + i,
         offset: i - slice.length + 1,
@@ -28,7 +41,11 @@
         c: round(c.close),
         v: round(c.volume, 0),
         dir: c.close >= c.open ? 'up' : 'down',
+        // Fractions of (high-low). bodyPct + upperWickPct + lowerWickPct ≈ 100.
         bodyPct: round(bodyPct, 1),
+        upperWickPct: round(upperWickPct, 1),
+        lowerWickPct: round(lowerWickPct, 1),
+        shape: wickShapeHint(bodyPct, upperWickPct, lowerWickPct),
       };
     });
   }
@@ -584,7 +601,7 @@
 
     return {
       recentCandles: recent,
-      recentCandlesNote: 'Oldest→newest. offset 0=current bar, -1=previous. Use for last-N-candle analysis. Do NOT treat offset -1 as a swing high/low.',
+      recentCandlesNote: 'Oldest→newest. offset 0=current bar, -1=previous. bodyPct/upperWickPct/lowerWickPct are % of (high-low) and sum≈100. shape=long_lower_wick|long_upper_wick|upper_rejection|lower_rejection|full_body|balanced. Do NOT treat offset -1 as a swing high/low.',
       swings: {
         pivotBars: swings.pivotBars,
         lookback: swings.lookback,
