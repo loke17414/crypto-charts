@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -12,8 +13,11 @@ from bot.config import ROOT
 
 load_dotenv(ROOT / ".env", override=False)
 
+logger = logging.getLogger(__name__)
+
 DATA_DIR = ROOT / "data"
 DEFAULT_DB_PATH = DATA_DIR / "cryptocharts.db"
+ENV_PATH = ROOT / ".env"
 
 
 def database_url() -> str:
@@ -28,13 +32,40 @@ def auth_required() -> bool:
     return os.getenv("AUTH_REQUIRED", "false").lower() in ("1", "true", "yes")
 
 
+def _persist_jwt_secret(secret: str) -> None:
+    """Keep JWT_SECRET stable across restarts so existing logins stay valid."""
+    lines: list[str] = []
+    if ENV_PATH.exists():
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    updated: list[str] = []
+    found = False
+    for line in lines:
+        if line.startswith("JWT_SECRET="):
+            updated.append(f'JWT_SECRET="{secret}"')
+            found = True
+        else:
+            updated.append(line)
+    if not found:
+        if updated and updated[-1].strip():
+            updated.append("")
+        updated.append(f'JWT_SECRET="{secret}"')
+    ENV_PATH.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+    load_dotenv(ENV_PATH, override=True)
+    os.environ["JWT_SECRET"] = secret
+    logger.warning("JWT_SECRET was empty — generated and saved to .env (re-login once if sessions were invalid)")
+
+
 def jwt_secret() -> str:
     secret = os.getenv("JWT_SECRET", "").strip().strip('"').strip("'")
     if secret:
         return secret
     if auth_required():
         generated = secrets.token_hex(32)
-        os.environ["JWT_SECRET"] = generated
+        try:
+            _persist_jwt_secret(generated)
+        except OSError:
+            os.environ["JWT_SECRET"] = generated
+            logger.error("JWT_SECRET could not be saved to .env — logins will break on restart")
         return generated
     return "dev-insecure-jwt-secret-change-me"
 

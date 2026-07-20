@@ -32,13 +32,16 @@ def _user_payload(user: User) -> dict[str, Any]:
 
 def _user_from_authorization(authorization: str | None, db: Session) -> User:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Login required")
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
     token = authorization[7:].strip()
     try:
         payload = decode_access_token(token)
         user_id = int(payload["sub"])
     except (ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+        raise HTTPException(
+            status_code=401,
+            detail="로그인 세션이 만료되었거나 유효하지 않습니다. 다시 로그인해 주세요.",
+        ) from exc
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")

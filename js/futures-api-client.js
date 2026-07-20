@@ -43,6 +43,15 @@ const FuturesApiClient = (() => {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401) {
+        const detail = formatApiError(data, res.status);
+        if (typeof AppAuth !== 'undefined' && typeof AppAuth.handleUnauthorized === 'function') {
+          AppAuth.handleUnauthorized(detail);
+        }
+        throw new Error(
+          detail || '로그인 세션이 만료되었습니다. 다시 로그인한 뒤 OpenAI 키를 저장해 주세요.',
+        );
+      }
       if (res.status === 404) {
         throw new Error(formatNotFoundHint(path, method));
       }

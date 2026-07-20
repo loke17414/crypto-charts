@@ -170,11 +170,14 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"detail": "Login required"})
+        return JSONResponse(status_code=401, content={"detail": "로그인이 필요합니다. 다시 로그인해 주세요."})
     try:
         decode_access_token(auth[7:].strip())
     except ValueError:
-        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "로그인 세션이 만료되었거나 유효하지 않습니다. 다시 로그인해 주세요."},
+        )
     return await call_next(request)
 
 

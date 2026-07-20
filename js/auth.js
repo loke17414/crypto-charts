@@ -71,9 +71,36 @@ const AppAuth = (() => {
     clearSession();
   }
 
+  function handleUnauthorized(message) {
+    if (!getToken()) return;
+    clearSession();
+    if (typeof FuturesApiClient !== 'undefined') {
+      FuturesApiClient.setConnected?.(false);
+    }
+    const statusEl = document.getElementById('authStatus');
+    if (statusEl) {
+      statusEl.textContent = message || '로그인 세션 만료 — 다시 로그인해 주세요';
+    }
+  }
+
+  async function validateSession() {
+    if (!authRequired || !getToken()) return false;
+    try {
+      await FuturesApiClient.authMe();
+      return true;
+    } catch {
+      // 401 already clears the session via FuturesApiClient → handleUnauthorized.
+      // Network errors keep the saved token so the user can retry.
+      return Boolean(getToken());
+    }
+  }
+
   async function refreshFromHealth(health) {
     authRequired = health?.authRequired === true;
     syncUi();
+    if (authRequired && getToken()) {
+      await validateSession();
+    }
   }
 
   async function init() {
@@ -125,6 +152,8 @@ const AppAuth = (() => {
     isRequired,
     authHeaders,
     refreshFromHealth,
+    handleUnauthorized,
+    validateSession,
     logout,
   };
 })();
