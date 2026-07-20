@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Backtest a large candidate pool (maxTrades=100) and pick top 10 with WR>=50%.
+ * Backtest candidates with RR >= 1:1 (or TP% >= SL%).
+ * Select top 10 by positive long-run PnL (not win-rate alone).
  * Writes bot-js/bench-recommended-top10.json
  */
 
@@ -10,10 +11,11 @@ const path = require('path');
 const { buildRuntime } = require('./strategy-runtime');
 
 const SYMBOL = process.env.BENCH_SYMBOL || 'BTCUSDT';
-const INTERVALS = (process.env.BENCH_INTERVALS || '15m,1h,5m').split(',').map((s) => s.trim());
+const INTERVALS = (process.env.BENCH_INTERVALS || '15m,1h').split(',').map((s) => s.trim());
 const MAX_TRADES = 100;
 const MIN_WR = 50;
-const TARGET_CANDLES = 5000;
+const MIN_PNL = 0.1; // require net positive cumulative PnL %
+const TARGET_CANDLES = 6000;
 
 function empty() {
   return { enabled: false, logic: 'all', conditions: [] };
@@ -74,17 +76,20 @@ function buildCandidates(SE) {
     });
   };
 
-  // --- Fixed % exits (higher WR when TP < SL) ---
+  // Fixed % — only TP >= SL (min 1:1)
   const pctPairs = [
-    [1.5, 1.0], [2.0, 1.0], [2.0, 1.2], [1.2, 0.8], [1.0, 0.6], [2.5, 1.5],
+    [1, 1], [1.2, 1.2], [1.5, 1.5], [2, 2],
+    [1, 1.5], [1, 2], [1.5, 2], [1.5, 2.5], [2, 3],
   ];
+  // RR ratios for dynamic exits — min 1.0
+  const rrList = [1.0, 1.2, 1.5, 2.0];
 
-  for (const thr of [25, 28, 30, 32]) {
+  for (const thr of [25, 28, 30, 32, 35]) {
     for (const [sl, tp] of pctPairs) {
       add(
         `rsi-long-${thr}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-        `RSI≤${thr} 롱 SL${sl}/TP${tp}`,
-        `RSI≤${thr} · 고정 SL ${sl}% TP ${tp}%`,
+        `RSI≤${thr} 롱 (SL${sl}%/TP${tp}%)`,
+        `RSI≤${thr} · SL ${sl}% TP ${tp}% (RR≥1)`,
         pack({
           long: {
             enabled: true,
@@ -100,14 +105,34 @@ function buildCandidates(SE) {
         }, null, { stopLossPct: sl, takeProfitPct: tp, useStopLoss: true }),
       );
     }
+    for (const rr of rrList) {
+      add(
+        `rsi-long-${thr}-atr-rr${String(rr).replace('.', '')}`,
+        `RSI≤${thr} 롱 (ATR RR${rr})`,
+        `RSI≤${thr} · ATR SL · RR ${rr}`,
+        pack({
+          long: {
+            enabled: true,
+            logic: 'all',
+            conditions: [{
+              type: 'compare',
+              left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
+              op: '<=',
+              right: { source: 'value', value: thr },
+            }],
+          },
+          short: empty(),
+        }, atrExit(rr, 1.5, { long: true })),
+      );
+    }
   }
 
-  for (const thr of [68, 70, 72, 75]) {
+  for (const thr of [65, 68, 70, 72, 75]) {
     for (const [sl, tp] of pctPairs) {
       add(
         `rsi-short-${thr}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-        `RSI≥${thr} 숏 SL${sl}/TP${tp}`,
-        `RSI≥${thr} · 고정 SL ${sl}% TP ${tp}%`,
+        `RSI≥${thr} 숏 (SL${sl}%/TP${tp}%)`,
+        `RSI≥${thr} · SL ${sl}% TP ${tp}% (RR≥1)`,
         pack({
           long: empty(),
           short: {
@@ -125,12 +150,11 @@ function buildCandidates(SE) {
     }
   }
 
-  // RSI both with favorable RR (fixed %)
-  for (const [lo, hi] of [[30, 70], [28, 72]]) {
-    for (const [sl, tp] of [[2, 1], [1.5, 1], [2, 1.2]]) {
+  for (const [lo, hi] of [[30, 70], [28, 72], [25, 75]]) {
+    for (const [sl, tp] of pctPairs.slice(0, 6)) {
       add(
         `rsi-both-${lo}-${hi}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-        `RSI ${lo}/${hi} 양방향 SL${sl}/TP${tp}`,
+        `RSI ${lo}/${hi} 양방향 (SL${sl}%/TP${tp}%)`,
         `RSI 양방향 · SL ${sl}% TP ${tp}%`,
         pack({
           long: {
@@ -158,43 +182,35 @@ function buildCandidates(SE) {
     }
   }
 
-  // Band reentry + low RR (candle / ATR)
   for (const ind of ['boll', 'kc', 'env']) {
     for (const side of ['long', 'short']) {
-      for (const rr of [0.5, 0.6, 0.7, 0.8, 1.0]) {
-        const entry = SE.bandReentryPreset(
-          ind,
-          side,
-          ind === 'env' ? { period: 20, pct: 0.1 } : { period: 20, mult: 2 },
+      const entry = SE.bandReentryPreset(
+        ind,
+        side,
+        ind === 'env' ? { period: 20, pct: 0.1 } : { period: 20, mult: 2 },
+      );
+      for (const rr of rrList) {
+        add(
+          `${ind}-${side}-atr-rr${String(rr).replace('.', '')}`,
+          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} (ATR RR${rr})`,
+          `${ind} ${side} · ATR RR ${rr}`,
+          pack(entry, atrExit(rr, 1.5, { long: side === 'long', short: side === 'short' }), {
+            allowShort: side === 'short',
+          }),
         );
         add(
           `${ind}-${side}-crr${String(rr).replace('.', '')}`,
-          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} RR${rr}`,
+          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} (캔들 RR${rr})`,
           `${ind} ${side} · 캔들SL RR ${rr}`,
           pack(entry, rrExit(rr, { long: side === 'long', short: side === 'short' }), {
             allowShort: side === 'short',
           }),
         );
-        add(
-          `${ind}-${side}-atr-rr${String(rr).replace('.', '')}`,
-          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} ATR RR${rr}`,
-          `${ind} ${side} · ATR SL RR ${rr}`,
-          pack(entry, atrExit(rr, 1.5, { long: side === 'long', short: side === 'short' }), {
-            allowShort: side === 'short',
-          }),
-        );
       }
-    }
-  }
-
-  // Band + fixed %
-  for (const ind of ['boll', 'kc']) {
-    for (const side of ['long', 'short']) {
-      for (const [sl, tp] of [[1.5, 1], [2, 1], [2, 1.2], [1.2, 0.8]]) {
-        const entry = SE.bandReentryPreset(ind, side, { period: 20, mult: 2 });
+      for (const [sl, tp] of pctPairs.slice(0, 6)) {
         add(
           `${ind}-${side}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} SL${sl}/TP${tp}`,
+          `${ind.toUpperCase()} ${side === 'long' ? '하단' : '상단'} (SL${sl}%/TP${tp}%)`,
           `${ind} ${side} · SL ${sl}% TP ${tp}%`,
           pack(entry, null, {
             allowShort: side === 'short',
@@ -207,12 +223,11 @@ function buildCandidates(SE) {
     }
   }
 
-  // Stoch fixed %
-  for (const thr of [20, 25]) {
-    for (const [sl, tp] of [[2, 1], [1.5, 1], [2, 1.2]]) {
+  for (const thr of [15, 20, 25]) {
+    for (const [sl, tp] of pctPairs.slice(0, 6)) {
       add(
         `stoch-long-${thr}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-        `Stoch≤${thr} 롱 SL${sl}/TP${tp}`,
+        `Stoch≤${thr} 롱 (SL${sl}%/TP${tp}%)`,
         `Stoch K≤${thr} · SL ${sl}% TP ${tp}%`,
         pack({
           long: {
@@ -229,21 +244,64 @@ function buildCandidates(SE) {
         }, null, { stopLossPct: sl, takeProfitPct: tp, useStopLoss: true }),
       );
     }
+    for (const rr of rrList) {
+      add(
+        `stoch-long-${thr}-atr-rr${String(rr).replace('.', '')}`,
+        `Stoch≤${thr} 롱 (ATR RR${rr})`,
+        `Stoch K≤${thr} · ATR RR ${rr}`,
+        pack({
+          long: {
+            enabled: true,
+            logic: 'all',
+            conditions: [{
+              type: 'compare',
+              left: { source: 'indicator', indicator: 'stoch', params: { kPeriod: 14, dPeriod: 3 }, field: 'k' },
+              op: '<=',
+              right: { source: 'value', value: thr },
+            }],
+          },
+          short: empty(),
+        }, atrExit(rr, 1.5, { long: true })),
+      );
+    }
   }
 
-  // Patterns + low RR ATR
+  for (const thr of [75, 80, 85]) {
+    for (const [sl, tp] of pctPairs.slice(0, 5)) {
+      add(
+        `stoch-short-${thr}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
+        `Stoch≥${thr} 숏 (SL${sl}%/TP${tp}%)`,
+        `Stoch K≥${thr} · SL ${sl}% TP ${tp}%`,
+        pack({
+          long: empty(),
+          short: {
+            enabled: true,
+            logic: 'all',
+            conditions: [{
+              type: 'compare',
+              left: { source: 'indicator', indicator: 'stoch', params: { kPeriod: 14, dPeriod: 3 }, field: 'k' },
+              op: '>=',
+              right: { source: 'value', value: thr },
+            }],
+          },
+        }, null, { allowShort: true, stopLossPct: sl, takeProfitPct: tp, useStopLoss: true }),
+      );
+    }
+  }
+
   for (const [pat, side] of [
     ['hammer', 'long'],
     ['engulfing_bull', 'long'],
     ['pin_bar_bull', 'long'],
     ['shooting_star', 'short'],
     ['engulfing_bear', 'short'],
+    ['pin_bar_bear', 'short'],
   ]) {
-    for (const rr of [0.5, 0.7, 1.0]) {
-      const isLong = side === 'long';
+    const isLong = side === 'long';
+    for (const rr of rrList) {
       add(
         `${pat}-atr-rr${String(rr).replace('.', '')}`,
-        `${pat} ${isLong ? '롱' : '숏'} ATR RR${rr}`,
+        `${pat} ${isLong ? '롱' : '숏'} (ATR RR${rr})`,
         `${pat} · ATR RR ${rr}`,
         pack({
           long: isLong
@@ -252,16 +310,35 @@ function buildCandidates(SE) {
           short: !isLong
             ? { enabled: true, logic: 'all', conditions: [{ type: 'candle_pattern', pattern: pat, offset: 0 }] }
             : empty(),
-        }, atrExit(rr, 1.2, { long: isLong, short: !isLong }), { allowShort: !isLong }),
+        }, atrExit(rr, 1.5, { long: isLong, short: !isLong }), { allowShort: !isLong }),
+      );
+    }
+    for (const [sl, tp] of [[1.5, 1.5], [2, 2], [1.5, 2], [2, 3]]) {
+      add(
+        `${pat}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
+        `${pat} ${isLong ? '롱' : '숏'} (SL${sl}%/TP${tp}%)`,
+        `${pat} · SL ${sl}% TP ${tp}%`,
+        pack({
+          long: isLong
+            ? { enabled: true, logic: 'all', conditions: [{ type: 'candle_pattern', pattern: pat, offset: 0 }] }
+            : empty(),
+          short: !isLong
+            ? { enabled: true, logic: 'all', conditions: [{ type: 'candle_pattern', pattern: pat, offset: 0 }] }
+            : empty(),
+        }, null, {
+          allowShort: !isLong,
+          stopLossPct: sl,
+          takeProfitPct: tp,
+          useStopLoss: true,
+        }),
       );
     }
   }
 
-  // Swing + fixed %
-  for (const [sl, tp] of [[2, 1], [1.5, 1], [2, 1.2]]) {
+  for (const [sl, tp] of pctPairs.slice(0, 7)) {
     add(
       `swing-bounce-both-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-      `전고저 반등 SL${sl}/TP${tp}`,
+      `전고저 반등 (SL${sl}%/TP${tp}%)`,
       `swing_near 양방향 · SL ${sl}% TP ${tp}%`,
       pack({
         long: {
@@ -278,12 +355,11 @@ function buildCandidates(SE) {
     );
   }
 
-  // RSI + BB combo fixed %
   for (const thr of [30, 35]) {
-    for (const [sl, tp] of [[2, 1], [1.5, 1]]) {
+    for (const [sl, tp] of pctPairs.slice(0, 6)) {
       add(
         `rsi-bb-${thr}-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-        `RSI≤${thr}+BB 롱 SL${sl}/TP${tp}`,
+        `RSI≤${thr}+BB 롱 (SL${sl}%/TP${tp}%)`,
         `RSI+BB · SL ${sl}% TP ${tp}%`,
         pack({
           long: {
@@ -305,12 +381,11 @@ function buildCandidates(SE) {
     }
   }
 
-  // EMA / MACD with TP < SL
-  for (const [sl, tp] of [[2, 1], [1.5, 1], [2.5, 1.5]]) {
+  for (const [sl, tp] of pctPairs.slice(0, 7)) {
     const gc = SE.goldenCrossPreset(12, 26);
     add(
       `ema-golden-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-      `EMA 골든 롱 SL${sl}/TP${tp}`,
+      `EMA 골든 롱 (SL${sl}%/TP${tp}%)`,
       `EMA12/26 골든 · SL ${sl}% TP ${tp}%`,
       pack({ long: gc.long, short: empty() }, null, {
         stopLossPct: sl, takeProfitPct: tp, useStopLoss: true,
@@ -318,11 +393,28 @@ function buildCandidates(SE) {
     );
     add(
       `ema-both-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
-      `EMA 양방향 SL${sl}/TP${tp}`,
+      `EMA 양방향 (SL${sl}%/TP${tp}%)`,
       `EMA12/26 양방향 · SL ${sl}% TP ${tp}%`,
       pack(gc, null, {
         allowShort: true, stopLossPct: sl, takeProfitPct: tp, useStopLoss: true,
       }),
+    );
+    add(
+      `macd-long-sl${sl}-tp${tp}`.replace(/\./g, 'p'),
+      `MACD 골든 롱 (SL${sl}%/TP${tp}%)`,
+      `MACD cross 롱 · SL ${sl}% TP ${tp}%`,
+      pack({
+        long: {
+          enabled: true,
+          logic: 'all',
+          conditions: [{
+            type: 'cross_above',
+            left: { source: 'indicator', indicator: 'macd', params: { fast: 12, slow: 26, signal: 9 }, field: 'macd' },
+            right: { source: 'indicator', indicator: 'macd', params: { fast: 12, slow: 26, signal: 9 }, field: 'signal' },
+          }],
+        },
+        short: empty(),
+      }, null, { stopLossPct: sl, takeProfitPct: tp, useStopLoss: true }),
     );
   }
 
@@ -373,26 +465,46 @@ function measureAll(FuturesStrategy, StrategyEngine, candles, candidates) {
       skipMarkers: true,
     });
     const s = replay.stats || {};
+    const trades = s.trades || 0;
+    const winRate = s.winRate || 0;
+    const totalPnlPct = s.totalPnlPct || 0;
+    // Approx expectancy per trade (%), useful for ranking long-run edge
+    const expectancy = trades > 0 ? totalPnlPct / trades : 0;
     results.push({
       id: c.id,
       name: c.name,
       blurb: c.blurb,
       gptPrompt: c.gptPrompt,
       settings: c.settings,
-      trades: s.trades || 0,
-      winRate: Math.round((s.winRate || 0) * 10) / 10,
+      trades,
+      winRate: Math.round(winRate * 10) / 10,
       wins: s.wins || 0,
       losses: s.losses || 0,
-      totalPnlPct: Math.round((s.totalPnlPct || 0) * 10) / 10,
+      totalPnlPct: Math.round(totalPnlPct * 10) / 10,
+      expectancy: Math.round(expectancy * 1000) / 1000,
     });
   }
   return results;
 }
 
+function rankKey(a, b) {
+  // Primary: cumulative PnL, then expectancy, then win rate
+  return (b.totalPnlPct - a.totalPnlPct)
+    || (b.expectancy - a.expectancy)
+    || (b.winRate - a.winRate)
+    || (b.trades - a.trades);
+}
+
+function isPassing(r) {
+  return r.trades >= MAX_TRADES
+    && r.winRate >= MIN_WR
+    && r.totalPnlPct >= MIN_PNL;
+}
+
 async function main() {
   console.log('Loading strategy runtime…');
+  console.log(`Filters: trades>=${MAX_TRADES}, WR>=${MIN_WR}%, PnL>=${MIN_PNL}%, RR>=1:1`);
   const { FuturesStrategy, StrategyEngine } = buildRuntime();
-  // Silence dynamic fallback spam
   const origWarn = console.warn;
   console.warn = (...args) => {
     if (String(args[0] || '').includes('동적 SL/TP')) return;
@@ -408,50 +520,98 @@ async function main() {
     const candles = await fetchKlines(SYMBOL, interval, TARGET_CANDLES);
     console.log(`Candles: ${candles.length}`);
     const results = measureAll(FuturesStrategy, StrategyEngine, candles, candidates);
-    const passing = results
-      .filter((r) => r.trades >= MAX_TRADES && r.winRate >= MIN_WR)
-      .sort((a, b) => (b.winRate - a.winRate) || (b.totalPnlPct - a.totalPnlPct));
-    console.log(`Passing: ${passing.length}`);
-    passing.slice(0, 15).forEach((r, i) => {
-      console.log(`  ${i + 1}. ${r.id} WR=${r.winRate}% n=${r.trades} pnl=${r.totalPnlPct}%`);
+    const passing = results.filter(isPassing).sort(rankKey);
+    console.log(`Passing (WR+PnL): ${passing.length}`);
+    passing.slice(0, 12).forEach((r, i) => {
+      console.log(
+        `  ${i + 1}. ${r.id} WR=${r.winRate}% PnL=${r.totalPnlPct}% E=${r.expectancy}% n=${r.trades}`,
+      );
     });
     for (const r of passing) {
       allPassing.push({ ...r, interval, symbol: SYMBOL });
     }
   }
 
-  // Deduplicate by id — keep best WR across intervals
   const bestById = new Map();
   for (const r of allPassing) {
     const prev = bestById.get(r.id);
-    if (!prev || r.winRate > prev.winRate
-      || (r.winRate === prev.winRate && r.totalPnlPct > prev.totalPnlPct)) {
-      bestById.set(r.id, r);
-    }
+    if (!prev || rankKey(prev, r) > 0) bestById.set(r.id, r);
   }
-  let top10 = [...bestById.values()]
-    .sort((a, b) => (b.winRate - a.winRate) || (b.totalPnlPct - a.totalPnlPct))
-    .slice(0, 10);
+
+  function familyKey(id) {
+    // Collapse exit params + numeric thresholds so rsi-short-65 ≈ rsi-short-68
+    return String(id)
+      .replace(/-sl[\dp]+-tp[\dp]+$/i, '')
+      .replace(/-atr-rr[\d]+$/i, '')
+      .replace(/-crr[\d]+$/i, '')
+      .replace(/(-\d+(?:p\d+)?)+$/g, '');
+  }
+
+  // PnL-first, but keep entry-family diversity (avoid 5 near-identical Stoch shorts).
+  function pickTop(pool, n) {
+    const ranked = [...pool].sort(rankKey);
+    const picked = [];
+    const seenFamily = new Set();
+    for (const r of ranked) {
+      if (picked.length >= n) break;
+      const fam = familyKey(r.id);
+      if (seenFamily.has(fam)) continue;
+      seenFamily.add(fam);
+      picked.push(r);
+    }
+    for (const r of ranked) {
+      if (picked.length >= n) break;
+      if (picked.some((t) => t.id === r.id)) continue;
+      picked.push(r);
+    }
+    return picked;
+  }
+
+  let top10 = pickTop([...bestById.values()], 10);
 
   if (top10.length < 10) {
-    console.warn(`\nOnly ${top10.length} unique strategies with WR>=${MIN_WR}% @ ${MAX_TRADES} trades.`);
-    // Fall back: best across last interval even if under threshold, but prefer high WR
-    const lastInterval = INTERVALS[0];
-    const candles = await fetchKlines(SYMBOL, lastInterval, TARGET_CANDLES);
-    const results = measureAll(FuturesStrategy, StrategyEngine, candles, candidates)
-      .filter((r) => r.trades >= 80)
-      .sort((a, b) => (b.winRate - a.winRate) || (b.totalPnlPct - a.totalPnlPct));
-    for (const r of results) {
-      if (top10.length >= 10) break;
-      if (top10.some((t) => t.id === r.id)) continue;
-      top10.push({ ...r, interval: lastInterval, symbol: SYMBOL, note: 'fallback' });
+    console.warn(`\nOnly ${top10.length} strategies passed WR+PnL filters.`);
+    // Soft fill from already-measured pool: relax WR to 45, keep positive PnL
+    const softPool = [];
+    // Re-measure once more only if needed — reuse allPassing when possible
+    for (const interval of INTERVALS) {
+      const candles = await fetchKlines(SYMBOL, interval, TARGET_CANDLES);
+      const results = measureAll(FuturesStrategy, StrategyEngine, candles, candidates)
+        .filter((r) => r.trades >= MAX_TRADES && r.totalPnlPct >= MIN_PNL && r.winRate >= 45)
+        .sort(rankKey);
+      for (const r of results) softPool.push({ ...r, interval, symbol: SYMBOL });
     }
+    const softBest = new Map();
+    for (const r of softPool) {
+      const prev = softBest.get(r.id);
+      if (!prev || rankKey(prev, r) > 0) softBest.set(r.id, r);
+    }
+    top10 = pickTop([...softBest.values()], 10).map((r) => (
+      top10.some((t) => t.id === r.id) ? r : { ...r, note: r.note || 'soft-fill' }
+    ));
   }
 
-  console.log('\n=== TOP 10 ===');
+  // Polish display names for candle patterns
+  const NAME_FIX = {
+    engulfing_bear: '하락 장악형',
+    engulfing_bull: '상승 장악형',
+    shooting_star: '유성형',
+    hammer: '망치형',
+    pin_bar_bear: '핀바 숏',
+    pin_bar_bull: '핀바 롱',
+  };
+  top10 = top10.map((r) => {
+    let name = r.name;
+    for (const [en, ko] of Object.entries(NAME_FIX)) {
+      if (name.startsWith(en)) name = name.replace(en, ko);
+    }
+    return { ...r, name };
+  });
+
+  console.log('\n=== TOP 10 (PnL-first, RR≥1:1) ===');
   top10.forEach((r, i) => {
     console.log(
-      `${i + 1}. [${r.interval}] ${r.name} WR=${r.winRate}% n=${r.trades} pnl=${r.totalPnlPct}%`,
+      `${i + 1}. [${r.interval}] ${r.name} WR=${r.winRate}% PnL=${r.totalPnlPct}% E/trade=${r.expectancy}%`,
     );
   });
 
@@ -461,11 +621,19 @@ async function main() {
     intervals: INTERVALS,
     maxTrades: MAX_TRADES,
     minWinRate: MIN_WR,
+    minPnlPct: MIN_PNL,
+    minRiskReward: 1,
+    rankBy: 'totalPnlPct > expectancy > winRate',
     measuredAt: new Date().toISOString(),
     items: top10,
   }, null, 2));
   console.log(`\nWrote ${outPath}`);
   console.warn = origWarn;
+
+  if (top10.length < 10) {
+    console.error('Failed to find 10 strategies meeting criteria.');
+    process.exit(2);
+  }
 }
 
 main().catch((err) => {

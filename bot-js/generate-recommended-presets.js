@@ -25,6 +25,7 @@ const presets = items.map((it) => {
         winRate: ${it.winRate},
         trades: ${it.trades},
         totalPnlPct: ${it.totalPnlPct},
+        expectancy: ${it.expectancy ?? 0},
         interval: ${JSON.stringify(it.interval)},
         symbol: ${JSON.stringify(it.symbol || 'BTCUSDT')},
       },
@@ -35,8 +36,8 @@ const presets = items.map((it) => {
 }).join(',\n');
 
 const file = `/**
- * Recommended strategies — curated from BTCUSDT backtests (100 trades, WR>=50%).
- * Generated ${data.measuredAt}
+ * Recommended strategies — BTCUSDT backtests: RR>=1:1, trades>=100, WR>=50%, PnL>0.
+ * Ranked by cumulative PnL (then expectancy, then WR). Generated ${data.measuredAt}
  * Intervals tested: ${(data.intervals || []).join(', ')}
  * Do not hand-edit the CATALOG; re-run: node bot-js/bench-recommended.js && node bot-js/generate-recommended-presets.js
  */
@@ -112,7 +113,7 @@ ${presets}
   }
 
   /**
-   * Fixed curated top-10 catalog (bench WR>=50% @ 100 trades).
+   * Fixed curated top-10 catalog (RR>=1:1, WR>=50%, positive PnL @ 100 trades).
    * Live chart re-measure updates badges; catalog membership stays these 10.
    */
   function recommend(candles, {
@@ -126,7 +127,7 @@ ${presets}
     return {
       items: measured,
       passCount,
-      note: \`벤치마크 추천 10개 (BTCUSDT 100거래 WR≥50%) · 현재 차트 재측정 \${passCount}/\${measured.length} 통과\`,
+      note: \`벤치마크 추천 10개 (RR≥1:1 · PnL 우선 · WR≥50% · 100거래) · 현재 차트 재측정 \${passCount}/\${measured.length} 통과\`,
       measuredAt: Date.now(),
       minWinRate,
       minTrades,
@@ -137,7 +138,9 @@ ${presets}
   function catalogForAi() {
     return CATALOG.map((p) => {
       const b = p.bench;
-      const bench = b ? \` [bench WR \${b.winRate}% / \${b.trades}trades / \${b.interval}]\` : '';
+      const bench = b
+        ? \` [bench WR \${b.winRate}% / PnL \${b.totalPnlPct}% / \${b.trades}trades / \${b.interval}]\`
+        : '';
       return \`\${p.id}: \${p.name} — \${p.blurb}\${bench}\`;
     }).join('\\n');
   }
