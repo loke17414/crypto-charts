@@ -165,7 +165,7 @@ PUBLIC_API_PATHS = {
 }
 
 
-app = FastAPI(title="CryptoCharts Futures API", version="1.0", lifespan=lifespan)
+app = FastAPI(title="Orbinex Futures API", version="1.0", lifespan=lifespan)
 app.include_router(auth_router)
 
 

@@ -3291,7 +3291,7 @@ const FuturesBotApp = (() => {
       onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
     }
 
-    addLog('CryptoCharts 차트 연동됨', 'info');
+    addLog('Orbinex 차트 연동됨', 'info');
     if (Chart.available()) {
       syncChartIndicators();
       Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
