@@ -48,11 +48,19 @@ const FuturesApiClient = (() => {
     if (!res.ok) {
       if (res.status === 401) {
         const detail = formatApiError(data, res.status);
-        if (typeof AppAuth !== 'undefined' && typeof AppAuth.handleUnauthorized === 'function') {
+        // Only clear login for real auth/session failures — NOT Binance key errors.
+        // (Invalid/missing exchange keys used to return 401 and logged users out.)
+        const isSessionAuth = /로그인|세션이 만료|유효하지 않습니다|Login required|User not found/i.test(detail)
+          && !/API key|API 키|Binance|바이낸스|saved|저장|connect first|IP|whitelist|권한/i.test(detail);
+        if (
+          isSessionAuth
+          && typeof AppAuth !== 'undefined'
+          && typeof AppAuth.handleUnauthorized === 'function'
+        ) {
           AppAuth.handleUnauthorized(detail);
         }
         throw new Error(
-          detail || '로그인 세션이 만료되었습니다. 다시 로그인한 뒤 OpenAI 키를 저장해 주세요.',
+          detail || '로그인 세션이 만료되었습니다. 다시 로그인한 뒤 시도해 주세요.',
         );
       }
       if (res.status === 429) {

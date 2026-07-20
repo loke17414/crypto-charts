@@ -121,9 +121,10 @@ def _connect_session(api_key: str, api_secret: str, *, use_testnet: bool | None 
         req_ip = parse_binance_request_ip(msg)
         if "Invalid API-key, IP, or permissions" in msg or "-2015" in msg:
             hint = binance_ip_whitelist_hint(request_ip=req_ip, use_testnet=testnet)
-            raise HTTPException(status_code=401, detail=hint) from exc
+            # 400: exchange credential problem — must NOT clear the user login session (401).
+            raise HTTPException(status_code=400, detail=hint) from exc
         label = "Testnet" if testnet else "Mainnet"
-        raise HTTPException(status_code=401, detail=f"Invalid API key ({label}): {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Invalid API key ({label}): {exc}") from exc
     logger.info("%s connected — balance $%.2f USDT", label, balance)
     return TradingSession(config=config, client=client)
 
@@ -149,7 +150,7 @@ def auto_connect_from_env() -> bool:
 def require_trading_session(user: User | None = Depends(get_optional_user)) -> TradingSession:
     session = _get_session(user)
     if not session:
-        raise HTTPException(status_code=401, detail="API key not connected")
+        raise HTTPException(status_code=400, detail="API key not connected — 먼저 바이낸스 키를 연결하세요.")
     return session
 
 
@@ -669,7 +670,10 @@ def reconnect(
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         if not creds:
-            raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
+            raise HTTPException(
+                status_code=400,
+                detail="저장된 바이낸스 API 키가 없습니다. Key/Secret을 입력해 연결하세요.",
+            )
         api_key, api_secret, use_testnet = creds
         if body and body.use_testnet is not None and body.use_testnet != use_testnet:
             use_testnet = body.use_testnet
@@ -687,7 +691,10 @@ def reconnect(
         }
 
     if not auto_connect_from_env():
-        raise HTTPException(status_code=401, detail="No saved API keys — connect with key and secret first")
+        raise HTTPException(
+            status_code=400,
+            detail="저장된 바이낸스 API 키가 없습니다. Key/Secret을 입력해 연결하세요.",
+        )
     session = _get_session(None)
     assert session is not None
     balance = session.client.get_usdt_balance()
@@ -1010,12 +1017,18 @@ def bot_start(
             except ValueError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             if not creds:
-                raise HTTPException(status_code=401, detail="API key not connected — connect first")
+                raise HTTPException(
+                    status_code=400,
+                    detail="API key not connected — 먼저 바이낸스 키를 연결하세요.",
+                )
             api_key, api_secret, use_testnet = creds
             session = _connect_session(api_key, api_secret, use_testnet=use_testnet)
             _set_session(user, session)
         elif not auto_connect_from_env():
-            raise HTTPException(status_code=401, detail="API key not connected — connect first")
+            raise HTTPException(
+                status_code=400,
+                detail="API key not connected — 먼저 바이낸스 키를 연결하세요.",
+            )
         else:
             session = _get_session(None)
     assert session is not None

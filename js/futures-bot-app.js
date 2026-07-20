@@ -340,39 +340,47 @@ const FuturesBotApp = (() => {
   }
 
   async function restoreStrategyPersistence() {
-    // 1) Local cache first (fast paint)
-    loadFormSettingsStorage();
-    const stored = loadStrategyStorage();
-    if (stored.entryRules || stored.exitRules) {
-      state.entryRules = stored.entryRules;
-      state.exitRules = stored.exitRules;
-    }
-    migrateLegacyRulesToSlots();
-    renderStrategySlotsPanel();
-    updateStrategyAiSlotOptions();
-    updateStrategyRulesDisplay();
-
-    const hasLocal = entryRulesHaveSignals(state.entryRules)
-      || (state.strategySlots || []).some((s) => entryRulesHaveSignals(s.entryRules));
-
-    // 2) Server is source of truth when logged in / API available
+    // Never let strategy restore break Binance connect / login state.
     try {
+      // 1) Local cache first (fast paint)
+      loadFormSettingsStorage();
+      const stored = loadStrategyStorage();
+      if (stored.entryRules || stored.exitRules) {
+        state.entryRules = stored.entryRules;
+        state.exitRules = stored.exitRules;
+      }
+      migrateLegacyRulesToSlots();
+      renderStrategySlotsPanel();
+      updateStrategyAiSlotOptions();
+      updateStrategyRulesDisplay();
+
+      const hasLocal = entryRulesHaveSignals(state.entryRules)
+        || (state.strategySlots || []).some((s) => entryRulesHaveSignals(s.entryRules));
+
+      // 2) Server is source of truth when logged in / API available
       if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
         return hasLocal;
       }
-      const data = await FuturesApiClient.getStrategy();
-      if (data?.strategy && (data.strategy.entryRules || data.strategy.strategySlots?.length)) {
-        hydrateStrategyFromPayload(data.strategy, { source: 'server' });
-        return true;
+      try {
+        const data = await FuturesApiClient.getStrategy();
+        if (data?.strategy && (data.strategy.entryRules || data.strategy.strategySlots?.length)) {
+          hydrateStrategyFromPayload(data.strategy, { source: 'server' });
+          return true;
+        }
+        // Local exists but server empty — seed server once (only if exchange session ok or ignore errors)
+        if (hasLocal) {
+          try {
+            await syncStrategyToServer();
+          } catch { /* ignore seed failures */ }
+        }
+      } catch {
+        /* offline / old API — keep local */
       }
-      // Local exists but server empty — seed server once so reopen/other devices work
-      if (hasLocal) {
-        await syncStrategyToServer();
-      }
-    } catch {
-      /* offline / old API — keep local */
+      return hasLocal;
+    } catch (err) {
+      console.warn('restoreStrategyPersistence failed', err);
+      return false;
     }
-    return hasLocal;
   }
 
   function loadEntryRules() {
@@ -2277,6 +2285,14 @@ const FuturesBotApp = (() => {
           startStatusPolling();
         } catch (err) {
           addLog(`바이낸스 자동 재연결 실패: ${err.message}`, 'loss');
+          // Keep login; allow manual key entry after a failed reconnect.
+          FuturesApiClient.setConnected(false);
+          $('#connectApiBtn') && ($('#connectApiBtn').disabled = false);
+          $('#disconnectApiBtn') && ($('#disconnectApiBtn').disabled = true);
+          $('#apiKey') && ($('#apiKey').disabled = false);
+          $('#apiSecret') && ($('#apiSecret').disabled = false);
+          $('#apiEnv') && ($('#apiEnv').disabled = false);
+          updateApiServerStatus(true, false);
         }
       }
     }
