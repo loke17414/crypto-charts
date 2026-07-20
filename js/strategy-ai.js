@@ -57,17 +57,23 @@ const StrategyAI = (() => {
       list.innerHTML = '<div class="api-hint">추천할 전략이 없습니다. 차트를 불러온 뒤 새로고침하세요.</div>';
       return;
     }
-    result.items.forEach((item, index) => {
+      result.items.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
+      const bench = item.bench;
+      const benchLine = bench
+        ? `벤치 ${bench.winRate}%/${bench.trades}회 (${bench.interval}) · PnL ${bench.totalPnlPct}%`
+        : '';
+      const liveLine = `현재 차트 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%`;
       row.innerHTML = `
           <div>
             <strong>${index + 1}. ${item.name}</strong>
             <div class="strategy-recommend__meta">${item.blurb || ''}</div>
-            <div class="strategy-recommend__meta">승률 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%</div>
+            ${benchLine ? `<div class="strategy-recommend__meta">${benchLine}</div>` : ''}
+            <div class="strategy-recommend__meta">${liveLine}</div>
           </div>
           <div class="strategy-recommend__actions">
-            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}" ${item.trades < 3 ? 'disabled' : ''}>적용</button>
+            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}">적용</button>
             <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
           </div>
         `;
@@ -105,9 +111,9 @@ const StrategyAI = (() => {
         const candles = getChartCandles();
         const result = StrategyPresets.recommend(candles, {
           minWinRate: 50,
-          minTrades: 5,
+          minTrades: 100,
           limit: 10,
-          maxTrades: 50,
+          maxTrades: 100,
         });
         if (token !== recommendRefreshToken) return;
         window.__lastRecommendedStrategies = result;

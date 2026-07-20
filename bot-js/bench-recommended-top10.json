@@ -1,0 +1,510 @@
+{
+  "symbol": "BTCUSDT",
+  "intervals": [
+    "15m",
+    "1h",
+    "5m"
+  ],
+  "maxTrades": 100,
+  "minWinRate": 50,
+  "measuredAt": "2026-07-20T11:58:14.941Z",
+  "items": [
+    {
+      "id": "engulfing_bear-atr-rr05",
+      "name": "하락 장악형 숏 (ATR RR0.5)",
+      "blurb": "engulfing_bear · ATR RR 0.5",
+      "gptPrompt": "추천전략 engulfing_bear-atr-rr05 적용: engulfing_bear · ATR RR 0.5. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": true,
+        "entryRules": {
+          "long": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          },
+          "short": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "candle_pattern",
+                "pattern": "engulfing_bear",
+                "offset": 0
+              }
+            ]
+          }
+        },
+        "exitRules": {
+          "short": {
+            "stopLoss": {
+              "type": "atr",
+              "period": 14,
+              "mult": 1.2
+            },
+            "takeProfit": {
+              "type": "risk_reward",
+              "ratio": 0.5
+            }
+          }
+        }
+      },
+      "trades": 100,
+      "winRate": 71,
+      "wins": 71,
+      "losses": 29,
+      "totalPnlPct": 18.8,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "swing-bounce-both-sl2-tp1",
+      "name": "전고저 반등 (SL2%/TP1%)",
+      "blurb": "swing_near 양방향 · SL 2% TP 1%",
+      "gptPrompt": "추천전략 swing-bounce-both-sl2-tp1 적용: swing_near 양방향 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": true,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "swing_near",
+                "side": "long",
+                "pivotBars": 5,
+                "lookback": 60,
+                "tolerancePct": 0.5
+              }
+            ]
+          },
+          "short": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "swing_near",
+                "side": "short",
+                "pivotBars": 5,
+                "lookback": 60,
+                "tolerancePct": 0.5
+              }
+            ]
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 69,
+      "wins": 69,
+      "losses": 31,
+      "totalPnlPct": 7,
+      "interval": "15m",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "shooting_star-atr-rr05",
+      "name": "슈팅스타 숏 (ATR RR0.5)",
+      "blurb": "shooting_star · ATR RR 0.5",
+      "gptPrompt": "추천전략 shooting_star-atr-rr05 적용: shooting_star · ATR RR 0.5. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": true,
+        "entryRules": {
+          "long": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          },
+          "short": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "candle_pattern",
+                "pattern": "shooting_star",
+                "offset": 0
+              }
+            ]
+          }
+        },
+        "exitRules": {
+          "short": {
+            "stopLoss": {
+              "type": "atr",
+              "period": 14,
+              "mult": 1.2
+            },
+            "takeProfit": {
+              "type": "risk_reward",
+              "ratio": 0.5
+            }
+          }
+        }
+      },
+      "trades": 100,
+      "winRate": 68,
+      "wins": 68,
+      "losses": 32,
+      "totalPnlPct": 14.2,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "ema-both-sl2-tp1",
+      "name": "EMA 골든/데드 (SL2%/TP1%)",
+      "blurb": "EMA12/26 양방향 · SL 2% TP 1%",
+      "gptPrompt": "추천전략 ema-both-sl2-tp1 적용: EMA12/26 양방향 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": true,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "cross_above",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "ema",
+                  "params": {
+                    "period": 12
+                  },
+                  "field": "value"
+                },
+                "right": {
+                  "source": "indicator",
+                  "indicator": "ema",
+                  "params": {
+                    "period": 26
+                  },
+                  "field": "value"
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "cross_below",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "ema",
+                  "params": {
+                    "period": 12
+                  },
+                  "field": "value"
+                },
+                "right": {
+                  "source": "indicator",
+                  "indicator": "ema",
+                  "params": {
+                    "period": 26
+                  },
+                  "field": "value"
+                }
+              }
+            ]
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 68,
+      "wins": 68,
+      "losses": 32,
+      "totalPnlPct": 4,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "boll-long-sl2-tp1",
+      "name": "볼린저 하단 재진입 롱 (SL2%/TP1%)",
+      "blurb": "boll long · SL 2% TP 1%",
+      "gptPrompt": "추천전략 boll-long-sl2-tp1 적용: boll long · SL 2% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "band_reentry",
+                "side": "long",
+                "indicator": "boll",
+                "params": {
+                  "period": 20,
+                  "mult": 2
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 67,
+      "wins": 67,
+      "losses": 33,
+      "totalPnlPct": 1,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "stoch-long-25-sl2-tp1",
+      "name": "스토캐스틱≤25 롱 (SL2%/TP1%)",
+      "blurb": "Stoch K≤25 · SL 2% TP 1%",
+      "gptPrompt": "추천전략 stoch-long-25-sl2-tp1 적용: Stoch K≤25 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "compare",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "stoch",
+                  "params": {
+                    "kPeriod": 14,
+                    "dPeriod": 3
+                  },
+                  "field": "k"
+                },
+                "op": "<=",
+                "right": {
+                  "source": "value",
+                  "value": 25
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 66,
+      "wins": 66,
+      "losses": 34,
+      "totalPnlPct": -2,
+      "interval": "15m",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "stoch-long-20-sl2-tp1",
+      "name": "스토캐스틱≤20 롱 (SL2%/TP1%)",
+      "blurb": "Stoch K≤20 · SL 2% TP 1%",
+      "gptPrompt": "추천전략 stoch-long-20-sl2-tp1 적용: Stoch K≤20 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "compare",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "stoch",
+                  "params": {
+                    "kPeriod": 14,
+                    "dPeriod": 3
+                  },
+                  "field": "k"
+                },
+                "op": "<=",
+                "right": {
+                  "source": "value",
+                  "value": 20
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 65,
+      "wins": 65,
+      "losses": 35,
+      "totalPnlPct": -5,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "stoch-long-25-sl1p5-tp1",
+      "name": "스토캐스틱≤25 롱 (SL1.5%/TP1%)",
+      "blurb": "Stoch K≤25 · SL 1.5% TP 1%",
+      "gptPrompt": "추천전략 stoch-long-25-sl1p5-tp1 적용: Stoch K≤25 · SL 1.5% TP 1%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "compare",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "stoch",
+                  "params": {
+                    "kPeriod": 14,
+                    "dPeriod": 3
+                  },
+                  "field": "k"
+                },
+                "op": "<=",
+                "right": {
+                  "source": "value",
+                  "value": 25
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 1.5,
+        "takeProfitPct": 1,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 64,
+      "wins": 64,
+      "losses": 36,
+      "totalPnlPct": 10,
+      "interval": "15m",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "boll-long-sl2-tp1p2",
+      "name": "볼린저 하단 재진입 롱 (SL2%/TP1.2%)",
+      "blurb": "boll long · SL 2% TP 1.2%",
+      "gptPrompt": "추천전략 boll-long-sl2-tp1p2 적용: boll long · SL 2% TP 1.2%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "band_reentry",
+                "side": "long",
+                "indicator": "boll",
+                "params": {
+                  "period": 20,
+                  "mult": 2
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 2,
+        "takeProfitPct": 1.2,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 64,
+      "wins": 64,
+      "losses": 36,
+      "totalPnlPct": 4.8,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "id": "rsi-long-28-sl1-tp0p6",
+      "name": "RSI≤28 롱 (SL1%/TP0.6%)",
+      "blurb": "RSI≤28 · 고정 SL 1% TP 0.6%",
+      "gptPrompt": "추천전략 rsi-long-28-sl1-tp0p6 적용: RSI≤28 · 고정 SL 1% TP 0.6%. 설정을 그대로 적용해.",
+      "settings": {
+        "allowShort": false,
+        "entryRules": {
+          "long": {
+            "enabled": true,
+            "logic": "all",
+            "conditions": [
+              {
+                "type": "compare",
+                "left": {
+                  "source": "indicator",
+                  "indicator": "rsi",
+                  "params": {
+                    "period": 14
+                  },
+                  "field": "value"
+                },
+                "op": "<=",
+                "right": {
+                  "source": "value",
+                  "value": 28
+                }
+              }
+            ]
+          },
+          "short": {
+            "enabled": false,
+            "logic": "all",
+            "conditions": []
+          }
+        },
+        "exitRules": null,
+        "stopLossPct": 1,
+        "takeProfitPct": 0.6,
+        "useStopLoss": true
+      },
+      "trades": 100,
+      "winRate": 64,
+      "wins": 64,
+      "losses": 36,
+      "totalPnlPct": 2.4,
+      "interval": "1h",
+      "symbol": "BTCUSDT"
+    }
+  ]
+}

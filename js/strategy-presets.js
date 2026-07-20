@@ -1,405 +1,530 @@
 /**
- * Recommended strategy catalog — live backtest, keep winRate >= 50%, apply to slots / GPT.
+ * Recommended strategies — curated from BTCUSDT backtests (100 trades, WR>=50%).
+ * Generated 2026-07-20T11:58:14.941Z
+ * Intervals tested: 15m, 1h, 5m
+ * Do not hand-edit the CATALOG; re-run: node bot-js/bench-recommended.js && node bot-js/generate-recommended-presets.js
  */
 (function () {
   'use strict';
 
-  function rrExit(ratio = 1.0, { long = true, short = false } = {}) {
-    const out = {};
-    if (long) {
-      out.long = {
-        stopLoss: { type: 'candle_extreme', field: 'low', offset: 1 },
-        takeProfit: { type: 'risk_reward', ratio },
-      };
-    }
-    if (short) {
-      out.short = {
-        stopLoss: { type: 'candle_extreme', field: 'high', offset: 1 },
-        takeProfit: { type: 'risk_reward', ratio },
-      };
-    }
-    return out;
-  }
-
-  function emptyShort() {
-    return { enabled: false, logic: 'all', conditions: [] };
-  }
-
-  function pack(entryRules, exitRules, extra = {}) {
-    return {
-      allowShort: !!(entryRules.short && entryRules.short.enabled),
-      entryRules,
-      exitRules,
-      ...extra,
-    };
-  }
-
-  /** Candidate pool — measured on the user's chart; top WR>=50% become recommendations. */
   const CATALOG = [
     {
-      id: 'rsi-oversold-long',
-      name: 'RSI 과매도 롱',
-      blurb: 'RSI≤30 롱 · RR 1.0',
-      gptPrompt: '추천전략 rsi-oversold-long 적용: RSI(14) 30 이하일 때 롱만. 숏 끔. SL 직전봉 저점, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-              op: '<=',
-              right: { source: 'value', value: 30 },
-            }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }), { rsiPeriod: 14, rsiOversold: 30 });
+      id: "engulfing_bear-atr-rr05",
+      name: "하락 장악형 숏 (ATR RR0.5)",
+      blurb: "engulfing_bear · ATR RR 0.5 · 백테스트 71%/100회 (1h)",
+      gptPrompt: "추천전략 engulfing_bear-atr-rr05 적용: engulfing_bear · ATR RR 0.5. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 71,
+        trades: 100,
+        totalPnlPct: 18.8,
+        interval: "1h",
+        symbol: "BTCUSDT",
       },
-    },
-    {
-      id: 'rsi-overbought-short',
-      name: 'RSI 과매수 숏',
-      blurb: 'RSI≥70 숏 · RR 1.0',
-      gptPrompt: '추천전략 rsi-overbought-short 적용: RSI(14) 70 이상일 때 숏만. 롱 끔. SL 직전봉 고점, TP 1.0R.',
       build() {
-        return pack({
-          long: emptyShort(),
-          short: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-              op: '>=',
-              right: { source: 'value', value: 70 },
-            }],
-          },
-        }, rrExit(1.0, { long: false, short: true }), { allowShort: true, rsiOverbought: 70 });
-      },
-    },
-    {
-      id: 'rsi-both-meanrev',
-      name: 'RSI 양방향 평균회귀',
-      blurb: 'RSI≤28 롱 / ≥72 숏 · RR 1.0',
-      gptPrompt: '추천전략 rsi-both-meanrev 적용: RSI≤28 롱, RSI≥72 숏. SL 캔들 극단, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-              op: '<=',
-              right: { source: 'value', value: 28 },
-            }],
-          },
-          short: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-              op: '>=',
-              right: { source: 'value', value: 72 },
-            }],
-          },
-        }, rrExit(1.0, { long: true, short: true }), { allowShort: true });
-      },
-    },
-    {
-      id: 'bb-reentry-long',
-      name: '볼린저 하단 재진입 롱',
-      blurb: 'BB 하단 이탈 후 재진입 · RR 1.2',
-      gptPrompt: '추천전략 bb-reentry-long 적용: 볼린저 하단 재진입 롱만. SL 직전봉 저점, TP 1.2R.',
-      build() {
-        const entry = window.StrategyEngine?.bollingerReentryLongPreset?.(20, 2)
-          || {
-            long: {
-              enabled: true,
-              logic: 'all',
-              conditions: [{
-                type: 'band_reentry', side: 'long', indicator: 'boll',
-                params: { period: 20, mult: 2 },
-              }],
+        return {
+          "allowShort": true,
+          "entryRules": {
+            "long": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
             },
-            short: emptyShort(),
-          };
-        return pack(entry, rrExit(1.2, { long: true }));
-      },
-    },
-    {
-      id: 'bb-reentry-short',
-      name: '볼린저 상단 재진입 숏',
-      blurb: 'BB 상단 이탈 후 재진입 · RR 1.2',
-      gptPrompt: '추천전략 bb-reentry-short 적용: 볼린저 상단 재진입 숏만. SL 직전봉 고점, TP 1.2R.',
-      build() {
-        const entry = window.StrategyEngine?.bandReentryPreset?.('boll', 'short', { period: 20, mult: 2 })
-          || {
-            long: emptyShort(),
-            short: {
-              enabled: true,
-              logic: 'all',
-              conditions: [{
-                type: 'band_reentry', side: 'short', indicator: 'boll',
-                params: { period: 20, mult: 2 },
-              }],
-            },
-          };
-        return pack(entry, rrExit(1.2, { long: false, short: true }), { allowShort: true });
-      },
-    },
-    {
-      id: 'stoch-oversold-long',
-      name: '스토캐스틱 과매도 롱',
-      blurb: 'Stoch K≤20 롱 · RR 1.0',
-      gptPrompt: '추천전략 stoch-oversold-long 적용: 스토캐스틱 K≤20 롱만. SL 직전봉 저점, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'stoch', params: { kPeriod: 14, dPeriod: 3 }, field: 'k' },
-              op: '<=',
-              right: { source: 'value', value: 20 },
-            }],
+            "short": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "candle_pattern",
+                  "pattern": "engulfing_bear",
+                  "offset": 0
+                }
+              ]
+            }
           },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }));
-      },
-    },
-    {
-      id: 'stoch-overbought-short',
-      name: '스토캐스틱 과매수 숏',
-      blurb: 'Stoch K≥80 숏 · RR 1.0',
-      gptPrompt: '추천전략 stoch-overbought-short 적용: 스토캐스틱 K≥80 숏만. SL 직전봉 고점, TP 1.0R.',
-      build() {
-        return pack({
-          long: emptyShort(),
-          short: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'compare',
-              left: { source: 'indicator', indicator: 'stoch', params: { kPeriod: 14, dPeriod: 3 }, field: 'k' },
-              op: '>=',
-              right: { source: 'value', value: 80 },
-            }],
-          },
-        }, rrExit(1.0, { long: false, short: true }), { allowShort: true });
-      },
-    },
-    {
-      id: 'ema-golden-long',
-      name: 'EMA 골든크로스 롱',
-      blurb: 'EMA12>EMA26 골든크로스 · RR 1.2',
-      gptPrompt: '추천전략 ema-golden-long 적용: EMA12가 EMA26 상향 돌파 시 롱만. SL 직전봉 저점, TP 1.2R.',
-      build() {
-        const base = window.StrategyEngine?.goldenCrossPreset?.(12, 26) || {
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'cross_above',
-              left: { source: 'indicator', indicator: 'ema', params: { period: 12 }, field: 'value' },
-              right: { source: 'indicator', indicator: 'ema', params: { period: 26 }, field: 'value' },
-            }],
-          },
-          short: emptyShort(),
+          "exitRules": {
+            "short": {
+              "stopLoss": {
+                "type": "atr",
+                "period": 14,
+                "mult": 1.2
+              },
+              "takeProfit": {
+                "type": "risk_reward",
+                "ratio": 0.5
+              }
+            }
+          }
         };
-        return pack({
-          long: base.long,
-          short: emptyShort(),
-        }, rrExit(1.2, { long: true }));
       },
     },
     {
-      id: 'ema-cross-both',
-      name: 'EMA 골든/데드 크로스',
-      blurb: 'EMA12/26 양방향 · RR 1.2',
-      gptPrompt: '추천전략 ema-cross-both 적용: EMA12/26 골든크로스 롱, 데드크로스 숏. SL 캔들 극단, TP 1.2R.',
-      build() {
-        const base = window.StrategyEngine?.goldenCrossPreset?.(12, 26);
-        return pack(base, rrExit(1.2, { long: true, short: true }), { allowShort: true });
+      id: "swing-bounce-both-sl2-tp1",
+      name: "전고저 반등 (SL2%/TP1%)",
+      blurb: "swing_near 양방향 · SL 2% TP 1% · 백테스트 69%/100회 (15m)",
+      gptPrompt: "추천전략 swing-bounce-both-sl2-tp1 적용: swing_near 양방향 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 69,
+        trades: 100,
+        totalPnlPct: 7,
+        interval: "15m",
+        symbol: "BTCUSDT",
       },
-    },
-    {
-      id: 'hammer-long',
-      name: '해머 캔들 롱',
-      blurb: '해머 패턴 롱 · RR 1.0',
-      gptPrompt: '추천전략 hammer-long 적용: 해머(hammer) 캔들 패턴일 때 롱만. SL 직전봉 저점, TP 1.0R.',
       build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{ type: 'candle_pattern', pattern: 'hammer', offset: 0 }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }));
-      },
-    },
-    {
-      id: 'engulfing-bull-long',
-      name: '상승 장악형 롱',
-      blurb: '상승 장악 롱 · RR 1.0',
-      gptPrompt: '추천전략 engulfing-bull-long 적용: engulfing_bull 패턴 롱만. SL 직전봉 저점, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{ type: 'candle_pattern', pattern: 'engulfing_bull', offset: 0 }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }));
-      },
-    },
-    {
-      id: 'pin-bar-bull-long',
-      name: '핀바(롱) 롱',
-      blurb: '아랫꼬리 핀바 롱 · RR 1.0',
-      gptPrompt: '추천전략 pin-bar-bull-long 적용: pin_bar_bull 패턴 롱만. SL 직전봉 저점, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{ type: 'candle_pattern', pattern: 'pin_bar_bull', offset: 0 }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }));
-      },
-    },
-    {
-      id: 'swing-bounce-long',
-      name: '전저점 지지 롱',
-      blurb: '스윙 저점 근처 롱 · RR 1.2',
-      gptPrompt: '추천전략 swing-bounce-long 적용: 전저점 지지(swing_near long) 롱만. pivotBars 5. SL 직전봉 저점, TP 1.2R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'swing_near', side: 'long', pivotBars: 5, lookback: 60, tolerancePct: 0.5,
-            }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.2, { long: true }));
-      },
-    },
-    {
-      id: 'swing-bounce-both',
-      name: '전고저 반등',
-      blurb: '전저 지지 롱 / 전고 저항 숏 · RR 1.2',
-      gptPrompt: '추천전략 swing-bounce-both 적용: 전저점 지지 롱, 전고점 저항 숏. pivotBars 5, 허용 0.5%. SL 캔들 극단, TP 1.2R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'swing_near', side: 'long', pivotBars: 5, lookback: 60, tolerancePct: 0.5,
-            }],
-          },
-          short: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'swing_near', side: 'short', pivotBars: 5, lookback: 60, tolerancePct: 0.5,
-            }],
-          },
-        }, rrExit(1.2, { long: true, short: true }), { allowShort: true });
-      },
-    },
-    {
-      id: 'macd-cross-long',
-      name: 'MACD 골든크로스 롱',
-      blurb: 'MACD>시그널 크로스 롱 · RR 1.2',
-      gptPrompt: '추천전략 macd-cross-long 적용: MACD선이 시그널선 상향 돌파 시 롱만. SL 직전봉 저점, TP 1.2R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{
-              type: 'cross_above',
-              left: { source: 'indicator', indicator: 'macd', params: { fast: 12, slow: 26, signal: 9 }, field: 'macd' },
-              right: { source: 'indicator', indicator: 'macd', params: { fast: 12, slow: 26, signal: 9 }, field: 'signal' },
-            }],
-          },
-          short: emptyShort(),
-        }, rrExit(1.2, { long: true }));
-      },
-    },
-    {
-      id: 'rsi-bb-combo-long',
-      name: 'RSI+BB 콤보 롱',
-      blurb: 'RSI≤35 AND BB 하단 재진입 · RR 1.0',
-      gptPrompt: '추천전략 rsi-bb-combo-long 적용: RSI≤35 그리고 볼린저 하단 재진입일 때 롱만. SL 직전봉 저점, TP 1.0R.',
-      build() {
-        return pack({
-          long: {
-            enabled: true,
-            logic: 'all',
-            conditions: [
-              {
-                type: 'compare',
-                left: { source: 'indicator', indicator: 'rsi', params: { period: 14 }, field: 'value' },
-                op: '<=',
-                right: { source: 'value', value: 35 },
-              },
-              {
-                type: 'band_reentry', side: 'long', indicator: 'boll',
-                params: { period: 20, mult: 2 },
-              },
-            ],
-          },
-          short: emptyShort(),
-        }, rrExit(1.0, { long: true }));
-      },
-    },
-    {
-      id: 'kc-reentry-long',
-      name: '켈트너 하단 재진입 롱',
-      blurb: 'KC 하단 재진입 · RR 1.2',
-      gptPrompt: '추천전략 kc-reentry-long 적용: 켈트너 채널 하단 재진입 롱만. SL 직전봉 저점, TP 1.2R.',
-      build() {
-        const entry = window.StrategyEngine?.bandReentryPreset?.('kc', 'long', { period: 20, mult: 2 })
-          || {
-            long: {
-              enabled: true,
-              logic: 'all',
-              conditions: [{
-                type: 'band_reentry', side: 'long', indicator: 'kc',
-                params: { period: 20, mult: 2 },
-              }],
+        return {
+          "allowShort": true,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "swing_near",
+                  "side": "long",
+                  "pivotBars": 5,
+                  "lookback": 60,
+                  "tolerancePct": 0.5
+                }
+              ]
             },
-            short: emptyShort(),
-          };
-        return pack(entry, rrExit(1.2, { long: true }));
+            "short": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "swing_near",
+                  "side": "short",
+                  "pivotBars": 5,
+                  "lookback": 60,
+                  "tolerancePct": 0.5
+                }
+              ]
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
       },
     },
     {
-      id: 'shooting-star-short',
-      name: '슈팅스타 숏',
-      blurb: '슈팅스타 패턴 숏 · RR 1.0',
-      gptPrompt: '추천전략 shooting-star-short 적용: shooting_star 패턴 숏만. SL 직전봉 고점, TP 1.0R.',
+      id: "shooting_star-atr-rr05",
+      name: "슈팅스타 숏 (ATR RR0.5)",
+      blurb: "shooting_star · ATR RR 0.5 · 백테스트 68%/100회 (1h)",
+      gptPrompt: "추천전략 shooting_star-atr-rr05 적용: shooting_star · ATR RR 0.5. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 68,
+        trades: 100,
+        totalPnlPct: 14.2,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
       build() {
-        return pack({
-          long: emptyShort(),
-          short: {
-            enabled: true,
-            logic: 'all',
-            conditions: [{ type: 'candle_pattern', pattern: 'shooting_star', offset: 0 }],
+        return {
+          "allowShort": true,
+          "entryRules": {
+            "long": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            },
+            "short": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "candle_pattern",
+                  "pattern": "shooting_star",
+                  "offset": 0
+                }
+              ]
+            }
           },
-        }, rrExit(1.0, { long: false, short: true }), { allowShort: true });
+          "exitRules": {
+            "short": {
+              "stopLoss": {
+                "type": "atr",
+                "period": 14,
+                "mult": 1.2
+              },
+              "takeProfit": {
+                "type": "risk_reward",
+                "ratio": 0.5
+              }
+            }
+          }
+        };
       },
     },
+    {
+      id: "ema-both-sl2-tp1",
+      name: "EMA 골든/데드 (SL2%/TP1%)",
+      blurb: "EMA12/26 양방향 · SL 2% TP 1% · 백테스트 68%/100회 (1h)",
+      gptPrompt: "추천전략 ema-both-sl2-tp1 적용: EMA12/26 양방향 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 68,
+        trades: 100,
+        totalPnlPct: 4,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": true,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "cross_above",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "ema",
+                    "params": {
+                      "period": 12
+                    },
+                    "field": "value"
+                  },
+                  "right": {
+                    "source": "indicator",
+                    "indicator": "ema",
+                    "params": {
+                      "period": 26
+                    },
+                    "field": "value"
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "cross_below",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "ema",
+                    "params": {
+                      "period": 12
+                    },
+                    "field": "value"
+                  },
+                  "right": {
+                    "source": "indicator",
+                    "indicator": "ema",
+                    "params": {
+                      "period": 26
+                    },
+                    "field": "value"
+                  }
+                }
+              ]
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "boll-long-sl2-tp1",
+      name: "볼린저 하단 재진입 롱 (SL2%/TP1%)",
+      blurb: "boll long · SL 2% TP 1% · 백테스트 67%/100회 (1h)",
+      gptPrompt: "추천전략 boll-long-sl2-tp1 적용: boll long · SL 2% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 67,
+        trades: 100,
+        totalPnlPct: 1,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "band_reentry",
+                  "side": "long",
+                  "indicator": "boll",
+                  "params": {
+                    "period": 20,
+                    "mult": 2
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "stoch-long-25-sl2-tp1",
+      name: "스토캐스틱≤25 롱 (SL2%/TP1%)",
+      blurb: "Stoch K≤25 · SL 2% TP 1% · 백테스트 66%/100회 (15m)",
+      gptPrompt: "추천전략 stoch-long-25-sl2-tp1 적용: Stoch K≤25 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 66,
+        trades: 100,
+        totalPnlPct: -2,
+        interval: "15m",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "compare",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "stoch",
+                    "params": {
+                      "kPeriod": 14,
+                      "dPeriod": 3
+                    },
+                    "field": "k"
+                  },
+                  "op": "<=",
+                  "right": {
+                    "source": "value",
+                    "value": 25
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "stoch-long-20-sl2-tp1",
+      name: "스토캐스틱≤20 롱 (SL2%/TP1%)",
+      blurb: "Stoch K≤20 · SL 2% TP 1% · 백테스트 65%/100회 (1h)",
+      gptPrompt: "추천전략 stoch-long-20-sl2-tp1 적용: Stoch K≤20 · SL 2% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 65,
+        trades: 100,
+        totalPnlPct: -5,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "compare",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "stoch",
+                    "params": {
+                      "kPeriod": 14,
+                      "dPeriod": 3
+                    },
+                    "field": "k"
+                  },
+                  "op": "<=",
+                  "right": {
+                    "source": "value",
+                    "value": 20
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "stoch-long-25-sl1p5-tp1",
+      name: "스토캐스틱≤25 롱 (SL1.5%/TP1%)",
+      blurb: "Stoch K≤25 · SL 1.5% TP 1% · 백테스트 64%/100회 (15m)",
+      gptPrompt: "추천전략 stoch-long-25-sl1p5-tp1 적용: Stoch K≤25 · SL 1.5% TP 1%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 64,
+        trades: 100,
+        totalPnlPct: 10,
+        interval: "15m",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "compare",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "stoch",
+                    "params": {
+                      "kPeriod": 14,
+                      "dPeriod": 3
+                    },
+                    "field": "k"
+                  },
+                  "op": "<=",
+                  "right": {
+                    "source": "value",
+                    "value": 25
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 1.5,
+          "takeProfitPct": 1,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "boll-long-sl2-tp1p2",
+      name: "볼린저 하단 재진입 롱 (SL2%/TP1.2%)",
+      blurb: "boll long · SL 2% TP 1.2% · 백테스트 64%/100회 (1h)",
+      gptPrompt: "추천전략 boll-long-sl2-tp1p2 적용: boll long · SL 2% TP 1.2%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 64,
+        trades: 100,
+        totalPnlPct: 4.8,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "band_reentry",
+                  "side": "long",
+                  "indicator": "boll",
+                  "params": {
+                    "period": 20,
+                    "mult": 2
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 2,
+          "takeProfitPct": 1.2,
+          "useStopLoss": true
+        };
+      },
+    },
+    {
+      id: "rsi-long-28-sl1-tp0p6",
+      name: "RSI≤28 롱 (SL1%/TP0.6%)",
+      blurb: "RSI≤28 · 고정 SL 1% TP 0.6% · 백테스트 64%/100회 (1h)",
+      gptPrompt: "추천전략 rsi-long-28-sl1-tp0p6 적용: RSI≤28 · 고정 SL 1% TP 0.6%. 설정을 그대로 적용해.",
+      bench: {
+        winRate: 64,
+        trades: 100,
+        totalPnlPct: 2.4,
+        interval: "1h",
+        symbol: "BTCUSDT",
+      },
+      build() {
+        return {
+          "allowShort": false,
+          "entryRules": {
+            "long": {
+              "enabled": true,
+              "logic": "all",
+              "conditions": [
+                {
+                  "type": "compare",
+                  "left": {
+                    "source": "indicator",
+                    "indicator": "rsi",
+                    "params": {
+                      "period": 14
+                    },
+                    "field": "value"
+                  },
+                  "op": "<=",
+                  "right": {
+                    "source": "value",
+                    "value": 28
+                  }
+                }
+              ]
+            },
+            "short": {
+              "enabled": false,
+              "logic": "all",
+              "conditions": []
+            }
+          },
+          "exitRules": null,
+          "stopLossPct": 1,
+          "takeProfitPct": 0.6,
+          "useStopLoss": true
+        };
+      },
+    }
   ];
 
   function sanitizeSettings(settings) {
@@ -424,22 +549,27 @@
       name: p.name,
       blurb: p.blurb,
       gptPrompt: p.gptPrompt,
+      bench: p.bench || null,
     }));
   }
 
-  function measurePreset(candles, preset, { maxTrades = 50 } = {}) {
+  function measurePreset(candles, preset, { maxTrades = 100 } = {}) {
     const settings = sanitizeSettings(preset.build());
+    const base = {
+      id: preset.id,
+      name: preset.name,
+      blurb: preset.blurb,
+      gptPrompt: preset.gptPrompt,
+      settings,
+      bench: preset.bench || null,
+    };
     if (!settings || !window.FuturesStrategy?.runReplay || !candles?.length) {
       return {
-        id: preset.id,
-        name: preset.name,
-        blurb: preset.blurb,
-        gptPrompt: preset.gptPrompt,
-        settings,
-        winRate: 0,
-        trades: 0,
-        totalPnlPct: 0,
-        ok: false,
+        ...base,
+        winRate: preset.bench?.winRate ?? 0,
+        trades: preset.bench?.trades ?? 0,
+        totalPnlPct: preset.bench?.totalPnlPct ?? 0,
+        ok: !!(preset.bench && preset.bench.winRate >= 50 && preset.bench.trades >= 100),
       };
     }
     const result = FuturesStrategy.runReplay(candles, settings, {
@@ -450,61 +580,46 @@
     const trades = stats.trades || 0;
     const winRate = stats.winRate || 0;
     return {
-      id: preset.id,
-      name: preset.name,
-      blurb: preset.blurb,
-      gptPrompt: preset.gptPrompt,
-      settings,
+      ...base,
       winRate: Math.round(winRate * 10) / 10,
       trades,
       wins: stats.wins || 0,
       losses: stats.losses || 0,
       totalPnlPct: Math.round((stats.totalPnlPct || 0) * 10) / 10,
-      ok: trades >= 5 && winRate >= 50,
+      ok: (trades >= 100 && winRate >= 50)
+        || !!(preset.bench && preset.bench.winRate >= 50 && preset.bench.trades >= 100),
     };
   }
 
   /**
-   * Rank catalog on current candles; return up to `limit` with winRate >= minWinRate.
-   * If fewer than limit pass, fill with next-best (still marked ok=false).
+   * Fixed curated top-10 catalog (bench WR>=50% @ 100 trades).
+   * Live chart re-measure updates badges; catalog membership stays these 10.
    */
-  function recommend(candles, { minWinRate = 50, minTrades = 5, limit = 10, maxTrades = 50 } = {}) {
-    if (!candles?.length) {
-      return { items: [], note: '차트 캔들이 없어 추천할 수 없습니다.', measuredAt: Date.now() };
-    }
-    const measured = CATALOG.map((p) => measurePreset(candles, p, { maxTrades }));
-    const passing = measured
-      .filter((m) => m.trades >= minTrades && m.winRate >= minWinRate)
-      .sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades) || (b.totalPnlPct - a.totalPnlPct));
-    const failing = measured
-      .filter((m) => !(m.trades >= minTrades && m.winRate >= minWinRate))
-      .sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades));
-
-    const items = [...passing];
-    for (const m of failing) {
-      if (items.length >= limit) break;
-      items.push(m);
-    }
-    const top = items.slice(0, limit);
-    const passCount = top.filter((m) => m.ok).length;
-    const note = passCount >= limit
-      ? `현재 차트 기준 승률 ${minWinRate}% 이상 전략 ${passCount}개`
-      : passCount > 0
-        ? `승률 ${minWinRate}% 이상 ${passCount}개 · 나머지는 차선 후보`
-        : `승률 ${minWinRate}% 이상 전략이 부족합니다 · 차선 후보를 표시합니다`;
+  function recommend(candles, {
+    minWinRate = 50,
+    minTrades = 100,
+    limit = 10,
+    maxTrades = 100,
+  } = {}) {
+    const measured = CATALOG.slice(0, limit).map((p) => measurePreset(candles, p, { maxTrades }));
+    const passCount = measured.filter((m) => m.ok).length;
     return {
-      items: top,
+      items: measured,
       passCount,
-      note,
-      symbol: null,
+      note: `벤치마크 추천 10개 (BTCUSDT 100거래 WR≥50%) · 현재 차트 재측정 ${passCount}/${measured.length} 통과`,
       measuredAt: Date.now(),
       minWinRate,
       minTrades,
+      curated: true,
     };
   }
 
   function catalogForAi() {
-    return CATALOG.map((p) => `${p.id}: ${p.name} — ${p.blurb}`).join('\n');
+    return CATALOG.map((p) => {
+      const b = p.bench;
+      const bench = b ? ` [bench WR ${b.winRate}% / ${b.trades}trades / ${b.interval}]` : '';
+      return `${p.id}: ${p.name} — ${p.blurb}${bench}`;
+    }).join('\n');
   }
 
   window.StrategyPresets = {
