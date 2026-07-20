@@ -103,6 +103,42 @@ def _wick_shape_hint(body_pct: float, upper_wick_pct: float, lower_wick_pct: flo
     return "balanced"
 
 
+def _candle_patterns_at(klines: list[list[Any]], index: int) -> list[str]:
+    if index < 0 or index >= len(klines):
+        return []
+    o, h, l, c = (float(klines[index][j]) for j in (1, 2, 3, 4))
+    rng = max(h - l, 1e-12)
+    body = abs(c - o)
+    upper = h - max(o, c)
+    lower = min(o, c) - l
+    body_pct = body / rng
+    upper_pct = upper / rng
+    lower_pct = lower / rng
+    out: list[str] = []
+    if c > o:
+        out.append("bullish")
+    if c < o:
+        out.append("bearish")
+    if body_pct <= 0.1:
+        out.append("doji")
+    if lower_pct >= 0.6 and body_pct <= 0.25:
+        out.append("pin_bar_bull")
+    if upper_pct >= 0.6 and body_pct <= 0.25:
+        out.append("pin_bar_bear")
+    if lower >= body * 2 and upper <= body * 0.5:
+        out.append("hammer")
+    if upper >= body * 2 and lower <= body * 0.5:
+        out.append("shooting_star")
+    if index >= 1:
+        po, ph, pl, pc = (float(klines[index - 1][j]) for j in (1, 2, 3, 4))
+        pbody = abs(pc - po)
+        if pc < po and c > o and o <= pc and c >= po and body > pbody:
+            out.append("engulfing_bull")
+        if pc > po and c < o and o >= pc and c <= po and body > pbody:
+            out.append("engulfing_bear")
+    return out
+
+
 def _format_recent_candles(
     klines: list[list[Any]],
     count: int = 15,
@@ -113,6 +149,7 @@ def _format_recent_candles(
     start = len(klines) - len(slice_k)
     out: list[dict[str, Any]] = []
     for i, k in enumerate(slice_k):
+        idx = start + i
         o, h, l, c = float(k[1]), float(k[2]), float(k[3]), float(k[4])
         vol = float(k[5])
         rng = max(h - l, 0.0)
@@ -123,7 +160,7 @@ def _format_recent_candles(
         upper_wick_pct = (upper_wick / rng * 100) if rng > 0 else 0.0
         lower_wick_pct = (lower_wick / rng * 100) if rng > 0 else 0.0
         out.append({
-            "idx": start + i,
+            "idx": idx,
             "offset": i - len(slice_k) + 1,
             "time": int(k[0]) // 1000,
             "o": _round(o),
@@ -137,8 +174,156 @@ def _format_recent_candles(
             "upperWickPct": _round(upper_wick_pct, 1),
             "lowerWickPct": _round(lower_wick_pct, 1),
             "shape": _wick_shape_hint(body_pct, upper_wick_pct, lower_wick_pct),
+            "patterns": _candle_patterns_at(klines, idx),
         })
     return out
+
+
+_BULL_REVERSAL = {"engulfing_bull", "hammer", "pin_bar_bull", "marubozu_bull"}
+_BEAR_REVERSAL = {"engulfing_bear", "shooting_star", "pin_bar_bear", "marubozu_bear", "inverted_hammer"}
+
+
+def _near_level(price: float | None, level: float | None, tol_pct: float = 0.6) -> bool:
+    if price is None or level is None or not level:
+        return False
+    return abs(price - level) / level * 100 <= tol_pct
+
+
+def _analyze_trend_reversal(
+    klines: list[list[Any]],
+    swings: dict[str, Any],
+    recent: list[dict[str, Any]],
+    *,
+    prior_bias: str,
+) -> dict[str, Any]:
+    if len(klines) < 5:
+        return {
+            "priorBias": prior_bias,
+            "phase": "unclear",
+            "signals": [],
+            "latest": None,
+            "note": "Need prior bias + against-trend candle or CHOCH for trend reversal.",
+        }
+
+    last_high = swings.get("lastSwingHigh")
+    last_low = swings.get("lastSwingLow")
+    high_px = last_high["price"] if isinstance(last_high, dict) else None
+    low_px = last_low["price"] if isinstance(last_low, dict) else None
+    o1, h1, l1, c1 = (float(klines[-1][j]) for j in (1, 2, 3, 4))
+    _o0, _h0, _l0, c0 = (float(klines[-2][j]) for j in (1, 2, 3, 4))
+    signals: list[dict[str, Any]] = []
+
+    if prior_bias == "bullish" and low_px is not None and c0 >= low_px and c1 < low_px:
+        signals.append({
+            "side": "bearish",
+            "kind": "choch_below_swing_low",
+            "strength": "strong",
+            "offset": 0,
+            "level": _round(low_px),
+            "patterns": recent[-1].get("patterns", []) if recent else [],
+            "reason": "상승 추세 중 전저점 종가 이탈 → 구조 전환(CHOCH)",
+        })
+    if prior_bias == "bearish" and high_px is not None and c0 <= high_px and c1 > high_px:
+        signals.append({
+            "side": "bullish",
+            "kind": "choch_above_swing_high",
+            "strength": "strong",
+            "offset": 0,
+            "level": _round(high_px),
+            "patterns": recent[-1].get("patterns", []) if recent else [],
+            "reason": "하락 추세 중 전고점 종가 돌파 → 구조 전환(CHOCH)",
+        })
+
+    for bar in recent[-5:]:
+        pats = set(bar.get("patterns") or [])
+        shape = bar.get("shape")
+        bull_pat = bool(pats & _BULL_REVERSAL) or shape in {"long_lower_wick", "lower_rejection"}
+        bear_pat = bool(pats & _BEAR_REVERSAL) or shape in {"long_upper_wick", "upper_rejection"}
+        at_low = _near_level(bar.get("l"), low_px) or _near_level(bar.get("c"), low_px)
+        at_high = _near_level(bar.get("h"), high_px) or _near_level(bar.get("c"), high_px)
+        if prior_bias == "bearish" and bull_pat:
+            signals.append({
+                "side": "bullish",
+                "kind": "reversal_candle_at_swing_low" if at_low else "reversal_candle_against_downtrend",
+                "strength": "medium" if at_low else "weak",
+                "offset": bar.get("offset"),
+                "patterns": list(pats),
+                "shape": shape,
+                "reason": (
+                    "하락 추세 + 전저점 근처 상승 전환 캔들"
+                    if at_low else "하락 추세에 역행하는 상승 전환 캔들"
+                ),
+            })
+        if prior_bias == "bullish" and bear_pat:
+            signals.append({
+                "side": "bearish",
+                "kind": "reversal_candle_at_swing_high" if at_high else "reversal_candle_against_uptrend",
+                "strength": "medium" if at_high else "weak",
+                "offset": bar.get("offset"),
+                "patterns": list(pats),
+                "shape": shape,
+                "reason": (
+                    "상승 추세 + 전고점 근처 하락 전환 캔들"
+                    if at_high else "상승 추세에 역행하는 하락 전환 캔들"
+                ),
+            })
+
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for s in signals:
+        key = f"{s['side']}|{s['kind']}|{s.get('offset')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(s)
+
+    has_strong = any(s.get("strength") == "strong" for s in unique)
+    has_medium = any(s.get("strength") == "medium" for s in unique)
+    if prior_bias == "sideways" and not unique:
+        phase = "unclear"
+    elif has_strong:
+        phase = "structure_break"
+    elif has_medium:
+        phase = "potential_reversal"
+    elif unique:
+        phase = "early_warning"
+    else:
+        phase = "continuation"
+
+    latest = recent[-1] if recent else None
+    latest_pats = list(latest.get("patterns") or []) if latest else []
+    against = False
+    if prior_bias == "bullish":
+        against = bool(set(latest_pats) & _BEAR_REVERSAL) or (latest or {}).get("shape") == "long_upper_wick"
+    elif prior_bias == "bearish":
+        against = bool(set(latest_pats) & _BULL_REVERSAL) or (latest or {}).get("shape") == "long_lower_wick"
+
+    return {
+        "priorBias": prior_bias,
+        "phase": phase,
+        "signals": unique[:6],
+        "latest": {
+            "offset": 0,
+            "dir": latest.get("dir") if latest else None,
+            "shape": latest.get("shape") if latest else None,
+            "patterns": latest_pats,
+            "againstTrend": against,
+            "bodyPct": latest.get("bodyPct") if latest else None,
+            "upperWickPct": latest.get("upperWickPct") if latest else None,
+            "lowerWickPct": latest.get("lowerWickPct") if latest else None,
+        } if latest else None,
+        "swingContext": {
+            "lastSwingHigh": last_high,
+            "lastSwingLow": last_low,
+            "nearSwingHigh": _near_level(h1, high_px) or _near_level(c1, high_px),
+            "nearSwingLow": _near_level(l1, low_px) or _near_level(c1, low_px),
+        },
+        "note": (
+            "phase: continuation|early_warning|potential_reversal|structure_break|unclear. "
+            "추세전환 캔들 = priorBias 역행 engulfing/hammer/shooting/pin (스윙 고·저점 근처 이상적). "
+            "CHOCH = 상승중 전저점 종가 이탈 또는 하락중 전고점 종가 돌파."
+        ),
+    }
 
 
 def _is_fvg_filled(zone: dict[str, Any], highs: list[float], lows: list[float], from_idx: int) -> bool:
@@ -326,6 +511,7 @@ def _build_structure(
     swings = _detect_swings(highs, lows)
     last_high = swings.get("lastSwingHigh")
     last_low = swings.get("lastSwingLow")
+    recent = _format_recent_candles(klines, 15)
 
     def _dist_pct(level: float | None) -> float | None:
         if level is None or not price:
@@ -334,6 +520,25 @@ def _build_structure(
 
     high_price = last_high["price"] if isinstance(last_high, dict) else None
     low_price = last_low["price"] if isinstance(last_low, dict) else None
+
+    # Prior bias from confirmed swing structure (HH/HL vs LH/LL)
+    prior_bias = "sideways"
+    r_highs = swings.get("recentHighs") or []
+    r_lows = swings.get("recentLows") or []
+    if len(r_highs) >= 2 and len(r_lows) >= 2:
+        hh = r_highs[0]["price"] > r_highs[1]["price"]
+        hl = r_lows[0]["price"] > r_lows[1]["price"]
+        lh = r_highs[0]["price"] < r_highs[1]["price"]
+        ll = r_lows[0]["price"] < r_lows[1]["price"]
+        if hh and hl:
+            prior_bias = "bullish"
+        elif lh and ll:
+            prior_bias = "bearish"
+
+    trend_reversal = _analyze_trend_reversal(
+        klines, swings, recent, prior_bias=prior_bias,
+    )
+
     return {
         "swings": {
             **swings,
@@ -366,6 +571,16 @@ def _build_structure(
                 "detail": rsi_div["detail"],
             },
         },
+        "trend": {
+            "direction": prior_bias,
+            "structure": (
+                "uptrend" if prior_bias == "bullish"
+                else "downtrend" if prior_bias == "bearish"
+                else "range"
+            ),
+            "note": "Server-side swing structure bias (HH/HL). Prefer client structure.trend when present.",
+        },
+        "trendReversal": trend_reversal,
     }
 
 
@@ -439,6 +654,11 @@ def build_market_context(
         ctx["recentCandles15"] = _format_recent_candles(klines, 15)
     if not ctx.get("structure"):
         ctx["structure"] = _build_structure(klines, closes, highs, lows, rsi_vals, price)
+    elif isinstance(ctx.get("structure"), dict) and not ctx["structure"].get("trendReversal"):
+        # Older clients may omit trendReversal — enrich from server klines.
+        server_struct = _build_structure(klines, closes, highs, lows, rsi_vals, price)
+        ctx["structure"]["trendReversal"] = server_struct.get("trendReversal")
+        ctx["structure"].setdefault("trend", server_struct.get("trend"))
     if not ctx.get("timeframe"):
         ctx["timeframe"] = _timeframe_info(interval)
 

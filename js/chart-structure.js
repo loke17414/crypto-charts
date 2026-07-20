@@ -19,11 +19,64 @@
     return 'balanced';
   }
 
+  const REVERSAL_PATTERN_NAMES = [
+    'engulfing_bull', 'engulfing_bear',
+    'hammer', 'inverted_hammer', 'shooting_star',
+    'pin_bar_bull', 'pin_bar_bear',
+    'doji', 'outside_bar',
+    'marubozu_bull', 'marubozu_bear',
+  ];
+  const BULL_REVERSAL_PATTERNS = new Set([
+    'engulfing_bull', 'hammer', 'pin_bar_bull', 'marubozu_bull',
+  ]);
+  const BEAR_REVERSAL_PATTERNS = new Set([
+    'engulfing_bear', 'shooting_star', 'pin_bar_bear', 'marubozu_bear', 'inverted_hammer',
+  ]);
+
+  function detectPatternsAt(candles, index) {
+    if (!Array.isArray(candles) || index < 0 || index >= candles.length) return [];
+    if (window.CandlePatterns?.match) {
+      return REVERSAL_PATTERN_NAMES.filter((name) => CandlePatterns.match(candles, index, name));
+    }
+    // Lightweight fallback when CandlePatterns is unavailable
+    const cur = candles[index];
+    const prev = candles[index - 1];
+    if (!cur) return [];
+    const range = Math.max(cur.high - cur.low, 1e-12);
+    const body = Math.abs(cur.close - cur.open);
+    const upper = cur.high - Math.max(cur.open, cur.close);
+    const lower = Math.min(cur.open, cur.close) - cur.low;
+    const bodyPct = body / range;
+    const upperPct = upper / range;
+    const lowerPct = lower / range;
+    const out = [];
+    if (cur.close > cur.open) out.push('bullish');
+    if (cur.close < cur.open) out.push('bearish');
+    if (bodyPct <= 0.1) out.push('doji');
+    if (lowerPct >= 0.6 && bodyPct <= 0.25) out.push('pin_bar_bull');
+    if (upperPct >= 0.6 && bodyPct <= 0.25) out.push('pin_bar_bear');
+    if (lower >= body * 2 && upper <= body * 0.5) out.push('hammer');
+    if (upper >= body * 2 && lower <= body * 0.5) out.push('shooting_star');
+    if (prev) {
+      const pb = Math.abs(prev.close - prev.open);
+      if (prev.close < prev.open && cur.close > cur.open
+        && cur.open <= prev.close && cur.close >= prev.open && body > pb) {
+        out.push('engulfing_bull');
+      }
+      if (prev.close > prev.open && cur.close < cur.open
+        && cur.open >= prev.close && cur.close <= prev.open && body > pb) {
+        out.push('engulfing_bear');
+      }
+    }
+    return out;
+  }
+
   function formatRecentCandles(candles, count = 15) {
     if (!Array.isArray(candles) || !candles.length) return [];
     const slice = candles.slice(-count);
     const start = candles.length - slice.length;
     return slice.map((c, i) => {
+      const idx = start + i;
       const range = Math.max(c.high - c.low, 0);
       const bodyAbs = Math.abs(c.close - c.open);
       const upperWick = c.high - Math.max(c.open, c.close);
@@ -31,8 +84,9 @@
       const bodyPct = range > 0 ? (bodyAbs / range) * 100 : 0;
       const upperWickPct = range > 0 ? (upperWick / range) * 100 : 0;
       const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
+      const patterns = detectPatternsAt(candles, idx);
       return {
-        idx: start + i,
+        idx,
         offset: i - slice.length + 1,
         time: c.time,
         o: round(c.open),
@@ -46,8 +100,162 @@
         upperWickPct: round(upperWickPct, 1),
         lowerWickPct: round(lowerWickPct, 1),
         shape: wickShapeHint(bodyPct, upperWickPct, lowerWickPct),
+        patterns,
       };
     });
+  }
+
+  function priorBiasFromTrend(trend) {
+    if (!trend) return 'sideways';
+    if (trend.structure === 'uptrend') return 'bullish';
+    if (trend.structure === 'downtrend') return 'bearish';
+    if (trend.maAlignment === 'bullish_stack') return 'bullish';
+    if (trend.maAlignment === 'bearish_stack') return 'bearish';
+    return trend.direction || 'sideways';
+  }
+
+  function nearLevelPct(price, level, tolPct = 0.6) {
+    if (![price, level].every(Number.isFinite) || !level) return false;
+    return (Math.abs(price - level) / level) * 100 <= tolPct;
+  }
+
+  function analyzeTrendReversal(candles, trend, swings, recentCandles) {
+    const empty = {
+      priorBias: 'sideways',
+      phase: 'unclear',
+      signals: [],
+      latest: null,
+      note: 'Trend-reversal needs prior bias + against-trend candle (engulfing/hammer/shooting/pin) ideally at swing extreme, or CHOCH (close breaks last swing against prior trend).',
+    };
+    if (!Array.isArray(candles) || candles.length < 5) return empty;
+
+    const priorBias = priorBiasFromTrend(trend);
+    const lastHigh = swings?.lastSwingHigh || swings?.lastHigh || null;
+    const lastLow = swings?.lastSwingLow || swings?.lastLow || null;
+    const highPx = lastHigh?.price ?? null;
+    const lowPx = lastLow?.price ?? null;
+    const lastIdx = candles.length - 1;
+    const last = candles[lastIdx];
+    const prev = candles[lastIdx - 1];
+    const tape = Array.isArray(recentCandles) ? recentCandles : formatRecentCandles(candles, 8);
+    const signals = [];
+
+    // CHOCH / structure break against prior bias (stronger than a single reversal candle)
+    if (priorBias === 'bullish' && Number.isFinite(lowPx) && prev && last
+      && prev.close >= lowPx && last.close < lowPx) {
+      signals.push({
+        side: 'bearish',
+        kind: 'choch_below_swing_low',
+        strength: 'strong',
+        offset: 0,
+        level: round(lowPx),
+        patterns: tape.at(-1)?.patterns || detectPatternsAt(candles, lastIdx),
+        reason: '상승 추세 중 전저점(lastSwingLow) 종가 이탈 → 구조 전환(CHOCH)',
+      });
+    }
+    if (priorBias === 'bearish' && Number.isFinite(highPx) && prev && last
+      && prev.close <= highPx && last.close > highPx) {
+      signals.push({
+        side: 'bullish',
+        kind: 'choch_above_swing_high',
+        strength: 'strong',
+        offset: 0,
+        level: round(highPx),
+        patterns: tape.at(-1)?.patterns || detectPatternsAt(candles, lastIdx),
+        reason: '하락 추세 중 전고점(lastSwingHigh) 종가 돌파 → 구조 전환(CHOCH)',
+      });
+    }
+
+    // Scan recent bars for against-trend reversal candles
+    const scan = tape.slice(-5);
+    for (const bar of scan) {
+      const pats = bar.patterns || [];
+      const bullPat = pats.some((p) => BULL_REVERSAL_PATTERNS.has(p))
+        || bar.shape === 'long_lower_wick' || bar.shape === 'lower_rejection';
+      const bearPat = pats.some((p) => BEAR_REVERSAL_PATTERNS.has(p))
+        || bar.shape === 'long_upper_wick' || bar.shape === 'upper_rejection';
+      const atLow = nearLevelPct(bar.l, lowPx) || nearLevelPct(bar.c, lowPx);
+      const atHigh = nearLevelPct(bar.h, highPx) || nearLevelPct(bar.c, highPx);
+
+      if (priorBias === 'bearish' && bullPat) {
+        signals.push({
+          side: 'bullish',
+          kind: atLow ? 'reversal_candle_at_swing_low' : 'reversal_candle_against_downtrend',
+          strength: atLow ? 'medium' : 'weak',
+          offset: bar.offset,
+          patterns: pats,
+          shape: bar.shape,
+          reason: atLow
+            ? '하락 추세 + 전저점 근처 상승 전환 캔들(해머/장악/아랫꼬리)'
+            : '하락 추세에 역행하는 상승 전환 캔들 (스윙 저점 미확인)',
+        });
+      }
+      if (priorBias === 'bullish' && bearPat) {
+        signals.push({
+          side: 'bearish',
+          kind: atHigh ? 'reversal_candle_at_swing_high' : 'reversal_candle_against_uptrend',
+          strength: atHigh ? 'medium' : 'weak',
+          offset: bar.offset,
+          patterns: pats,
+          shape: bar.shape,
+          reason: atHigh
+            ? '상승 추세 + 전고점 근처 하락 전환 캔들(슈팅스타/장악/윗꼬리)'
+            : '상승 추세에 역행하는 하락 전환 캔들 (스윙 고점 미확인)',
+        });
+      }
+    }
+
+    // Deduplicate by side+kind+offset
+    const seen = new Set();
+    const unique = [];
+    for (const s of signals) {
+      const key = `${s.side}|${s.kind}|${s.offset}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(s);
+    }
+
+    const hasStrong = unique.some((s) => s.strength === 'strong');
+    const hasMedium = unique.some((s) => s.strength === 'medium');
+    let phase = 'continuation';
+    if (priorBias === 'sideways' && !unique.length) phase = 'unclear';
+    else if (hasStrong) phase = 'structure_break';
+    else if (hasMedium) phase = 'potential_reversal';
+    else if (unique.length) phase = 'early_warning';
+
+    const latestBar = tape.at(-1) || null;
+    const latestPats = latestBar?.patterns || detectPatternsAt(candles, lastIdx);
+    const againstTrend = priorBias === 'bullish'
+      ? latestPats.some((p) => BEAR_REVERSAL_PATTERNS.has(p)) || latestBar?.shape === 'long_upper_wick'
+      : priorBias === 'bearish'
+        ? latestPats.some((p) => BULL_REVERSAL_PATTERNS.has(p)) || latestBar?.shape === 'long_lower_wick'
+        : false;
+
+    return {
+      priorBias,
+      phase,
+      signals: unique.slice(0, 6),
+      latest: latestBar ? {
+        offset: 0,
+        dir: latestBar.dir,
+        shape: latestBar.shape,
+        patterns: latestPats,
+        againstTrend,
+        bodyPct: latestBar.bodyPct,
+        upperWickPct: latestBar.upperWickPct,
+        lowerWickPct: latestBar.lowerWickPct,
+      } : null,
+      swingContext: {
+        lastSwingHigh: lastHigh,
+        lastSwingLow: lastLow,
+        nearSwingHigh: nearLevelPct(last?.high, highPx) || nearLevelPct(last?.close, highPx),
+        nearSwingLow: nearLevelPct(last?.low, lowPx) || nearLevelPct(last?.close, lowPx),
+      },
+      note: 'phase: continuation|early_warning|potential_reversal|structure_break|unclear. '
+        + '추세전환 캔들 = priorBias에 역행하는 engulfing/hammer/shooting/pin (이상적으로 스윙 고·저점 근처). '
+        + '구조 전환(CHOCH) = 상승중 전저점 종가 이탈 또는 하락중 전고점 종가 돌파. '
+        + 'Trust this block for 추세전환 — do not invent from dir alone.',
+    };
   }
 
   function isFvgFilled(zone, candles, fromIndex) {
@@ -598,10 +806,17 @@
       pivotBars: opts.swingPivotBars || 5,
       lookback: opts.swingLookback || 60,
     });
+    const swingPack = {
+      lastSwingHigh: lastHigh,
+      lastSwingLow: lastLow,
+      lastHigh,
+      lastLow,
+    };
+    const trendReversal = analyzeTrendReversal(candles, trend, swingPack, recent);
 
     return {
       recentCandles: recent,
-      recentCandlesNote: 'Oldest→newest. offset 0=current bar, -1=previous. bodyPct/upperWickPct/lowerWickPct are % of (high-low) and sum≈100. shape=long_lower_wick|long_upper_wick|upper_rejection|lower_rejection|full_body|balanced. Do NOT treat offset -1 as a swing high/low.',
+      recentCandlesNote: 'Oldest→newest. offset 0=current bar, -1=previous. bodyPct/upperWickPct/lowerWickPct are % of (high-low) and sum≈100. shape=long_lower_wick|long_upper_wick|upper_rejection|lower_rejection|full_body|balanced. patterns=matched candle patterns. Do NOT treat offset -1 as a swing high/low.',
       swings: {
         pivotBars: swings.pivotBars,
         lookback: swings.lookback,
@@ -631,6 +846,7 @@
         macd: { bullish: macdDiv.bullish, bearish: macdDiv.bearish, detail: macdDiv.detail },
       },
       trend,
+      trendReversal,
     };
   }
 
@@ -659,6 +875,7 @@
     detectSwings,
     swingLevelsAsOf,
     analyzeTrend,
+    analyzeTrendReversal,
     buildBacktestStructureCache,
     analyzeForAi,
     evaluateFvg,

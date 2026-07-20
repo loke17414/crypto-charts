@@ -186,6 +186,14 @@ Examples:
   OR candle_pattern hammer / pin_bar_bull
 - Long upper wick (긴 윗꼬리): compare upper_wick_pct >= 60 AND body_pct <= 25
   OR candle_pattern shooting_star / pin_bar_bear
+- Bullish trend-reversal long (하락→상승 전환 캔들 롱):
+  entry = candle_pattern engulfing_bull OR hammer OR pin_bar_bull
+  (optionally AND swing_near long / divergence bullish). Prefer when trendReversal.phase
+  is potential_reversal|structure_break and signals.side=bullish.
+- Bearish trend-reversal short (상승→하락 전환 캔들 숏):
+  entry = candle_pattern engulfing_bear OR shooting_star OR pin_bar_bear
+- Structure break after reversal (CHOCH 확인): combine reversal candle with swing_break
+  in the new direction — do NOT treat every swing_break as a reversal candle.
 - Bollinger lower re-entry long (볼린저 하단 이탈 후 재진입 롱):
   entryRules.long.conditions = [{ "type":"band_reentry", "side":"long", "indicator":"boll", "params":{"period":20,"mult":2} }]
   exitRules.long = { "stopLoss": { "type":"candle_extreme", "field":"low", "offset":1 }, "takeProfit": { "type":"risk_reward", "ratio":1.5 } }
@@ -221,6 +229,15 @@ MARKET DATA & BACKTEST (critical for accuracy):
 - structure.fvg / structure.divergence: FVG zones and RSI/MACD divergence flags.
 - structure.trend: direction (bullish/bearish/sideways), HH/HL structure, EMA7/25/99 stack, ADX14.
   Use trend.direction + structure for trend questions — not recentHigh/recentLow alone.
+- structure.trendReversal (CRITICAL for 추세전환 / 전환 캔들):
+  priorBias = prior trend from structure/MA (NOT a single candle direction).
+  phase = continuation | early_warning | potential_reversal | structure_break | unclear.
+  signals[] = precomputed CHOCH / against-trend reversal candles with offset, patterns, strength, reason.
+  latest.againstTrend = true when the current bar is a reversal candle opposing priorBias.
+  ALWAYS read trendReversal for "추세전환", "전환 캔들", "반전", "장악형", "해머/슈팅스타로 전환".
+  Do NOT call a random opposite-color candle a trend reversal — need against priorBias +
+  (engulfing/hammer/shooting/pin OR shape long_*_wick) ideally near swing high/low, OR CHOCH.
+  CHOCH: bullish prior + close below lastSwingLow, OR bearish prior + close above lastSwingHigh.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 
 CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common GPT mistake):
@@ -230,6 +247,8 @@ CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common
 - FVG/페어밸류/갭/gap/imbalance mentioned by user → type:"fvg" ONLY. NEVER band_reentry or swing for FVG requests.
 - divergence/다이버전스 mentioned by user → type:"divergence" ONLY.
 - 전고점/전저점/스윙/지지/저항/돌파 (swing pivots, NOT band touch) → swing_break or swing_near. NOT fvg, NOT band_reentry.
+- 추세전환/전환 캔들/반전/장악형/해머·슈팅으로 전환 → candle_pattern (+ optional swing_near/divergence).
+  Read structure.trendReversal first. NOT automatic fvg. NOT "any opposite candle".
 - RSI/과매수/과매도/MACD/EMA cross → compare/cross_above/cross_below. NOT fvg unless user also asks for FVG.
 - "이탈" alone does NOT mean swing — 볼린저 하단 이탈 = band_reentry long, 전저점 이탈 = swing_break short.
 - hoveredCandle (optional): the exact candle the user is pointing at on the chart with full stats

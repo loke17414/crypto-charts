@@ -414,6 +414,7 @@ const FuturesBotApp = (() => {
         fvg: structure.fvg,
         divergence: structure.divergence,
         trend: structure.trend,
+        trendReversal: structure.trendReversal,
       };
     }
 
