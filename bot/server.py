@@ -26,6 +26,7 @@ from bot.models import User
 from bot.platform_config import app_origin, auth_required, cors_allow_origins, database_url
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
+from bot.user_openai import load_openai_key, save_openai_key
 from bot.server_bot import (
     bot_diagnostics,
     bot_status,
@@ -334,7 +335,6 @@ def health(
 
     from bot.db import engine
 
-    ai = ai_available()
     db_ok = False
     try:
         with engine.connect() as conn:
@@ -343,13 +343,20 @@ def health(
     except Exception as exc:
         logger.warning("Database health check failed: %s", exc)
 
-    # Never leak another user's bot status on the public health endpoint.
+    # Never leak another user's bot/API status on the public health endpoint.
     session_testnet: bool | None = None
     if user is not None:
         bot = bot_status(user.id)
         session = _get_session(user)
         connected = session is not None
         creds_saved = has_credentials(db, user.id)
+        user_openai = load_openai_key(db, user.id)
+        ai = ai_available(
+            verify=False,
+            api_key=user_openai,
+            key_source="user" if user_openai else "none",
+            include_env_path=False,
+        )
         if session is not None:
             session_testnet = bool(session.config.use_testnet)
         elif creds_saved:
@@ -359,33 +366,61 @@ def health(
                     session_testnet = bool(creds[2])
             except ValueError:
                 session_testnet = None
-    elif auth_required():
-        bot = {"running": False, "persisted": False}
-        connected = False
-        creds_saved = False
-    else:
-        bot = bot_status(None)
-        session = _get_session(None)
-        connected = session is not None
-        creds_saved = credentials_configured()
-        if session is not None:
-            session_testnet = bool(session.config.use_testnet)
+        return {
+            "ok": True,
+            "apiVersion": 2,
+            "authRequired": auth_required(),
+            "appOrigin": app_origin(),
+            "connected": connected,
+            "credentialsSaved": creds_saved,
+            "vaultReady": vault_ready(),
+            "testnet": _use_testnet_flag(),
+            "sessionTestnet": session_testnet,
+            "database": {"ok": db_ok, "driver": database_url().split(":", 1)[0]},
+            "strategyAi": ai,
+            "bot": bot,
+            "botDiagnostics": bot_diagnostics(),
+            "outboundIp": get_outbound_ip(),
+        }
 
+    if auth_required():
+        # Anonymous public health — no credentials / keys / bot details.
+        return {
+            "ok": True,
+            "apiVersion": 2,
+            "authRequired": True,
+            "appOrigin": app_origin(),
+            "connected": False,
+            "credentialsSaved": False,
+            "vaultReady": vault_ready(),
+            "testnet": _use_testnet_flag(),
+            "sessionTestnet": None,
+            "database": {"ok": db_ok, "driver": database_url().split(":", 1)[0]},
+            "strategyAi": {"configured": False, "available": False, "keyPreview": None},
+            "bot": {"running": False, "persisted": False},
+        }
+
+    # Legacy single-tenant (AUTH_REQUIRED=false)
+    bot = bot_status(None)
+    session = _get_session(None)
+    connected = session is not None
+    creds_saved = credentials_configured()
+    if session is not None:
+        session_testnet = bool(session.config.use_testnet)
+    ai = ai_available(verify=False, include_env_path=False)
+    ai["keyPreview"] = None  # never expose key material on health
+    ai["envPath"] = None
     return {
         "ok": True,
         "apiVersion": 2,
-        "authRequired": auth_required(),
+        "authRequired": False,
         "appOrigin": app_origin(),
         "connected": connected,
         "credentialsSaved": creds_saved,
         "vaultReady": vault_ready(),
-        # env default (legacy) — UI must prefer sessionTestnet when present
         "testnet": _use_testnet_flag(),
         "sessionTestnet": session_testnet,
-        "database": {
-            "ok": db_ok,
-            "driver": database_url().split(":", 1)[0],
-        },
+        "database": {"ok": db_ok, "driver": database_url().split(":", 1)[0]},
         "strategyAi": ai,
         "bot": bot,
         "botDiagnostics": bot_diagnostics(),
@@ -409,14 +444,35 @@ def platform_outbound_ip() -> dict[str, Any]:
 
 
 @app.get("/api/strategy/ai-status")
-def strategy_ai_status(verify: bool = False) -> dict[str, Any]:
-    return {"ok": True, **ai_available(verify=verify)}
+def strategy_ai_status(
+    verify: bool = False,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    if user is not None:
+        key = load_openai_key(db, user.id)
+        status = ai_available(
+            verify=verify,
+            api_key=key,
+            key_source="user" if key else "none",
+            include_env_path=False,
+        )
+        return {"ok": True, **status}
+    if auth_required():
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+    return {"ok": True, **ai_available(verify=verify, include_env_path=True)}
 
 
 @app.post("/api/strategy/test-key")
-def strategy_test_key(body: StrategyTestKeyBody | None = None) -> dict[str, Any]:
+def strategy_test_key(
+    body: StrategyTestKeyBody | None = None,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
     try:
         candidate = (body.openai_api_key if body else "").strip()
+        if not candidate and user is not None:
+            candidate = load_openai_key(db, user.id) or ""
         result = test_openai_api_key(candidate or None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -428,13 +484,27 @@ def strategy_test_key(body: StrategyTestKeyBody | None = None) -> dict[str, Any]
 
 
 @app.post("/api/strategy/configure")
-def strategy_configure(body: StrategyConfigureBody) -> dict[str, Any]:
+def strategy_configure(
+    body: StrategyConfigureBody,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> dict[str, Any]:
+    if auth_required() and user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
     try:
-        status = configure_openai_api_key(body.openai_api_key)
+        if user is not None:
+            # Per-user vault — never write another user's key into shared .env
+            status = configure_openai_api_key(body.openai_api_key, persist_env=False)
+            save_openai_key(db, user.id, body.openai_api_key)
+            status["keySource"] = "user"
+            status["envPath"] = None
+            status["message"] = "OpenAI API 키가 이 계정에 암호화 저장되었습니다."
+        else:
+            status = configure_openai_api_key(body.openai_api_key, persist_env=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f".env 저장 실패: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"키 저장 실패: {exc}") from exc
 
     return {
         "ok": True,
@@ -444,7 +514,14 @@ def strategy_configure(body: StrategyConfigureBody) -> dict[str, Any]:
 
 
 @app.post("/api/strategy/interpret")
-def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretResponse:
+def strategy_interpret(
+    body: StrategyInterpretRequest,
+    user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
+) -> StrategyInterpretResponse:
+    if auth_required() and user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+    api_key = load_openai_key(db, user.id) if user is not None else None
     try:
         result = interpret_strategy(
             body.prompt,
@@ -454,6 +531,8 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
             interval=body.interval,
             market_context=body.market_context,
             backtest_snapshot=body.backtest_snapshot,
+            api_key=api_key,
+            user_id=user.id if user is not None else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -477,14 +556,22 @@ def strategy_interpret(body: StrategyInterpretRequest) -> StrategyInterpretRespo
 
 
 @app.get("/api/strategy/ai-history")
-def strategy_ai_history() -> dict[str, Any]:
-    turns = load_turns()
+def strategy_ai_history(
+    user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
+    if auth_required() and user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+    turns = load_turns(user.id if user is not None else None)
     return {"ok": True, "turns": turns, "count": len(turns)}
 
 
 @app.post("/api/strategy/ai-history/clear")
-def strategy_ai_history_clear() -> dict[str, Any]:
-    clear_memory()
+def strategy_ai_history_clear(
+    user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
+    if auth_required() and user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
+    clear_memory(user.id if user is not None else None)
     return {"ok": True, "message": "서버 대화 기록이 초기화되었습니다."}
 
 
@@ -511,6 +598,8 @@ def connect(
         env_label = "테스트넷" if use_testnet else "실거래"
         message = f"Binance {env_label} 연결됨 — 키가 계정에 암호화 저장되었습니다."
     else:
+        if auth_required():
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
         try:
             persist_binance_credentials(body.api_key, body.api_secret)
         except ValueError as exc:

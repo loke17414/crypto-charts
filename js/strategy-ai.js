@@ -47,9 +47,14 @@ const StrategyAI = (() => {
     else openAiPopup();
   }
 
+  function historyStorageKey() {
+    const id = typeof AppAuth !== 'undefined' ? AppAuth.getUser?.()?.id : null;
+    return id ? `${HISTORY_KEY}-u${id}` : `${HISTORY_KEY}-anon`;
+  }
+
   function loadHistory() {
     try {
-      const raw = localStorage.getItem(HISTORY_KEY);
+      const raw = localStorage.getItem(historyStorageKey());
       const parsed = JSON.parse(raw || '[]');
       conversationHistory = Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -62,7 +67,7 @@ const StrategyAI = (() => {
 
   function saveHistory() {
     try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationHistory.slice(-MAX_HISTORY)));
+      localStorage.setItem(historyStorageKey(), JSON.stringify(conversationHistory.slice(-MAX_HISTORY)));
     } catch {
       /* ignore quota errors */
     }
@@ -83,19 +88,21 @@ const StrategyAI = (() => {
       if (!serverOk) return;
       const data = await FuturesApiClient.getStrategyAiHistory();
       const serverTurns = Array.isArray(data?.turns) ? data.turns : [];
-      if (!serverTurns.length) return;
-
-      const merged = [...conversationHistory];
-      for (const turn of serverTurns) {
-        if (!turn?.role || !turn?.content) continue;
-        const exists = merged.some((m) => m.role === turn.role && m.content === turn.content);
-        if (!exists) merged.push({ role: turn.role, content: turn.content, meta: turn.meta });
-      }
-      conversationHistory = merged.slice(-MAX_HISTORY);
+      // Replace (do not merge) so a previous account's local chat never leaks in.
+      conversationHistory = serverTurns
+        .filter((turn) => turn?.role && turn?.content && (turn.role === 'user' || turn.role === 'assistant'))
+        .map((turn) => ({
+          role: turn.role,
+          content: String(turn.content).slice(0, 2000),
+          ...(turn.meta && typeof turn.meta === 'object' ? { meta: turn.meta } : {}),
+        }))
+        .slice(-MAX_HISTORY);
       saveHistory();
       restoreHistoryToUi();
     } catch {
-      /* ignore */
+      conversationHistory = [];
+      saveHistory();
+      restoreHistoryToUi();
     }
   }
 
@@ -158,17 +165,17 @@ const StrategyAI = (() => {
 
     if (configured && preview) {
       input.value = '';
-      input.placeholder = `서버에 저장됨 (${preview}) — 변경할 때만 입력`;
+      input.placeholder = `이 계정에 저장됨 (${preview}) — 변경할 때만 입력`;
       if (group) group.classList.add('strategy-ai-key--saved');
       if (hint) {
-        hint.textContent = '키는 서버 .env에 저장됩니다. PC·브라우저를 바꿔도 다시 입력할 필요 없습니다.';
+        hint.textContent = '키는 로그인한 계정에만 암호화 저장됩니다. 다른 계정과 공유되지 않습니다.';
       }
       if (saveBtn) saveBtn.textContent = '키 변경·저장';
     } else {
-      input.placeholder = 'sk-proj-... (최초 1회 입력 → 서버 .env 저장)';
+      input.placeholder = 'sk-proj-... (이 계정에만 저장)';
       if (group) group.classList.remove('strategy-ai-key--saved');
       if (hint) {
-        hint.textContent = "키는 sk-로 시작합니다. '검증 후 저장'하면 서버에 영구 저장됩니다.";
+        hint.textContent = "키는 sk-로 시작합니다. 저장하면 현재 로그인 계정에만 보관됩니다.";
       }
       if (saveBtn) saveBtn.textContent = '검증 후 저장';
     }
@@ -461,6 +468,36 @@ const StrategyAI = (() => {
     );
   }
 
+  function resetForAccountSwitch() {
+    conversationHistory = [];
+    const box = $('#strategyAiMessages');
+    if (box) box.innerHTML = '';
+    updateKeyField({ configured: false, keyPreview: null });
+  }
+
+  async function reloadForUser() {
+    resetForAccountSwitch();
+    loadHistory();
+    const status = await refreshStatus({ verify: false });
+    await syncHistoryFromServer();
+    if (!conversationHistory.length) {
+      if (status?.configured) {
+        addMessage(
+          'assistant',
+          `이 계정 GPT 상태: ${status.keyPreview || '키 저장됨'}. 전략을 입력해 주세요.`,
+          { persist: false },
+        );
+      } else {
+        addMessage(
+          'assistant',
+          '이 계정에는 OpenAI 키가 없습니다. GPT 연결 설정에서 키를 저장하세요.',
+          { persist: false },
+        );
+      }
+    }
+    return status;
+  }
+
   function bindEvents() {
     $('#strategyAiKeySaveBtn')?.addEventListener('click', saveApiKey);
     $('#strategyAiTestBtn')?.addEventListener('click', () => testApiKey({ fromInput: true }));
@@ -516,25 +553,25 @@ const StrategyAI = (() => {
     } else if (status?.configured && status?.verified) {
       addMessage(
         'assistant',
-        `서버에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 차트·백테스트 데이터를 분석해 전략을 적용합니다. 이전 대화는 서버에 기억됩니다.`,
+        `이 계정에 OpenAI 키가 저장되어 있습니다 (${status.keyPreview}). 차트·백테스트 데이터를 분석해 전략을 적용합니다.`,
         { persist: false },
       );
     } else if (status?.configured) {
       addMessage(
         'assistant',
-        `서버에 키가 있지만 인증에 실패했습니다. '저장된 키 재검사'를 누르거나 키를 다시 저장하세요.`,
+        `이 계정에 키가 있지만 인증에 실패했습니다. '저장된 키 재검사'를 누르거나 키를 다시 저장하세요.`,
         { persist: false },
       );
     } else {
       addMessage(
         'assistant',
-        '아래 입력창에 전략을 질문하거나 설명하세요. GPT 연결 설정은 "GPT 연결 설정"을 펼쳐 OpenAI Key를 저장하면 됩니다.',
+        '아래 입력창에 전략을 질문하거나 설명하세요. GPT 연결 설정은 "GPT 연결 설정"을 펼쳐 OpenAI Key를 저장하면 됩니다. 키는 현재 로그인 계정에만 저장됩니다.',
         { persist: false },
       );
     }
   }
 
-  return { init, refreshStatus, testApiKey, clearHistory };
+  return { init, refreshStatus, testApiKey, clearHistory, resetForAccountSwitch, reloadForUser };
 })();
 
 window.StrategyAI = StrategyAI;

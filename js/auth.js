@@ -67,16 +67,28 @@ const AppAuth = (() => {
     return data;
   }
 
+  function clearTradingState() {
+    if (typeof FuturesApiClient !== 'undefined') {
+      FuturesApiClient.setConnected?.(false);
+    }
+    if (typeof FuturesBotApp !== 'undefined') {
+      FuturesBotApp.resetClientSessionState?.({ keepLog: false });
+    }
+    if (typeof StrategyAI !== 'undefined') {
+      StrategyAI.resetForAccountSwitch?.();
+      StrategyAI.refreshStatus?.({ verify: false });
+    }
+  }
+
   function logout() {
     clearSession();
+    clearTradingState();
   }
 
   function handleUnauthorized(message) {
     if (!getToken()) return;
     clearSession();
-    if (typeof FuturesApiClient !== 'undefined') {
-      FuturesApiClient.setConnected?.(false);
-    }
+    clearTradingState();
     const statusEl = document.getElementById('authStatus');
     if (statusEl) {
       statusEl.textContent = message || '로그인 세션 만료 — 다시 로그인해 주세요';
@@ -115,9 +127,13 @@ const AppAuth = (() => {
         return;
       }
       try {
+        clearTradingState();
         await login(email, password);
         if (typeof FuturesBotApp !== 'undefined') {
           await FuturesBotApp.restoreSessionFromServer?.();
+        }
+        if (typeof StrategyAI !== 'undefined') {
+          await StrategyAI.reloadForUser?.();
         }
       } catch (err) {
         alert(err.message || '로그인 실패');
@@ -131,9 +147,13 @@ const AppAuth = (() => {
         return;
       }
       try {
+        clearTradingState();
         await register(email, password);
         if (typeof FuturesBotApp !== 'undefined') {
           await FuturesBotApp.restoreSessionFromServer?.();
+        }
+        if (typeof StrategyAI !== 'undefined') {
+          await StrategyAI.reloadForUser?.();
         }
       } catch (err) {
         alert(err.message || '회원가입 실패');
@@ -141,13 +161,13 @@ const AppAuth = (() => {
     });
     document.getElementById('authLogoutBtn')?.addEventListener('click', () => {
       logout();
-      FuturesApiClient.setConnected(false);
     });
   }
 
   return {
     init,
     getToken,
+    getUser,
     isLoggedIn,
     isRequired,
     authHeaders,

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _runtime_api_key: str | None = None
+# Per-request key for multi-user isolation (overrides process/.env for that call).
+_request_api_key: ContextVar[str | None] = ContextVar("request_api_key", default=None)
 _last_test_result: dict[str, Any] = {
     "verified": False,
     "checkedAt": None,
@@ -269,6 +272,8 @@ def _reload_env() -> None:
 
 
 def _key_source() -> str:
+    if _request_api_key.get():
+        return "user"
     if _runtime_api_key:
         return "runtime"
     if os.getenv("OPENAI_API_KEY", "").strip():
@@ -277,7 +282,8 @@ def _key_source() -> str:
 
 
 def _openai_models() -> tuple[str, str, str]:
-    api_key = (_runtime_api_key or os.getenv("OPENAI_API_KEY", "")).strip().strip('"').strip("'")
+    req = (_request_api_key.get() or "").strip().strip('"').strip("'")
+    api_key = (req or _runtime_api_key or os.getenv("OPENAI_API_KEY", "")).strip().strip('"').strip("'")
     default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     complex_model = os.getenv("OPENAI_MODEL_COMPLEX", "gpt-4o").strip() or "gpt-4o"
     return api_key, default_model, complex_model
@@ -540,52 +546,79 @@ def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
     }
 
 
-def ai_available(*, verify: bool = False) -> dict[str, Any]:
-    _reload_env()
-    api_key, default_model, complex_model = _openai_models()
+def ai_available(
+    *,
+    verify: bool = False,
+    api_key: str | None = None,
+    key_source: str | None = None,
+    include_env_path: bool = False,
+) -> dict[str, Any]:
+    """Status for a specific key (per-user) or process/.env fallback."""
+    if api_key is None:
+        _reload_env()
+        resolved, default_model, complex_model = _openai_models()
+        source = key_source or _key_source()
+    else:
+        resolved = api_key.strip()
+        _api, default_model, complex_model = _openai_models()
+        # Prefer models from env even when using a user key
+        source = key_source or "user"
     routing = _model_routing_mode()
-    configured = bool(api_key)
+    configured = bool(resolved)
     status = {
-        "available": configured and _last_test_result["verified"],
+        "available": False,
         "configured": configured,
-        "verified": _last_test_result["verified"] if configured else False,
-        "authenticated": configured and _last_test_result.get("errorCode") != "invalid_api_key",
-        "chatReady": _last_test_result["verified"] if configured else False,
+        "verified": False,
+        "authenticated": configured,
+        "chatReady": False,
         "model": default_model,
         "modelComplex": complex_model,
         "modelRouting": routing,
-        "keyPreview": mask_api_key(api_key) if configured else None,
-        "keySource": _key_source(),
-        "envPath": str(_env_path()),
-        "checkedAt": _last_test_result["checkedAt"],
-        "message": _last_test_result["message"],
-        "errorCode": _last_test_result["errorCode"],
+        "keyPreview": mask_api_key(resolved) if configured else None,
+        "keySource": source if configured else "none",
+        "envPath": str(_env_path()) if include_env_path else None,
+        "checkedAt": None,
+        "message": "이 계정에 OpenAI API Key가 없습니다." if not configured else "키가 저장되어 있습니다.",
+        "errorCode": None,
     }
 
     if verify and configured:
-        test_result = test_openai_api_key(api_key)
+        test_result = test_openai_api_key(resolved)
         status.update(
             {
                 "available": test_result["verified"],
                 "verified": test_result["verified"],
+                "authenticated": test_result.get("errorCode") != "invalid_api_key",
+                "chatReady": test_result["verified"],
                 "message": test_result["message"],
                 "errorCode": test_result.get("errorCode"),
-                "checkedAt": test_result.get("checkedAt") or _last_test_result["checkedAt"],
+                "checkedAt": test_result.get("checkedAt"),
             }
         )
+    elif configured:
+        status["available"] = True
+        status["verified"] = True
+        status["chatReady"] = True
+        status["message"] = "이 계정에 OpenAI API Key가 저장되어 있습니다."
 
     return status
 
 
-def configure_openai_api_key(api_key: str) -> dict[str, Any]:
+def configure_openai_api_key(api_key: str, *, persist_env: bool = True) -> dict[str, Any]:
     validate_api_key_format(api_key)
     test_result = test_openai_api_key(api_key)
     if not test_result["verified"]:
         raise ValueError(test_result["message"])
 
-    persist_openai_api_key(api_key)
-    status = ai_available()
+    if persist_env:
+        persist_openai_api_key(api_key)
+        status = ai_available(api_key=api_key, key_source="env", include_env_path=True)
+    else:
+        status = ai_available(api_key=api_key, key_source="user", include_env_path=False)
     status["message"] = "OpenAI API 키가 저장되고 인증되었습니다."
+    status["verified"] = True
+    status["available"] = True
+    status["chatReady"] = True
     return status
 
 
@@ -777,19 +810,49 @@ def _call_openai(
     *,
     model: str | None = None,
     strategy_slot_target: str | None = None,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
-    api_key, default_model, _complex_model = _openai_models()
-    if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY가 설정되지 않았습니다. OpenAI API Key 입력란에서 키를 저장하세요."
+    token = None
+    if api_key:
+        token = _request_api_key.set(api_key.strip())
+    try:
+        resolved, default_model, _complex_model = _openai_models()
+        if not resolved:
+            raise ValueError(
+                "OPENAI_API_KEY가 설정되지 않았습니다. OpenAI API Key 입력란에서 키를 저장하세요."
+            )
+        chosen_model = model or default_model
+        return _call_openai_with_key(
+            prompt,
+            current,
+            indicator_catalog,
+            history,
+            market_context,
+            backtest_snapshot,
+            web_research,
+            model=chosen_model,
+            strategy_slot_target=strategy_slot_target,
+            api_key=resolved,
         )
+    finally:
+        if token is not None:
+            _request_api_key.reset(token)
 
-    if not _last_test_result["verified"]:
-        test_result = test_openai_api_key(api_key)
-        if not test_result["verified"]:
-            raise ValueError(test_result["message"])
 
-    chosen_model = model or default_model
+def _call_openai_with_key(
+    prompt: str,
+    current: StrategySettings,
+    indicator_catalog: str,
+    history: list[dict[str, str]] | None,
+    market_context: dict[str, Any] | None,
+    backtest_snapshot: dict[str, Any] | None,
+    web_research: list[dict[str, Any]] | None,
+    *,
+    model: str,
+    strategy_slot_target: str | None,
+    api_key: str,
+) -> dict[str, Any]:
+    chosen_model = model
 
     user_content = json.dumps(
         {
@@ -1456,13 +1519,15 @@ def interpret_strategy(
     interval: str = "1h",
     market_context: dict[str, Any] | None = None,
     backtest_snapshot: dict[str, Any] | None = None,
+    api_key: str | None = None,
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
     strategy_slot_target = raw_settings.pop("strategySlotTarget", None)
     current = StrategySettings.model_validate(clamp_numeric_fields(raw_settings))
 
-    merged_history = merge_histories(history, load_turns())
+    merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
     market = build_market_context(
         symbol=symbol,
         interval=interval,
@@ -1470,7 +1535,7 @@ def interpret_strategy(
         use_testnet=True,
     )
 
-    append_turn(role="user", content=prompt.strip())
+    append_turn(role="user", content=prompt.strip(), user_id=user_id)
 
     web_research: list[dict[str, Any]] = []
     if looks_like_research_request(prompt):
@@ -1484,7 +1549,7 @@ def interpret_strategy(
         current_settings=raw_settings,
         web_research=web_research,
     )
-    logger.info("Strategy AI route: model=%s reason=%s", chosen_model, route_reason)
+    logger.info("Strategy AI route: model=%s reason=%s user=%s", chosen_model, route_reason, user_id)
 
     raw = _call_openai(
         prompt.strip(),
@@ -1496,6 +1561,7 @@ def interpret_strategy(
         web_research,
         model=chosen_model,
         strategy_slot_target=strategy_slot_target,
+        api_key=api_key,
     )
 
     patch = raw.get("settings") or {}
@@ -1553,6 +1619,7 @@ def interpret_strategy(
     append_turn(
         role="assistant",
         content=assistant_text,
+        user_id=user_id,
         meta={
             "changed_fields": changed_fields,
             "backtest": bt_meta,

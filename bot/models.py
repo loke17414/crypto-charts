@@ -24,6 +24,9 @@ class User(Base):
     credentials: Mapped[ExchangeCredential | None] = relationship(
         "ExchangeCredential", back_populates="user", uselist=False
     )
+    openai_credential: Mapped["OpenAiCredential | None"] = relationship(
+        "OpenAiCredential", back_populates="user", uselist=False
+    )
 
 
 class ExchangeCredential(Base):
@@ -45,3 +48,22 @@ class ExchangeCredential(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="credentials")
+
+
+class OpenAiCredential(Base):
+    """Encrypted OpenAI API key per user — never shared across accounts."""
+
+    __tablename__ = "openai_credentials"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_openai_credentials_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="openai_credential")

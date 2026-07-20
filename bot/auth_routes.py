@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _reg_max, _reg_window = register_rate_limit()
 _register_limiter = RateLimiter(max_calls=_reg_max, window_seconds=_reg_window)
+# Login brute-force guard (same window knobs as register by default)
+_login_limiter = RateLimiter(max_calls=max(10, _reg_max * 4), window_seconds=_reg_window)
 
 
 class RegisterBody(BaseModel):
@@ -109,7 +111,15 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/login")
-def login(body: LoginBody, db: Session = Depends(get_db)) -> dict[str, Any]:
+def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _login_limiter.check(f"login:{ip}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"로그인 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = authenticate_user(db, body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -129,6 +139,7 @@ def me(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     from bot.user_credentials import has_credentials, load_credentials
+    from bot.user_openai import has_openai_key
 
     saved = has_credentials(db, user.id)
     use_testnet = None
@@ -143,4 +154,5 @@ def me(
         "authRequired": auth_required(),
         "credentialsSaved": saved,
         "credentialsUseTestnet": use_testnet,
+        "openaiKeySaved": has_openai_key(db, user.id),
     }

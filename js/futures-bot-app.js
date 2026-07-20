@@ -1833,10 +1833,53 @@ const FuturesBotApp = (() => {
     }, 1200);
   }
 
+  function resetClientSessionState({ keepLog = false } = {}) {
+    stopStatusPolling();
+    state.mode = 'paper';
+    testnetStatus = null;
+    serverBotActive = false;
+    serverBotLive = false;
+    botRunning = false;
+    FuturesApiClient.setConnected(false);
+    $('#connectApiBtn') && ($('#connectApiBtn').disabled = false);
+    $('#disconnectApiBtn') && ($('#disconnectApiBtn').disabled = true);
+    $('#startBotBtn') && ($('#startBotBtn').disabled = false);
+    $('#stopBotBtn') && ($('#stopBotBtn').disabled = true);
+    const keyEl = $('#apiKey');
+    const secretEl = $('#apiSecret');
+    const envEl = $('#apiEnv');
+    if (keyEl) {
+      keyEl.disabled = false;
+      keyEl.value = '';
+      keyEl.placeholder = '';
+    }
+    if (secretEl) {
+      secretEl.disabled = false;
+      secretEl.value = '';
+      secretEl.placeholder = '';
+    }
+    if (envEl) envEl.disabled = false;
+    setModeBadge();
+    if (!keepLog) {
+      // Keep prior log lines but mark account switch for auditability.
+      addLog('계정 세션 초기화 — 이전 사용자 API/연결 상태를 제거했습니다.', 'info');
+    }
+    updateApiServerStatus(false, false);
+  }
+
   async function restoreSessionFromServer() {
+    // Always clear previous account UI before applying the logged-in user's state.
+    resetClientSessionState({ keepLog: true });
+
     const health = await FuturesApiClient.getHealth();
     if (!health?.ok) {
       updateApiServerStatus(false);
+      return health;
+    }
+
+    // Never trust anonymous health credential flags when auth is required.
+    if (typeof AppAuth !== 'undefined' && AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
+      updateApiServerStatus(true, false);
       return health;
     }
 
@@ -1882,13 +1925,15 @@ const FuturesBotApp = (() => {
           }
         } catch { /* ignore */ }
       }
-      if (!userSaved && health.credentialsSaved) {
+      const authOn = typeof AppAuth !== 'undefined' && AppAuth.isRequired();
+      if (!userSaved && !authOn && health.credentialsSaved) {
         $('#apiKey').placeholder = '서버에 저장됨 — 자동 유지';
         $('#apiSecret').placeholder = '서버에 저장됨 — 자동 유지';
       }
 
-      // Auto-reconnect so Binance session survives server/browser restarts.
-      if (userSaved || health.credentialsSaved) {
+      // Auto-reconnect only for THIS user's saved keys (or legacy solo mode).
+      const canAutoReconnect = userSaved || (!authOn && health.credentialsSaved);
+      if (canAutoReconnect) {
         try {
           const useTestnet = typeof savedTestnet === 'boolean'
             ? savedTestnet
@@ -3467,6 +3512,7 @@ const FuturesBotApp = (() => {
     exportStrategyForServer,
     getStrategySlots,
     restoreSessionFromServer,
+    resetClientSessionState,
   };
 })();
 
