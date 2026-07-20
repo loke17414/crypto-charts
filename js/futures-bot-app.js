@@ -1867,24 +1867,50 @@ const FuturesBotApp = (() => {
     } else {
       updateApiServerStatus(true, false);
       let userSaved = false;
+      let savedTestnet = null;
       if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
         try {
           const me = await FuturesApiClient.authMe();
           userSaved = Boolean(me?.credentialsSaved);
           if (userSaved) {
-            $('#apiKey').placeholder = '비워두면 계정 저장 키로 연결';
-            $('#apiSecret').placeholder = '비워두면 계정 저장 키로 연결';
+            $('#apiKey').placeholder = '계정에 저장됨 — 자동 유지';
+            $('#apiSecret').placeholder = '계정에 저장됨 — 자동 유지';
             if (me.credentialsUseTestnet !== undefined && me.credentialsUseTestnet !== null) {
-              syncExchangeEnv(me.credentialsUseTestnet);
+              savedTestnet = Boolean(me.credentialsUseTestnet);
+              syncExchangeEnv(savedTestnet);
             }
-            addLog('API 키가 계정에 암호화 저장되어 있습니다. 연결로 재연결하세요.', 'info');
           }
         } catch { /* ignore */ }
       }
       if (!userSaved && health.credentialsSaved) {
-        $('#apiKey').placeholder = '비워두면 저장된 키로 연결';
-        $('#apiSecret').placeholder = '비워두면 저장된 키로 연결';
-        addLog('API 키가 서버에 저장되어 있습니다. 연결 버튼으로 재연결하세요.', 'info');
+        $('#apiKey').placeholder = '서버에 저장됨 — 자동 유지';
+        $('#apiSecret').placeholder = '서버에 저장됨 — 자동 유지';
+      }
+
+      // Auto-reconnect so Binance session survives server/browser restarts.
+      if (userSaved || health.credentialsSaved) {
+        try {
+          const useTestnet = typeof savedTestnet === 'boolean'
+            ? savedTestnet
+            : getApiUseTestnet();
+          const data = await FuturesApiClient.reconnect(useTestnet);
+          state.mode = 'testnet';
+          FuturesApiClient.setConnected(true);
+          if (typeof data?.testnet === 'boolean') syncExchangeEnv(data.testnet);
+          await refreshTestnetStatus();
+          sessionStartEquity = await getEquity();
+          $('#connectApiBtn').disabled = true;
+          $('#disconnectApiBtn').disabled = false;
+          $('#apiKey').disabled = true;
+          $('#apiSecret').disabled = true;
+          $('#apiEnv').disabled = true;
+          setModeBadge();
+          updateApiServerStatus(true, true);
+          addLog(`저장된 바이낸스 키로 자동 재연결됨 (${exchangeEnvLabel()})`, 'info');
+          startStatusPolling();
+        } catch (err) {
+          addLog(`바이낸스 자동 재연결 실패: ${err.message}`, 'loss');
+        }
       }
     }
 

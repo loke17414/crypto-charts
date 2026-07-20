@@ -75,11 +75,12 @@ def jwt_algorithm() -> str:
 
 
 def access_token_expire_minutes() -> int:
-    raw = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440").strip()
+    """0 = never expire (default). Positive = minutes until JWT expires."""
+    raw = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "0").strip()
     try:
-        return max(5, int(raw))
+        return max(0, int(raw))
     except ValueError:
-        return 1440
+        return 0
 
 
 def master_encryption_key() -> str:

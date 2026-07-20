@@ -136,8 +136,20 @@ def require_trading_session(user: User | None = Depends(get_optional_user)) -> T
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from bot.platform_config import access_token_expire_minutes
+
     init_db()
     logger.info("Database ready (%s)", database_url().split(":", 1)[0])
+    openai_status = ai_available(verify=False)
+    logger.info(
+        "OpenAI key: %s",
+        "saved" if openai_status.get("configured") else "not set",
+    )
+    expire_m = access_token_expire_minutes()
+    logger.info(
+        "Login token expiry: %s",
+        "never (ACCESS_TOKEN_EXPIRE_MINUTES=0)" if expire_m == 0 else f"{expire_m} minutes",
+    )
     if not auth_required():
         auto_connect_from_env()
     restore_bot_if_needed()

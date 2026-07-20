@@ -84,6 +84,13 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 grep -q '^LISTEN_HOST=' .env 2>/dev/null || echo 'LISTEN_HOST=0.0.0.0' >> .env
+# Keep login sessions from expiring so Binance/GPT APIs stay usable after save.
+if grep -qE '^ACCESS_TOKEN_EXPIRE_MINUTES=' .env 2>/dev/null; then
+  sed -i 's/^ACCESS_TOKEN_EXPIRE_MINUTES=.*/ACCESS_TOKEN_EXPIRE_MINUTES=0/' .env
+else
+  echo 'ACCESS_TOKEN_EXPIRE_MINUTES=0' >> .env
+fi
+grep -qE '^JWT_SECRET=.+' .env 2>/dev/null || true
 
 echo "==> Install systemd unit (paths -> $ROOT)"
 sed "s|/root/crypto-charts|$ROOT|g" deploy/crypto-web.service > /etc/systemd/system/crypto-web.service

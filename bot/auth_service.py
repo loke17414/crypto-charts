@@ -23,19 +23,28 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 def create_access_token(*, user_id: int, email: str) -> tuple[str, int]:
     expires_minutes = access_token_expire_minutes()
-    expire = datetime.now(UTC) + timedelta(minutes=expires_minutes)
-    payload = {
+    payload: dict[str, Any] = {
         "sub": str(user_id),
         "email": email,
-        "exp": expire,
     }
+    if expires_minutes > 0:
+        payload["exp"] = datetime.now(UTC) + timedelta(minutes=expires_minutes)
+        expires_in = expires_minutes * 60
+    else:
+        # No exp claim — login stays valid until logout or JWT_SECRET change.
+        expires_in = 0
     token = jwt.encode(payload, jwt_secret(), algorithm=jwt_algorithm())
-    return token, expires_minutes * 60
+    return token, expires_in
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     try:
-        payload = jwt.decode(token, jwt_secret(), algorithms=[jwt_algorithm()])
+        payload = jwt.decode(
+            token,
+            jwt_secret(),
+            algorithms=[jwt_algorithm()],
+            options={"verify_exp": True},
+        )
     except JWTError as exc:
         raise ValueError("Invalid or expired token") from exc
     sub = payload.get("sub")
