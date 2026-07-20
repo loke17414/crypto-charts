@@ -18,10 +18,21 @@ set -euo pipefail
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
 
-if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
-  echo "Usage: sudo bash deploy/setup-https.sh <domain> <email>"
-  echo "  example: sudo bash deploy/setup-https.sh trade.example.com admin@example.com"
+if [ -z "$DOMAIN" ]; then
+  echo "Usage: sudo bash deploy/setup-https.sh <domain> [email|none]"
+  echo "  example: sudo bash deploy/setup-https.sh orbinex.net you@gmail.com"
+  echo "  no email: sudo bash deploy/setup-https.sh orbinex.net none"
+  echo ""
+  echo "Tip: use a normal mailbox (Gmail/Naver). Custom domain emails often fail"
+  echo "     ACME registration if MX DNS is missing (invalidEmail)."
   exit 1
+fi
+
+# "none" / empty → register without email (certificate still works)
+USE_EMAIL=1
+if [ -z "$EMAIL" ] || [ "$EMAIL" = "none" ] || [ "$EMAIL" = "-" ]; then
+  USE_EMAIL=0
+  EMAIL=""
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -35,9 +46,13 @@ CONF_SRC="$ROOT/deploy/nginx-cryptocharts.conf.template"
 CONF_DST="/etc/nginx/sites-available/cryptocharts"
 CONF_LINK="/etc/nginx/sites-enabled/cryptocharts"
 
-echo "==> CryptoCharts HTTPS setup"
+echo "==> Orbinex HTTPS setup"
 echo "    Domain: $DOMAIN"
-echo "    Email:  $EMAIL"
+if [ "$USE_EMAIL" -eq 1 ]; then
+  echo "    Email:  $EMAIL"
+else
+  echo "    Email:  (none — --register-unsafely-without-email)"
+fi
 echo "    Root:   $ROOT"
 
 export DEBIAN_FRONTEND=noninteractive
@@ -104,14 +119,36 @@ systemctl enable nginx
 systemctl restart nginx
 
 echo "==> Requesting Let's Encrypt certificate (webroot)..."
-certbot certonly \
-  --webroot \
-  -w /var/www/certbot \
-  -d "$DOMAIN" \
-  --non-interactive \
-  --agree-tos \
-  --email "$EMAIL" \
+CERTBOT_ARGS=(
+  certonly
+  --webroot
+  -w /var/www/certbot
+  -d "$DOMAIN"
+  --non-interactive
+  --agree-tos
   --keep-until-expiring
+)
+if [ "$USE_EMAIL" -eq 1 ]; then
+  CERTBOT_ARGS+=(--email "$EMAIL")
+else
+  CERTBOT_ARGS+=(--register-unsafely-without-email)
+fi
+
+set +e
+certbot "${CERTBOT_ARGS[@]}"
+CERTBOT_RC=$?
+set -e
+
+if [ "$CERTBOT_RC" -ne 0 ]; then
+  echo ""
+  echo "ERROR: certbot failed (exit $CERTBOT_RC)."
+  echo "Common email fix — retry with Gmail, or without email:"
+  echo "  sudo bash deploy/setup-https.sh ${DOMAIN} you@gmail.com"
+  echo "  sudo bash deploy/setup-https.sh ${DOMAIN} none"
+  echo ""
+  echo "Also check: DNS A ${DOMAIN} → this VPS, ports 80/443 open."
+  exit "$CERTBOT_RC"
+fi
 
 if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
   echo "ERROR: certificate not found for ${DOMAIN}"
