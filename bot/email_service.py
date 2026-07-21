@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -237,16 +238,21 @@ def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: str | 
         return False
     import requests
 
+    from_addr = resend_from_email()
     payload: dict[str, Any] = {
-        "from": resend_from_email(),
+        "from": from_addr,
         "to": [to],
         "subject": subject,
         "text": text_body,
-        "headers": {
-            "Auto-Submitted": "auto-generated",
-            "X-Entity-Ref-ID": make_msgid(domain=_mail_domain()),
-        },
     }
+    # Prefer a replyable address — noreply + Auto-Submitted hurts inbox placement.
+    reply_to = os.getenv("RESEND_REPLY_TO", "").strip()
+    if not reply_to:
+        _, parsed = parseaddr(from_addr)
+        if parsed and not parsed.lower().startswith("noreply@"):
+            reply_to = parsed
+    if reply_to:
+        payload["reply_to"] = reply_to
     if html_body:
         payload["html"] = html_body
     res = requests.post(
@@ -257,7 +263,18 @@ def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: str | 
     )
     if res.status_code >= 400:
         raise RuntimeError(f"Resend HTTP {res.status_code}: {res.text[:200]}")
-    logger.info("Email sent to %s (%s) via Resend", to, subject)
+    email_id = ""
+    try:
+        email_id = str((res.json() or {}).get("id") or "")
+    except Exception:
+        email_id = ""
+    logger.info(
+        "Email sent to %s (%s) via Resend id=%s from=%s",
+        to,
+        subject,
+        email_id or "?",
+        from_addr,
+    )
     return True
 
 

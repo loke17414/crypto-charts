@@ -374,8 +374,8 @@ def resend_api_key() -> str:
 
 
 def resend_from_email() -> str:
-    # Needs a verified domain sender in production, e.g. Orbinex <noreply@orbinex.net>
-    return os.getenv("RESEND_FROM", "").strip() or "Orbinex <onboarding@resend.dev>"
+    # Prefer a replyable local-part (auth@ / hello@). noreply@ often lands in spam.
+    return os.getenv("RESEND_FROM", "").strip() or "Orbinex <auth@orbinex.net>"
 
 
 def email_require_verification() -> bool:
