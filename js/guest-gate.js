@@ -1,5 +1,7 @@
 /* Guest (not logged in): chart viewing OK, all other product features locked. */
 const GuestGate = (() => {
+  const NOTICE_KEY = 'orbinex-guest-notice-v1';
+
   function authOn() {
     return typeof AppAuth !== 'undefined' && AppAuth.isRequired?.();
   }
@@ -17,21 +19,33 @@ const GuestGate = (() => {
     return `login.html?next=${n}`;
   }
 
-  function promptLogin(feature) {
-    const label = feature ? `「${feature}」` : '이 기능';
-    const go = confirm(`${label}은(는) 로그인이 필요합니다.\n로그인 페이지로 이동할까요?`);
-    if (go) {
-      if (typeof AppAuth !== 'undefined' && AppAuth.redirectToLogin) {
-        AppAuth.redirectToLogin(currentPage());
-      } else {
-        location.href = loginUrl(currentPage());
-      }
-    }
-    return false;
-  }
-
   function currentPage() {
     return (location.pathname || '').split('/').pop() || 'index.html';
+  }
+
+  function goLogin() {
+    if (typeof AppAuth !== 'undefined' && AppAuth.redirectToLogin) {
+      AppAuth.redirectToLogin(currentPage());
+    } else {
+      location.href = loginUrl(currentPage());
+    }
+  }
+
+  async function promptLogin(feature) {
+    const label = feature ? `「${feature}」` : '이 기능';
+    const message = `${label}은(는) 로그인이 필요합니다.\n로그인 페이지로 이동할까요?`;
+    let go = false;
+    if (typeof UiModal !== 'undefined') {
+      go = await UiModal.confirm(message, {
+        title: '로그인 필요',
+        confirmText: '로그인',
+        cancelText: '나중에',
+      });
+    } else {
+      go = window.confirm(message);
+    }
+    if (go) goLogin();
+    return false;
   }
 
   /** @returns {boolean} true if allowed to proceed */
@@ -41,22 +55,41 @@ const GuestGate = (() => {
     return false;
   }
 
+  async function showGuestWelcome() {
+    if (!isGuest()) return;
+    try {
+      if (sessionStorage.getItem(NOTICE_KEY)) return;
+      sessionStorage.setItem(NOTICE_KEY, '1');
+    } catch { /* private mode */ }
+
+    const page = currentPage();
+    const isTrading = page === 'trading.html';
+    const message = isTrading
+      ? '비로그인 상태에서는 차트만 볼 수 있습니다.\n자동매매·봇·GPT·API 연결은 로그인 후 이용할 수 있습니다.'
+      : '비로그인 상태에서는 차트만 볼 수 있습니다.\nAI·모의매매 등 다른 기능은 로그인 후 이용할 수 있습니다.';
+
+    if (typeof UiModal === 'undefined') return;
+    const go = await UiModal.open({
+      title: '차트 미리보기',
+      message,
+      confirmText: '로그인',
+      cancelText: '차트로 계속',
+    });
+    if (go) goLogin();
+  }
+
   function syncTradingGuestUi() {
     const guest = isGuest();
     document.body.classList.toggle('trading-page--guest', guest);
-    const banner = document.getElementById('guestChartBanner');
-    if (banner) banner.classList.toggle('hidden', !guest);
     const authStatus = document.getElementById('authStatus');
-    if (guest && authStatus && !authStatus.dataset.guestSet) {
-      authStatus.textContent = '차트만 이용 중 — 자동매매·봇·GPT는 로그인 필요';
+    if (guest && authStatus) {
+      authStatus.textContent = '차트만 이용 중 — 자동매매는 로그인 필요';
     }
   }
 
   function syncIndexGuestUi() {
     const guest = isGuest();
     document.body.classList.toggle('chart-page--guest', guest);
-    const banner = document.getElementById('guestChartBanner');
-    if (banner) banner.classList.toggle('hidden', !guest);
     const aiBtn = document.getElementById('aiToggleBtn');
     if (aiBtn) {
       aiBtn.title = guest ? '로그인 후 AI 이용' : 'AI 어시스턴트 (/)';
@@ -85,14 +118,12 @@ const GuestGate = (() => {
   }
 
   function bindTradingLocks() {
-    // Capture clicks on locked regions
     document.addEventListener('click', (e) => {
       if (!isGuest()) return;
       const t = e.target;
       if (!(t instanceof Element)) return;
-      if (t.closest('#guestChartBanner a, #authSection, .header__nav, .header__brand')) return;
+      if (t.closest('#uiModalRoot, #authSection, .header__nav, .header__brand')) return;
       if (t.closest('.trading-chart-zone') && !t.closest('.chart-ai-panel, #backtestPopup, #strategyAiSendBtn, #strategyAiInput')) {
-        // chart interactions OK
         return;
       }
       if (
@@ -102,7 +133,6 @@ const GuestGate = (() => {
         || t.closest('#backtestToggleBtn')
         || t.closest('#runBacktestBtn')
       ) {
-        // Allow account section interactions
         if (t.closest('#authSection')) return;
         e.preventDefault();
         e.stopPropagation();
@@ -123,6 +153,12 @@ const GuestGate = (() => {
     } catch { /* ignore */ }
     syncIndexGuestUi();
     bindIndexLocks();
+    await showGuestWelcome();
+  }
+
+  async function afterTradingGuestReady() {
+    syncTradingGuestUi();
+    await showGuestWelcome();
   }
 
   return {
@@ -133,6 +169,8 @@ const GuestGate = (() => {
     syncIndexGuestUi,
     bindTradingLocks,
     bootIndex,
+    afterTradingGuestReady,
+    showGuestWelcome,
   };
 })();
 

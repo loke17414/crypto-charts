@@ -3797,7 +3797,6 @@ const FuturesBotApp = (() => {
       const guestMode = AppAuth.isRequired() && !AppAuth.isLoggedIn();
       if (guestMode) {
         // Guest: chart viewing allowed; bot/API/GPT locked via GuestGate + UI.
-        addLog('비로그인 — 차트만 이용 가능합니다. 자동매매·봇·GPT는 로그인 후 사용하세요.', 'warn');
         syncExchangeEnv(false);
         setModeBadge();
         updateChartIndicatorButtons();
@@ -3805,7 +3804,7 @@ const FuturesBotApp = (() => {
           onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
         }
         if (Chart.available()) syncChartIndicators();
-        addLog('Orbinex 차트 연동됨 (게스트)', 'info');
+        GuestGate.afterTradingGuestReady?.();
       } else {
         if (AppAuth.isRequired()) syncExchangeEnv(false);
 

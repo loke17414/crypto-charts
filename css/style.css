@@ -1126,24 +1126,56 @@ body.pos-sl-tp-dragging .chart-main {
 }
 .header__plan-badge.hidden { display: none; }
 
-.guest-chart-banner {
+/* Shared notice / confirm modal */
+.ui-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+}
+.ui-modal.hidden { display: none; }
+.ui-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 14, 0.62);
+  backdrop-filter: blur(2px);
+}
+.ui-modal__panel {
+  position: relative;
+  width: min(420px, 100%);
+  background: var(--bg-secondary, #121826);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.22));
+  border-radius: 14px;
+  padding: 1.35rem 1.35rem 1.15rem;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+.ui-modal__title {
+  margin: 0 0 0.55rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.ui-modal__body {
+  margin: 0 0 1.15rem;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+.ui-modal__actions {
   display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.65rem 1rem;
-  padding: 0.55rem 1rem;
-  background: rgba(251, 191, 36, 0.12);
-  border-bottom: 1px solid rgba(251, 191, 36, 0.35);
-  color: var(--text-primary);
-  font-size: 0.86rem;
 }
-.guest-chart-banner.hidden { display: none; }
-.guest-chart-banner__link {
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: none;
+.ui-modal__btn { min-width: 5.5rem; }
+.ui-modal__btn--danger {
+  background: #dc2626 !important;
+  border-color: transparent !important;
 }
-.guest-chart-banner__link:hover { text-decoration: underline; }
+body.ui-modal-open { overflow: hidden; }
 
 .trading-page--guest .bot-control-panel .control-section--primary,
 .trading-page--guest .control-accordions > details:not(#authSection),
