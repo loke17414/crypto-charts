@@ -122,7 +122,7 @@ def _send_via_profile(profile: dict[str, Any], msg: EmailMessage) -> None:
     password = str(profile.get("password") or "")
     use_tls = bool(profile.get("use_tls", True))
     if not password:
-        raise smtplib.SMTPAuthenticationError(535, b"SMTP password empty — check .env SMTP_PASSWORD")
+        raise smtplib.SMTPAuthenticationError(535, b"SMTP password empty - check .env SMTP_PASSWORD")
 
     header_from, envelope_from = _header_and_envelope(str(profile.get("from_email") or ""), user)
     if "From" in msg:
