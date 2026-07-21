@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
+import os
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
@@ -23,6 +24,10 @@ def _make_engine() -> Engine:
     kwargs: dict = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif url.startswith("postgresql") or url.startswith("postgres"):
+        # Modest pool for single uvicorn process; raise when adding workers.
+        kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+        kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     eng = create_engine(url, **kwargs)
 
     if url.startswith("sqlite"):

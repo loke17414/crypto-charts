@@ -59,8 +59,8 @@ fi
   echo "backup_at=$STAMP"
   echo "host=$(hostname 2>/dev/null || echo unknown)"
   echo "database_url_scheme=${DB_URL%%:*}"
-  for key in JWT_SECRET MASTER_ENCRYPTION_KEY TOSS_SECRET_KEY OPENAI_API_KEY SMTP_PASSWORD; do
-    if grep -qE "^${key}=" "$ROOT/.env" 2>/dev/null; then
+  for key in JWT_SECRET MASTER_ENCRYPTION_KEY TOSS_SECRET_KEY OPENAI_API_KEY RESEND_API_KEY SMTP_PASSWORD ALERT_WEBHOOK_URL; do
+    if grep -qE "^${key}=.+" "$ROOT/.env" 2>/dev/null; then
       echo "${key}=SET"
     else
       echo "${key}=MISSING"
@@ -73,3 +73,4 @@ ls -1dt "$DEST"/orbinex-* 2>/dev/null | tail -n +15 | xargs -r rm -rf
 
 echo "==> Done: $OUT"
 echo "Keep MASTER_ENCRYPTION_KEY / JWT_SECRET / .env offline separately — losing them bricks encrypted API keys."
+echo "Restore Postgres: pg_restore -d \"\$DATABASE_URL\" --clean --if-exists $OUT/cryptocharts.dump"
