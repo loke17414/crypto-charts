@@ -279,6 +279,11 @@ def send_email(*, to: str, subject: str, text_body: str, html_body: str | None =
         msg.set_content(text_body)
         if html_body:
             msg.add_alternative(html_body, subtype="html")
+        header_from, _ = _header_and_envelope(
+            str(profile.get("from_email") or ""),
+            str(profile.get("user") or ""),
+        )
+        _apply_deliverability_headers(msg, to=to, from_header=header_from)
         try:
             _send_via_profile(profile, msg)
             logger.info(
