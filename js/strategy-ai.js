@@ -62,13 +62,16 @@ const StrategyAI = (() => {
     const refreshBtn = $('#strategyRecommendRefresh');
     const lock = $('#strategyRecommendProLock');
     section?.classList.toggle('is-pro-locked', !allowed);
+    // Keep list + refresh visible; show upgrade banner only when locked.
     lock?.classList.toggle('hidden', allowed);
-    if (list) list.classList.toggle('hidden', !allowed);
-    if (refreshBtn) refreshBtn.classList.toggle('hidden', !allowed);
-    if (!allowed) {
-      if (note) note.textContent = 'Pro 전용 기능입니다.';
-      if (list) list.innerHTML = '';
-      window.__lastRecommendedStrategies = null;
+    if (list) list.classList.remove('hidden');
+    if (refreshBtn) refreshBtn.classList.remove('hidden');
+    if (!allowed && note && !window.__lastRecommendedStrategies?.items?.length) {
+      note.textContent = '전략은 볼 수 있습니다. 적용은 Pro에서 가능합니다.';
+    }
+    // Re-render action buttons if list already loaded.
+    if (window.__lastRecommendedStrategies?.items?.length) {
+      renderRecommendedList(window.__lastRecommendedStrategies);
     }
   }
 
@@ -82,15 +85,20 @@ const StrategyAI = (() => {
     const list = $('#strategyRecommendList');
     const note = $('#strategyRecommendNote');
     if (!list) return;
-    if (note) note.textContent = result?.note || '';
+    const allowed = recommendedAllowed();
+    if (note) {
+      note.textContent = allowed
+        ? (result?.note || '')
+        : '전략 미리보기 · 적용은 Pro 업그레이드 후 가능합니다.';
+    }
     list.innerHTML = '';
     if (!result?.items?.length) {
       list.innerHTML = '<div class="api-hint">추천할 전략이 없습니다. 차트를 불러온 뒤 새로고침하세요.</div>';
       return;
     }
-      result.items.forEach((item, index) => {
+    result.items.forEach((item, index) => {
       const row = document.createElement('div');
-      row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}`;
+      row.className = `strategy-recommend__item ${item.ok ? 'is-pass' : 'is-fail'}${allowed ? '' : ' is-locked'}`;
       const bench = item.bench || {};
       const interval = bench.interval || '—';
       const wr = Number.isFinite(bench.winRate) ? bench.winRate : item.winRate;
@@ -109,6 +117,15 @@ const StrategyAI = (() => {
         .replace(/\s*·\s*백테스트[^·]*/g, '')
         .replace(/\s*·\s*$/, '')
         .trim();
+      const actions = allowed
+        ? `<div class="strategy-recommend__actions">
+            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}">적용</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
+          </div>`
+        : `<div class="strategy-recommend__actions">
+            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-upgrade="1" title="Pro에서 적용">Pro 적용</button>
+            <a href="billing.html" class="btn btn--ghost btn--sm" style="text-align:center;text-decoration:none;">업그레이드</a>
+          </div>`;
       row.innerHTML = `
           <div class="strategy-recommend__main">
             <div class="strategy-recommend__title-row">
@@ -122,10 +139,7 @@ const StrategyAI = (() => {
             ${blurb ? `<div class="strategy-recommend__meta">${blurb}</div>` : ''}
             <div class="strategy-recommend__meta strategy-recommend__live">현재 차트 ${item.winRate}% · ${item.trades}회 · PnL ${item.totalPnlPct}%</div>
           </div>
-          <div class="strategy-recommend__actions">
-            <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}">적용</button>
-            <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
-          </div>
+          ${actions}
         `;
       list.appendChild(row);
     });
@@ -145,7 +159,7 @@ const StrategyAI = (() => {
     const note = $('#strategyRecommendNote');
     if (!list) return;
     syncPlanGates();
-    if (!recommendedAllowed()) return;
+    // Free users can preview strategies; apply is gated separately.
     if (!window.StrategyPresets?.recommend) {
       if (note) note.textContent = '추천 전략 모듈을 불러오지 못했습니다.';
       return;
@@ -749,6 +763,15 @@ const StrategyAI = (() => {
       refreshRecommendedStrategies({ force: true });
     });
     $('#strategyRecommendList')?.addEventListener('click', (e) => {
+      const upgradeBtn = e.target.closest('[data-rec-upgrade]');
+      if (upgradeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const msg = 'AI 추천 전략 적용은 Pro 플랜에서 사용할 수 있습니다.\n요금제 페이지에서 Pro로 업그레이드해 주세요.';
+        window.alert(msg);
+        addMessage('assistant', `⚠️ ${msg.replace(/\n/g, ' ')}`, { persist: false });
+        return;
+      }
       const applyBtn = e.target.closest('[data-rec-apply]');
       if (applyBtn) {
         e.preventDefault();

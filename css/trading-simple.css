@@ -1328,6 +1328,7 @@
 
 .trading-page--simple .strategy-recommend__lock {
   margin-top: 0.45rem;
+  margin-bottom: 0.55rem;
   padding: 0.65rem 0.7rem;
   border: 1px dashed var(--border, #2a2f3a);
   border-radius: 8px;
@@ -1338,6 +1339,14 @@
   margin: 0 0 0.25rem;
   font-size: 0.82rem;
   font-weight: 600;
+}
+
+.trading-page--simple .strategy-recommend__item.is-locked {
+  opacity: 0.92;
+}
+
+.trading-page--simple .strategy-recommend__item.is-locked .strategy-recommend__actions .btn--simple-primary {
+  opacity: 0.95;
 }
 
 .trading-page--simple .auth-panel__consent {

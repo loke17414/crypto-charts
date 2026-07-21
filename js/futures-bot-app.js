@@ -1066,11 +1066,22 @@ const FuturesBotApp = (() => {
     else updateStrategyRulesDisplay();
   }
 
-  function addStrategySlot({ name = null, entryRules = null, exitRules = null, enabled = true } = {}) {
+  function promptProUpgrade(featureLabel) {
+    const msg = `${featureLabel}은(는) Pro 플랜에서 사용할 수 있습니다.\n요금제 페이지에서 Pro로 업그레이드해 주세요.`;
+    window.alert(msg);
+    addLog(msg.replace(/\n/g, ' '), 'warn');
+    return msg;
+  }
+
+  function addStrategySlot({ name = null, entryRules = null, exitRules = null, enabled = true, silentLimit = false } = {}) {
     const maxSlots = maxAllowedStrategySlots();
     if (state.strategySlots.length >= maxSlots) {
       if (!planFeatures.pro && maxSlots < MAX_STRATEGY_SLOTS) {
-        addLog(`무료 플랜은 진입 조건 ${maxSlots}개까지입니다. 멀티 슬롯은 Pro에서 사용할 수 있습니다.`, 'warn');
+        if (!silentLimit) {
+          promptProUpgrade('멀티 전략 슬롯(진입 조건 추가)');
+        } else {
+          addLog(`무료 플랜은 진입 조건 ${maxSlots}개까지입니다. 멀티 슬롯은 Pro에서 사용할 수 있습니다.`, 'warn');
+        }
       } else {
         addLog(`진입 조건은 최대 ${maxSlots}개까지 만들 수 있습니다.`, 'warn');
       }
@@ -3779,6 +3790,11 @@ const FuturesBotApp = (() => {
 
       readFormSettings();
       $('#addStrategySlotBtn')?.addEventListener('click', () => {
+        const maxSlots = maxAllowedStrategySlots();
+        if (!planFeatures.pro && state.strategySlots.length >= maxSlots) {
+          promptProUpgrade('멀티 전략 슬롯(진입 조건 추가)');
+          return;
+        }
         const slot = addStrategySlot();
         if (slot) {
           addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
