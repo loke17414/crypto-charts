@@ -10,7 +10,7 @@
     .auth-page { max-width: 420px; margin: 3rem auto; padding: 0 1.25rem; }
     .auth-page h1 { font-size: 1.35rem; }
     .auth-page p { font-size: 0.9rem; line-height: 1.5; }
-    .auth-page .msg { margin-top: 1rem; padding: 0.75rem; border-radius: 8px; background: rgba(0,0,0,.06); }
+    .auth-page .msg { margin-top: 1rem; padding: 0.75rem; border-radius: 8px; background: var(--bg-secondary, rgba(0,0,0,.06)); }
   </style>
 </head>
 <body>
@@ -25,27 +25,31 @@
   <script>
     (async () => {
       const params = new URLSearchParams(location.search);
-      const token = params.get('token') || '';
+      // Email clients sometimes wrap/encode tokens — normalize before calling API.
+      let token = (params.get('token') || '').trim().replace(/\s+/g, '');
+      try { token = decodeURIComponent(token); } catch (_) { /* keep raw */ }
       const status = document.getElementById('verifyStatus');
       const msg = document.getElementById('verifyMsg');
-      if (!token) {
+      if (!token || token.length < 10) {
         status.textContent = '인증 토큰이 없습니다.';
+        msg.classList.remove('hidden');
+        msg.textContent = '메일 안 링크 전체를 열어 주세요. 안 되면 로그인 페이지에서 인증 메일을 재전송하세요.';
         return;
       }
       try {
         const data = await FuturesApiClient.authVerifyEmail(token);
         if (data.access_token) {
-          AppAuth.setSession?.(data.access_token, data.user)
-            || localStorage.setItem('crypto-charts-auth-token', data.access_token);
-          if (data.user) localStorage.setItem('crypto-charts-auth-user', JSON.stringify(data.user));
+          AppAuth.setSession?.(data.access_token, data.user);
         }
         status.textContent = '인증 완료';
         msg.classList.remove('hidden');
-        msg.textContent = data.message || '이메일이 인증되었습니다. 트레이딩 페이지에서 로그인 상태를 확인해 주세요.';
+        msg.textContent = data.message || '이메일이 인증되었습니다. 이제 로그인할 수 있습니다.';
+        setTimeout(() => { location.href = 'login.html?next=trading.html'; }, 1200);
       } catch (err) {
         status.textContent = '인증 실패';
         msg.classList.remove('hidden');
-        msg.textContent = err.message || '링크가 만료되었거나 유효하지 않습니다.';
+        msg.textContent = (err.message || '링크가 만료되었거나 유효하지 않습니다.')
+          + ' 로그인 페이지에서 「인증 메일 재전송」을 눌러 새 링크를 받으세요.';
       }
     })();
   </script>

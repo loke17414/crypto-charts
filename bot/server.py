@@ -41,7 +41,9 @@ from bot.platform_config import (
     billing_enforce,
     cors_allow_origins,
     database_url,
+    email_require_verification,
 )
+from bot.email_service import smtp_configured
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
 from bot.user_credentials import delete_credentials, has_credentials, load_credentials, save_credentials
 from bot.server_bot import (
@@ -402,6 +404,8 @@ def health(
             "apiVersion": 2,
             "authRequired": auth_required(),
             "appOrigin": app_origin(),
+            "smtpConfigured": smtp_configured(),
+            "emailRequireVerification": bool(email_require_verification() and smtp_configured()),
             "connected": connected,
             "credentialsSaved": creds_saved,
             "vaultReady": vault_ready(),
@@ -421,6 +425,8 @@ def health(
             "apiVersion": 2,
             "authRequired": True,
             "appOrigin": app_origin(),
+            "smtpConfigured": smtp_configured(),
+            "emailRequireVerification": bool(email_require_verification() and smtp_configured()),
             "connected": False,
             "credentialsSaved": False,
             "vaultReady": vault_ready(),

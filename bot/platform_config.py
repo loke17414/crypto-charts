@@ -200,7 +200,8 @@ def smtp_user() -> str:
 
 
 def smtp_password() -> str:
-    return os.getenv("SMTP_PASSWORD", "").strip().strip('"').strip("'")
+    # Gmail app passwords are often pasted with spaces — strip them.
+    return os.getenv("SMTP_PASSWORD", "").strip().strip('"').strip("'").replace(" ", "")
 
 
 def smtp_from_email() -> str:
@@ -209,6 +210,21 @@ def smtp_from_email() -> str:
 
 def smtp_use_tls() -> bool:
     return os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+
+
+def _smtp_from_usable(from_email: str, user: str) -> str:
+    """Prefer a real email address; drop broken display-only From (e.g. systemd ate <...>)."""
+    from email.utils import parseaddr
+
+    name, addr = parseaddr((from_email or "").strip())
+    if addr and "@" in addr:
+        return from_email.strip() if name else addr
+    if user and "@" in user:
+        return user
+    raw = (from_email or "").strip()
+    if "@" in raw and "<" not in raw and ">" not in raw:
+        return raw
+    return ""
 
 
 def _smtp_profile(
@@ -221,14 +237,14 @@ def _smtp_profile(
     from_email: str,
     use_tls: bool,
 ) -> dict[str, object] | None:
-    from_addr = from_email or user
+    from_addr = _smtp_from_usable(from_email, user)
     if not host or not from_addr:
         return None
     return {
         "name": name,
         "host": host,
         "port": port,
-        "user": user,
+        "user": user or from_addr,
         "password": password,
         "from_email": from_addr,
         "use_tls": use_tls,
@@ -262,7 +278,7 @@ def smtp_profiles() -> list[dict[str, object]]:
         host=os.getenv("SMTP2_HOST", "").strip(),
         port=port2,
         user=os.getenv("SMTP2_USER", "").strip(),
-        password=os.getenv("SMTP2_PASSWORD", "").strip().strip('"').strip("'"),
+        password=os.getenv("SMTP2_PASSWORD", "").strip().strip('"').strip("'").replace(" ", ""),
         from_email=os.getenv("SMTP2_FROM", "").strip(),
         use_tls=os.getenv("SMTP2_USE_TLS", "true").lower() in ("1", "true", "yes"),
     )

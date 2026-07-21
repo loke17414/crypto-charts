@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,6 +20,8 @@ from bot.platform_config import (
     jwt_algorithm,
     jwt_secret,
 )
+
+logger = logging.getLogger(__name__)
 
 PURPOSE_VERIFY = "verify"
 PURPOSE_RESET = "reset"
@@ -115,7 +118,8 @@ def create_email_token(
 
 
 def consume_email_token(db: Session, raw: str, *, purpose: str) -> User:
-    token_hash = _hash_token(raw.strip())
+    cleaned = "".join((raw or "").replace("\u200b", "").split())
+    token_hash = _hash_token(cleaned)
     row = (
         db.query(EmailToken)
         .filter(EmailToken.token_hash == token_hash, EmailToken.purpose == purpose)
@@ -166,8 +170,12 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
         try:
             meta["emailSent"] = send_verify_email(user.email, raw)
         except Exception:
+            logger.exception("verify email send failed for user_id=%s", user.id)
             meta["emailSent"] = False
-            meta["emailError"] = "인증 메일 발송에 실패했습니다. 잠시 후 재전송해 주세요."
+            meta["emailError"] = (
+                "인증 메일 발송에 실패했습니다. 로그인 화면에서 「인증 메일 재전송」을 눌러 주세요. "
+                "계속 실패하면 SMTP 설정을 확인하세요."
+            )
     return user, meta
 
 
@@ -199,14 +207,19 @@ def verify_email_with_token(db: Session, raw: str) -> User:
 
 def resend_verification(db: Session, email: str) -> dict[str, Any]:
     user = get_user_by_email(db, email)
-    # Always return ok to avoid email enumeration
+    # Always return ok to avoid email enumeration when user missing / already verified
     if not user or user.email_verified_at is not None:
         return {"ok": True, "message": "인증 메일을 보냈습니다. 받은편지함을 확인해 주세요."}
     if not smtp_configured():
         raise ValueError("이메일 발송이 설정되지 않았습니다. 관리자에게 문의하세요.")
     raw = create_email_token(db, user, purpose=PURPOSE_VERIFY, hours=24)
-    send_verify_email(user.email, raw)
-    return {"ok": True, "message": "인증 메일을 다시 보냈습니다."}
+    try:
+        send_verify_email(user.email, raw)
+    except Exception as exc:
+        raise ValueError(
+            "인증 메일 발송에 실패했습니다. SMTP 계정·앱 비밀번호·SMTP 사용 허용을 확인해 주세요."
+        ) from exc
+    return {"ok": True, "message": "인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요."}
 
 
 def request_password_reset(db: Session, email: str) -> dict[str, Any]:
@@ -216,7 +229,12 @@ def request_password_reset(db: Session, email: str) -> dict[str, Any]:
     if not smtp_configured():
         raise ValueError("이메일 발송이 설정되지 않았습니다. 관리자에게 문의하세요.")
     raw = create_email_token(db, user, purpose=PURPOSE_RESET, hours=1)
-    send_reset_email(user.email, raw)
+    try:
+        send_reset_email(user.email, raw)
+    except Exception as exc:
+        raise ValueError(
+            "재설정 메일 발송에 실패했습니다. SMTP 설정을 확인해 주세요."
+        ) from exc
     return {"ok": True, "message": "재설정 안내를 보냈습니다. 받은편지함을 확인해 주세요."}
 
 
