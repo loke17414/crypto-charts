@@ -6,22 +6,18 @@ import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
+from typing import Any
 
-from bot.platform_config import (
-    app_origin,
-    smtp_from_email,
-    smtp_host,
-    smtp_password,
-    smtp_port,
-    smtp_user,
-    smtp_use_tls,
-)
+from bot.platform_config import app_origin, smtp_configured, smtp_profiles
 
 logger = logging.getLogger(__name__)
 
-
-def smtp_configured() -> bool:
-    return bool(smtp_host() and smtp_from_email())
+__all__ = [
+    "send_email",
+    "send_reset_email",
+    "send_verify_email",
+    "smtp_configured",
+]
 
 
 def _origin() -> str:
@@ -31,41 +27,64 @@ def _origin() -> str:
     return origin
 
 
+def _send_via_profile(profile: dict[str, Any], msg: EmailMessage) -> None:
+    host = str(profile["host"])
+    port = int(profile["port"])
+    user = str(profile.get("user") or "")
+    password = str(profile.get("password") or "")
+    use_tls = bool(profile.get("use_tls", True))
+
+    if use_tls:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.starttls(context=context)
+            if user:
+                server.login(user, password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+            if user:
+                server.login(user, password)
+            server.send_message(msg)
+
+
 def send_email(*, to: str, subject: str, text_body: str, html_body: str | None = None) -> bool:
-    if not smtp_configured():
+    profiles = smtp_profiles()
+    if not profiles:
         logger.warning("SMTP not configured — email to %s skipped (%s)", to, subject)
         return False
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = smtp_from_email()
-    msg["To"] = to
-    msg.set_content(text_body)
-    if html_body:
-        msg.add_alternative(html_body, subtype="html")
+    last_exc: Exception | None = None
+    for profile in profiles:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = str(profile["from_email"])
+        msg["To"] = to
+        msg.set_content(text_body)
+        if html_body:
+            msg.add_alternative(html_body, subtype="html")
+        try:
+            _send_via_profile(profile, msg)
+            logger.info(
+                "Email sent to %s (%s) via %s/%s",
+                to,
+                subject,
+                profile.get("name"),
+                profile.get("host"),
+            )
+            return True
+        except Exception as exc:
+            last_exc = exc
+            logger.exception(
+                "SMTP %s (%s) failed for %s — trying next if any",
+                profile.get("name"),
+                profile.get("host"),
+                to,
+            )
 
-    host = smtp_host()
-    port = smtp_port()
-    user = smtp_user()
-    password = smtp_password()
-    try:
-        if smtp_use_tls():
-            context = ssl.create_default_context()
-            with smtplib.SMTP(host, port, timeout=30) as server:
-                server.starttls(context=context)
-                if user:
-                    server.login(user, password)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP_SSL(host, port, timeout=30) as server:
-                if user:
-                    server.login(user, password)
-                server.send_message(msg)
-    except Exception:
-        logger.exception("Failed to send email to %s", to)
-        raise
-    logger.info("Email sent to %s (%s)", to, subject)
-    return True
+    if last_exc:
+        raise last_exc
+    return False
 
 
 def send_verify_email(to: str, token: str) -> bool:

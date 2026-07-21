@@ -211,6 +211,70 @@ def smtp_use_tls() -> bool:
     return os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
 
 
+def _smtp_profile(
+    *,
+    name: str,
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    from_email: str,
+    use_tls: bool,
+) -> dict[str, object] | None:
+    from_addr = from_email or user
+    if not host or not from_addr:
+        return None
+    return {
+        "name": name,
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": password,
+        "from_email": from_addr,
+        "use_tls": use_tls,
+    }
+
+
+def smtp_profiles() -> list[dict[str, object]]:
+    """
+    Primary SMTP_* plus optional secondary SMTP2_* (e.g. Gmail + Naver).
+    First configured profile is preferred; send falls back to the next on failure.
+    """
+    profiles: list[dict[str, object]] = []
+    primary = _smtp_profile(
+        name="primary",
+        host=smtp_host(),
+        port=smtp_port(),
+        user=smtp_user(),
+        password=smtp_password(),
+        from_email=os.getenv("SMTP_FROM", "").strip(),
+        use_tls=smtp_use_tls(),
+    )
+    if primary:
+        profiles.append(primary)
+
+    try:
+        port2 = max(1, int(os.getenv("SMTP2_PORT", "587").strip()))
+    except ValueError:
+        port2 = 587
+    secondary = _smtp_profile(
+        name="secondary",
+        host=os.getenv("SMTP2_HOST", "").strip(),
+        port=port2,
+        user=os.getenv("SMTP2_USER", "").strip(),
+        password=os.getenv("SMTP2_PASSWORD", "").strip().strip('"').strip("'"),
+        from_email=os.getenv("SMTP2_FROM", "").strip(),
+        use_tls=os.getenv("SMTP2_USE_TLS", "true").lower() in ("1", "true", "yes"),
+    )
+    if secondary:
+        profiles.append(secondary)
+    return profiles
+
+
+def smtp_configured() -> bool:
+    return bool(smtp_profiles())
+
+
 def email_require_verification() -> bool:
     """
     Require verified email before login.
@@ -221,4 +285,4 @@ def email_require_verification() -> bool:
         return True
     if raw in ("0", "false", "no"):
         return False
-    return bool(smtp_host() and smtp_from_email())
+    return smtp_configured()
