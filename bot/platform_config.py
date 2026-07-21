@@ -110,11 +110,37 @@ def app_origin() -> str:
 
 
 def cors_allow_origins() -> list[str]:
-    """Parse APP_ORIGIN — comma-separated list, or ['*'] for local/dev."""
+    """Parse APP_ORIGIN — comma-separated list, or ['*'] for local/dev.
+
+    Also allows common www / admin subdomain variants so Cloudflare host
+    aliases do not break browser login (CORS).
+    """
     raw = app_origin()
     if raw == "*":
         return ["*"]
-    origins = [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+    origins: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(","):
+        origin = part.strip().rstrip("/")
+        if not origin or origin in seen:
+            continue
+        seen.add(origin)
+        origins.append(origin)
+        # https://orbinex.net → www + admin
+        if origin.startswith("https://") and "://" in origin:
+            host = origin.split("://", 1)[1]
+            if host.startswith("www."):
+                apex = f"https://{host[4:]}"
+                if apex not in seen:
+                    seen.add(apex)
+                    origins.append(apex)
+            else:
+                www = f"https://www.{host}"
+                admin = f"https://admin.{host}"
+                for extra in (www, admin):
+                    if extra not in seen:
+                        seen.add(extra)
+                        origins.append(extra)
     return origins or ["*"]
 
 

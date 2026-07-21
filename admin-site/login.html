@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex,nofollow" />
+  <meta http-equiv="Cache-Control" content="no-store" />
   <title>Orbinex Console — Login</title>
-  <link rel="stylesheet" href="./css/console.css" />
+  <link rel="stylesheet" href="./css/console.css?v=20260722c" />
 </head>
 <body>
   <div class="login-page">
@@ -33,8 +34,8 @@
       </div>
     </div>
   </div>
-  <script src="./js/config.js"></script>
-  <script src="./js/api.js"></script>
+  <script src="./js/config.js?v=20260722c"></script>
+  <script src="./js/api.js?v=20260722c"></script>
   <script>
     (function () {
       const cfg = window.AdminConfig;
@@ -61,13 +62,23 @@
           const password = document.getElementById('password').value;
           const data = await AdminApi.login(email, password);
           const token = data?.access_token || data?.token;
-          if (!token) throw new Error('토큰이 없습니다');
+          if (!token) throw new Error('토큰이 없습니다. 페이지를 강력 새로고침(Ctrl+F5) 후 다시 시도하세요.');
+          if (data.user && data.user.isAdmin === false) {
+            throw new Error('관리자 권한이 없습니다. VPS .env의 ADMIN_EMAILS에 이 이메일을 넣고 crypto-web을 재시작하세요.');
+          }
           localStorage.setItem(cfg.tokenKey, token);
           if (data.user) localStorage.setItem(cfg.userKey, JSON.stringify(data.user));
-          await AdminApi.adminMe();
+          const me = await AdminApi.adminMe();
+          if (me && me.adminEmailsConfigured === 0) {
+            throw new Error('ADMIN_EMAILS가 비어 있습니다. .env에 이메일을 설정한 뒤 재시작하세요.');
+          }
           location.href = './index.html';
         } catch (err) {
-          errEl.textContent = err.message || '로그인 실패';
+          let msg = err.message || '로그인 실패';
+          if (err.status === 0 || /Failed to fetch|NetworkError/i.test(msg)) {
+            msg = 'API에 연결하지 못했습니다. https://orbinex.net (www 아님) 으로 접속해 보세요.';
+          }
+          errEl.textContent = msg;
           errEl.classList.add('show');
           localStorage.removeItem(cfg.tokenKey);
           localStorage.removeItem(cfg.userKey);

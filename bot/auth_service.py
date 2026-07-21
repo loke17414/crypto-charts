@@ -241,6 +241,11 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
 
 
 def assert_email_verified_for_login(user: User) -> None:
+    # Admins must be able to reach the console even before mailbox verify.
+    from bot.platform_config import is_admin_email
+
+    if is_admin_email(user.email):
+        return
     if not email_require_verification():
         return
     if not smtp_configured():

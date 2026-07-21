@@ -114,8 +114,12 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path.endswith((".js", ".html", ".css")):
-            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        # Admin console + HTML/JS must not stick in Cloudflare browser cache
+        # (stale login.js previously broke console auth after deploy).
+        if path.startswith("/admin-site/") or path.endswith((".html", ".js", ".css")):
+            self.send_header("Cache-Control", "private, no-cache, no-store, must-revalidate")
+            self.send_header("CDN-Cache-Control", "no-store")
+            self.send_header("Cloudflare-CDN-Cache-Control", "no-store")
         super().end_headers()
 
 

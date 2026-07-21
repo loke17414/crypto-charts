@@ -14,13 +14,22 @@ const AdminApi = (() => {
     };
     const t = token();
     if (t) headers.Authorization = `Bearer ${t}`;
-    const res = await fetch(`${base()}${path}`, { ...options, headers });
+    let res;
+    try {
+      res = await fetch(`${base()}${path}`, { ...options, headers, cache: 'no-store' });
+    } catch (networkErr) {
+      const err = new Error(networkErr?.message || 'Failed to fetch');
+      err.status = 0;
+      throw err;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const detail = data?.detail;
       const msg = typeof detail === 'string'
         ? detail
-        : (data?.message || `요청 실패 (${res.status})`);
+        : (Array.isArray(detail) ? (detail[0]?.msg || JSON.stringify(detail)) : null)
+          || data?.message
+          || `요청 실패 (${res.status})`;
       const err = new Error(msg);
       err.status = res.status;
       throw err;
