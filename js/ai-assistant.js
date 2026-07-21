@@ -54,6 +54,7 @@ const AIAssistant = (() => {
   async function handleInput(text, { voice = false } = {}) {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
+    if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('AI 어시스턴트')) return;
 
     addMessage('user', trimmed);
     setThinking(true);

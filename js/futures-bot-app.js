@@ -2929,6 +2929,7 @@ const FuturesBotApp = (() => {
   }
 
   async function connectApi() {
+    if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('API 연결')) return;
     const apiKey = $('#apiKey').value.trim();
     const apiSecret = $('#apiSecret').value.trim();
 
@@ -3789,52 +3790,64 @@ const FuturesBotApp = (() => {
       await AppAuth.refreshFromHealth(bootHealth);
       updateApiServerStatus(Boolean(bootHealth?.ok), Boolean(bootHealth?.connected));
       await loadPlatformOutboundIp();
-      if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
-        addLog('로그인이 필요합니다 — 로그인 페이지로 이동합니다.', 'warn');
-        AppAuth.redirectToLogin?.('trading.html');
-        return;
-      } else if (AppAuth.isRequired()) {
+      if (typeof GuestGate !== 'undefined') {
+        GuestGate.bindTradingLocks?.();
+        GuestGate.syncTradingGuestUi?.();
+      }
+      const guestMode = AppAuth.isRequired() && !AppAuth.isLoggedIn();
+      if (guestMode) {
+        // Guest: chart viewing allowed; bot/API/GPT locked via GuestGate + UI.
+        addLog('비로그인 — 차트만 이용 가능합니다. 자동매매·봇·GPT는 로그인 후 사용하세요.', 'warn');
         syncExchangeEnv(false);
-      }
-
-      readFormSettings();
-      $('#addStrategySlotBtn')?.addEventListener('click', () => {
-        const maxSlots = maxAllowedStrategySlots();
-        if (!planFeatures.pro && state.strategySlots.length >= maxSlots) {
-          promptProUpgrade('멀티 전략 슬롯(진입 조건 추가)');
-          return;
+        setModeBadge();
+        updateChartIndicatorButtons();
+        if ((Chart.getCandles() || []).length) {
+          onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
         }
-        const slot = addStrategySlot();
-        if (slot) {
-          addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
-          onStrategySlotsChanged({ recompute: false });
+        if (Chart.available()) syncChartIndicators();
+        addLog('Orbinex 차트 연동됨 (게스트)', 'info');
+      } else {
+        if (AppAuth.isRequired()) syncExchangeEnv(false);
+
+        readFormSettings();
+        $('#addStrategySlotBtn')?.addEventListener('click', () => {
+          const maxSlots = maxAllowedStrategySlots();
+          if (!planFeatures.pro && state.strategySlots.length >= maxSlots) {
+            promptProUpgrade('멀티 전략 슬롯(진입 조건 추가)');
+            return;
+          }
+          const slot = addStrategySlot();
+          if (slot) {
+            addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
+            onStrategySlotsChanged({ recompute: false });
+          }
+        });
+        updateChartIndicatorButtons();
+        updateMacdLineFilterUi();
+        updateRsiEntryFilterUi();
+        updateSwingLevelsUi();
+        sessionStartEquity = await getEquity();
+
+        await restoreSessionFromServer();
+        await restoreStrategyPersistence();
+        await refreshPlanFeatures();
+        setModeBadge();
+
+        if ((Chart.getCandles() || []).length) {
+          onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
         }
-      });
-      updateChartIndicatorButtons();
-      updateMacdLineFilterUi();
-      updateRsiEntryFilterUi();
-      updateSwingLevelsUi();
-      sessionStartEquity = await getEquity();
 
-      await restoreSessionFromServer();
-      await restoreStrategyPersistence();
-      await refreshPlanFeatures();
-      setModeBadge();
-
-      if ((Chart.getCandles() || []).length) {
-        onChartCandlesUpdated({ detail: { candles: Chart.getCandles() } });
+        addLog('Orbinex 차트 연동됨', 'info');
+        if (Chart.available()) {
+          syncChartIndicators();
+          Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
+        }
+        updateConfirmSlTpUi();
+        autoConfirmSlTpFromStrategy();
+        updateSlTpStrategyHint();
+        syncPreviewFromLastSignal();
+        if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 실거래/테스트넷 키 연결 가능', 'info');
       }
-
-      addLog('Orbinex 차트 연동됨', 'info');
-      if (Chart.available()) {
-        syncChartIndicators();
-        Chart.setSlTpDragHandler(ModuleBridge.guard('전략봇 드래그 핸들러', applySlTpDrag));
-      }
-      updateConfirmSlTpUi();
-      autoConfirmSlTpFromStrategy();
-      updateSlTpStrategyHint();
-      syncPreviewFromLastSignal();
-      if (await FuturesApiClient.checkServer()) addLog('API 서버 감지 — 실거래/테스트넷 키 연결 가능', 'info');
     } catch (err) {
       console.error('FuturesBotApp.init failed', err);
       updateApiServerStatus(await FuturesApiClient.checkServer().catch(() => false), false);
@@ -3847,7 +3860,10 @@ const FuturesBotApp = (() => {
     $('#hideUnusedIndicatorsBtn')?.addEventListener('click', hideUnusedChartIndicators);
     $('#exportStrategyBtn')?.addEventListener('click', exportStrategyForServer);
 
-    $('#connectApiBtn')?.addEventListener('click', connectApi);
+    $('#connectApiBtn')?.addEventListener('click', () => {
+      if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('API 연결')) return;
+      connectApi();
+    });
     $('#disconnectApiBtn')?.addEventListener('click', disconnectApi);
     $('#copyPlatformIpBtn')?.addEventListener('click', async () => {
       const ip = $('#platformOutboundIp')?.textContent?.trim();
@@ -3859,10 +3875,19 @@ const FuturesBotApp = (() => {
         addLog(`서버 IP: ${ip}`, 'info');
       }
     });
-    $('#startBotBtn').addEventListener('click', startBot);
+    $('#startBotBtn').addEventListener('click', () => {
+      if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('봇 시작')) return;
+      startBot();
+    });
     $('#stopBotBtn').addEventListener('click', stopBot);
-    $('#closeBtn').addEventListener('click', manualClose);
-    $('#resetBtn')?.addEventListener('click', resetWallet);
+    $('#closeBtn').addEventListener('click', () => {
+      if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('수동 청산')) return;
+      manualClose();
+    });
+    $('#resetBtn')?.addEventListener('click', () => {
+      if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('모의 초기화')) return;
+      resetWallet();
+    });
 
     const macdLineFilterEl = $('#useMacdLineFilter');
     if (macdLineFilterEl) {

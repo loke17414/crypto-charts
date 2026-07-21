@@ -87,13 +87,17 @@ const AppAuth = (() => {
     if (statusEl) {
       if (!authRequired) statusEl.textContent = '로그인 비활성 (AUTH_REQUIRED=false)';
       else if (loggedIn) statusEl.textContent = '로그인됨';
-      else statusEl.textContent = '로그인 필요';
+      else statusEl.textContent = '차트만 이용 중 — 자동매매는 로그인 필요';
     }
     const loginLink = document.getElementById('authLoginPageLink');
     if (loginLink) loginLink.href = loginPageUrl('trading.html');
     const adminLink = document.getElementById('adminPanelLink');
     if (adminLink) {
       adminLink.classList.toggle('hidden', !(loggedIn && getUser()?.isAdmin));
+    }
+    if (typeof GuestGate !== 'undefined') {
+      GuestGate.syncTradingGuestUi?.();
+      GuestGate.syncIndexGuestUi?.();
     }
   }
 

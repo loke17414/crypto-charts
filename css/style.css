@@ -1126,6 +1126,46 @@ body.pos-sl-tp-dragging .chart-main {
 }
 .header__plan-badge.hidden { display: none; }
 
+.guest-chart-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  padding: 0.55rem 1rem;
+  background: rgba(251, 191, 36, 0.12);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+.guest-chart-banner.hidden { display: none; }
+.guest-chart-banner__link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.guest-chart-banner__link:hover { text-decoration: underline; }
+
+.trading-page--guest .bot-control-panel .control-section--primary,
+.trading-page--guest .control-accordions > details:not(#authSection),
+.trading-page--guest .chart-ai-panel,
+.trading-page--guest #backtestPopup,
+.trading-page--guest #backtestToggleBtn {
+  opacity: 0.45;
+  filter: grayscale(0.2);
+}
+.trading-page--guest #authSection {
+  outline: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius);
+}
+
+.ai-toggle-btn--locked {
+  opacity: 0.55;
+}
+.chart-page--guest #aiPanel {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .header__nav {
   display: flex;
   gap: 0.25rem;

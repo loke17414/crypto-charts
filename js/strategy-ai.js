@@ -510,6 +510,7 @@ const StrategyAI = (() => {
   async function handlePrompt(text) {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
+    if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('전략 GPT')) return;
 
     const priorHistory = conversationHistory.slice(-20);
     const wantsStrategyApply = looksLikeStrategyApply(trimmed);

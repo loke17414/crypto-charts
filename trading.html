@@ -9,11 +9,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=20260722f">
+  <link rel="stylesheet" href="css/style.css?v=20260722h">
   <link rel="stylesheet" href="css/trading-simple.css?v=20260722a">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
+    <div id="guestChartBanner" class="guest-chart-banner hidden" role="status">
+      <span>비로그인 — <strong>차트만</strong> 볼 수 있습니다. 자동매매·봇·GPT·API는 로그인이 필요합니다.</span>
+      <a class="guest-chart-banner__link" href="login.html?next=trading.html">로그인</a>
+      <a class="guest-chart-banner__link" href="register.html?next=trading.html">회원가입</a>
+    </div>
     <header class="header">
       <div class="header__brand">
         <a href="index.html" class="header__brand-link">
@@ -437,15 +442,16 @@
   <script src="js/futures-strategy.js?v=20260720a"></script>
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
-  <script src="js/futures-api-client.js?v=20260722a"></script>
-  <script src="js/auth.js?v=20260722b"></script>
+  <script src="js/futures-api-client.js?v=20260722g"></script>
+  <script src="js/auth.js?v=20260722h"></script>
+  <script src="js/guest-gate.js?v=20260722h"></script>
   <script src="js/risk-sizing.js?v=20260720a"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
   <script src="js/strategy-presets.js?v=20260720c"></script>
-  <script src="js/futures-bot-app.js?v=20260722f"></script>
-  <script src="js/strategy-ai.js?v=20260721h"></script>
+  <script src="js/futures-bot-app.js?v=20260722h"></script>
+  <script src="js/strategy-ai.js?v=20260722h"></script>
   <script src="js/panel-guides.js?v=20260722a"></script>
 </body>
 </html>

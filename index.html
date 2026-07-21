@@ -25,7 +25,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260722h">
 
   <script type="application/ld+json">
   {
@@ -41,7 +41,12 @@
   }
   </script>
 </head>
-<body>
+<body class="chart-page">
+  <div id="guestChartBanner" class="guest-chart-banner hidden" role="status">
+    <span>비로그인 — <strong>차트만</strong> 볼 수 있습니다. AI·모의매매 등은 로그인이 필요합니다.</span>
+    <a class="guest-chart-banner__link" href="login.html?next=index.html">로그인</a>
+    <a class="guest-chart-banner__link" href="register.html?next=index.html">회원가입</a>
+  </div>
   <div class="app">
     <header class="header">
       <div class="header__brand">
@@ -240,7 +245,15 @@
   <script src="js/ai-trading.js"></script>
   <script src="js/ai-commands.js"></script>
   <script src="js/ai-assistant.js"></script>
+  <script src="js/futures-api-client.js?v=20260722g"></script>
+  <script src="js/auth.js?v=20260722h"></script>
+  <script src="js/guest-gate.js?v=20260722h"></script>
   <script src="js/app.js?v=20260718d"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      GuestGate?.bootIndex?.();
+    });
+  </script>
 </body>
 </html>
