@@ -107,6 +107,12 @@ const FuturesBotApp = (() => {
   };
   let lastBillingSnap = null;
 
+  function syncHeaderPlanBadge() {
+    const el = document.getElementById('headerPlanBadge');
+    if (!el) return;
+    el.classList.toggle('hidden', !planFeatures.pro);
+  }
+
   async function refreshPlanFeatures() {
     try {
       if (typeof FuturesApiClient === 'undefined' || !FuturesApiClient.billingMe) return lastBillingSnap;
@@ -118,6 +124,7 @@ const FuturesBotApp = (() => {
           recommendedStrategies: false,
         };
         lastBillingSnap = null;
+        syncHeaderPlanBadge();
         renderFreeQuotaPanel();
         updateStrategySlotsLimitHint();
         if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
@@ -131,11 +138,13 @@ const FuturesBotApp = (() => {
         webResearch: !!snap?.features?.webResearch,
         recommendedStrategies: !!snap?.features?.recommendedStrategies,
       };
+      syncHeaderPlanBadge();
       renderFreeQuotaPanel();
       updateStrategySlotsLimitHint();
       if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
       return snap;
     } catch {
+      syncHeaderPlanBadge();
       renderFreeQuotaPanel();
       updateStrategySlotsLimitHint();
       return lastBillingSnap;

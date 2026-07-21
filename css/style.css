@@ -1110,6 +1110,22 @@ body.pos-sl-tp-dragging .chart-main {
 }
 .header__brand-link:hover { text-decoration: none; }
 
+.header__plan-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: #ddd6fe;
+  background: rgba(167, 139, 250, 0.18);
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  text-transform: uppercase;
+}
+.header__plan-badge.hidden { display: none; }
+
 .header__nav {
   display: flex;
   gap: 0.25rem;
