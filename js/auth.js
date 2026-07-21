@@ -126,7 +126,7 @@ const AppAuth = (() => {
       AppBilling.refresh?.();
     }
     const page = currentPageName();
-    if (page === 'billing.html' || page === 'login.html') {
+    if (page === 'billing.html' || page === 'login.html' || page === 'register.html') {
       window.location.href = 'login.html';
     }
   }
@@ -199,9 +199,14 @@ const AppAuth = (() => {
     document.getElementById('authRegisterBtn')?.addEventListener('click', async () => {
       const email = document.getElementById('authEmail')?.value?.trim();
       const password = document.getElementById('authPassword')?.value || '';
+      const passwordConfirm = document.getElementById('authPasswordConfirm')?.value;
       const acceptTerms = Boolean(document.getElementById('authAcceptTerms')?.checked);
       if (!email || password.length < 8) {
         alert('이메일과 비밀번호(8자 이상)를 입력하세요.');
+        return;
+      }
+      if (passwordConfirm !== undefined && password !== passwordConfirm) {
+        alert('비밀번호가 일치하지 않습니다.');
         return;
       }
       if (!acceptTerms) {
@@ -212,12 +217,15 @@ const AppAuth = (() => {
         clearTradingState();
         const data = await register(email, password, acceptTerms);
         if (data.needsVerification) {
-          alert(data.message || '가입되었습니다. 이메일 인증 링크를 확인해 주세요.');
+          alert(data.message || data.emailError || '가입되었습니다. 이메일 인증 링크를 확인해 주세요.');
           const statusEl = document.getElementById('authStatus');
-          if (statusEl) statusEl.textContent = '이메일 인증 대기 중';
+          if (statusEl) statusEl.textContent = '이메일 인증 대기 중 — 메일을 확인하세요';
+          const loginQs = new URLSearchParams();
+          loginQs.set('email', email);
+          window.location.href = `login.html?${loginQs.toString()}`;
           return;
         }
-        if (currentPageName() === 'login.html') {
+        if (currentPageName() === 'login.html' || currentPageName() === 'register.html') {
           redirectAfterAuth();
           return;
         }
@@ -278,10 +286,28 @@ const AppAuth = (() => {
   async function bootLoginPage() {
     await init();
     await loadHealthAndSync();
+    const params = new URLSearchParams(window.location.search);
+    const email = params.get('email');
+    if (email && document.getElementById('authEmail')) {
+      document.getElementById('authEmail').value = email;
+    }
+    const reg = document.getElementById('registerPageLink');
+    if (reg) {
+      const next = params.get('next');
+      reg.href = next ? `register.html?next=${encodeURIComponent(next)}` : 'register.html';
+    }
     if (isLoggedIn() && authRequired) {
-      // Stay on page so user can logout, or auto-jump if next is set
+      if (params.get('next')) redirectAfterAuth();
+    }
+  }
+
+  async function bootRegisterPage() {
+    await init();
+    await loadHealthAndSync();
+    if (isLoggedIn() && authRequired) {
       const params = new URLSearchParams(window.location.search);
       if (params.get('next')) redirectAfterAuth();
+      else window.location.href = 'trading.html';
     }
   }
 
@@ -312,6 +338,7 @@ const AppAuth = (() => {
     redirectToLogin,
     loginPageUrl,
     bootLoginPage,
+    bootRegisterPage,
     bootBillingPage,
   };
 })();
@@ -319,9 +346,9 @@ const AppAuth = (() => {
 window.AppAuth = AppAuth;
 
 document.addEventListener('DOMContentLoaded', () => {
-  // login/billing pages call boot* explicitly; trading still uses init via FuturesBotApp
+  // login/register/billing pages call boot* explicitly; trading still uses init via FuturesBotApp
   const page = (window.location.pathname || '').split('/').pop() || '';
-  if (page !== 'login.html' && page !== 'billing.html') {
+  if (page !== 'login.html' && page !== 'register.html' && page !== 'billing.html') {
     AppAuth.init();
   }
 });

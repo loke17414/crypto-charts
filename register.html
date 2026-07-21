@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>로그인 — Orbinex</title>
+  <title>회원가입 — Orbinex</title>
   <meta name="robots" content="noindex">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,16 +21,15 @@
       Orbinex
     </a>
     <nav class="account-page__nav">
-      <a href="register.html">회원가입</a>
+      <a href="login.html">로그인</a>
       <a href="trading.html">트레이딩</a>
-      <a href="billing.html">요금제</a>
     </nav>
   </header>
 
   <main class="account-page__main">
     <div class="account-card">
-      <h1>로그인</h1>
-      <p class="account-card__lead">Orbinex 계정으로 로그인하세요.</p>
+      <h1>회원가입</h1>
+      <p class="account-card__lead">이메일로 계정을 만들고 트레이딩을 시작하세요.</p>
       <div id="authStatus" class="account-card__status">확인 중…</div>
 
       <div id="authLoggedOut">
@@ -39,12 +38,23 @@
           <input type="email" id="authEmail" autocomplete="username">
         </div>
         <div class="form-group">
-          <label for="authPassword">비밀번호</label>
-          <input type="password" id="authPassword" autocomplete="current-password">
+          <label for="authPassword">비밀번호 (8자 이상)</label>
+          <input type="password" id="authPassword" autocomplete="new-password" minlength="8">
         </div>
+        <div class="form-group">
+          <label for="authPasswordConfirm">비밀번호 확인</label>
+          <input type="password" id="authPasswordConfirm" autocomplete="new-password" minlength="8">
+        </div>
+        <label class="account-card__consent">
+          <input type="checkbox" id="authAcceptTerms">
+          <span>
+            <a href="terms.html" target="_blank" rel="noopener">이용약관</a>,
+            <a href="privacy.html" target="_blank" rel="noopener">개인정보</a>,
+            <a href="risk-disclosure.html" target="_blank" rel="noopener">위험고지</a>에 동의합니다 (필수)
+          </span>
+        </label>
         <div class="account-card__actions">
-          <button type="button" id="authLoginBtn" class="btn btn--primary">로그인</button>
-          <button type="button" id="authForgotBtn" class="btn btn--ghost">비밀번호 찾기</button>
+          <button type="button" id="authRegisterBtn" class="btn btn--primary">가입하기</button>
           <button type="button" id="authResendVerifyBtn" class="btn btn--ghost">인증 메일 재전송</button>
         </div>
       </div>
@@ -58,7 +68,7 @@
       </div>
 
       <p class="account-card__links">
-        계정이 없나요? <a id="registerPageLink" href="register.html">회원가입</a>
+        이미 계정이 있나요? <a href="login.html">로그인</a>
       </p>
     </div>
   </main>
@@ -73,7 +83,7 @@
   <script src="js/auth.js?v=20260721g"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      AppAuth.bootLoginPage();
+      AppAuth.bootRegisterPage();
     });
   </script>
 </body>
