@@ -259,7 +259,7 @@ const AppAuth = (() => {
       }
       try {
         const data = await FuturesApiClient.authResendVerification(email);
-        alert(data.message || '인증 메일을 보냈습니다.');
+        alert(data.message || '인증 메일을 보냈습니다. 받은편지함·스팸함·프로모션함을 확인해 주세요.');
       } catch (err) {
         alert(err.message || '요청 실패');
       }
