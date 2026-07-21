@@ -9,7 +9,13 @@ from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from typing import Any
 
-from bot.platform_config import app_origin, smtp_configured, smtp_profiles
+from bot.platform_config import (
+    app_origin,
+    resend_api_key,
+    resend_from_email,
+    smtp_configured,
+    smtp_profiles,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +40,16 @@ def safe_smtp_error(exc: BaseException) -> str:
     """Short operator-facing SMTP error (never includes credentials)."""
     text = str(exc) or type(exc).__name__
     text = " ".join(text.split())
+    lower = text.lower()
+    if "535" in text or "not accepted" in lower or "badcredentials" in lower:
+        return (
+            "SMTPAuthenticationError: 앱 비밀번호가 거부됨(535). "
+            "네이버 SMTP 사용함 + 새 앱 비밀번호, 또는 Gmail 앱 비밀번호를 다시 발급하세요."
+        )
     if len(text) > 180:
         text = text[:177] + "..."
-    # Redact anything that looks like a password remnant
-    lower = text.lower()
     for bad in ("password", "passwd", "secret"):
-        if bad in lower:
+        if bad in lower and "535" not in text:
             return type(exc).__name__
     return f"{type(exc).__name__}: {text}"
 
@@ -183,10 +193,45 @@ def _send_via_profile(profile: dict[str, Any], msg: EmailMessage) -> None:
     raise last_exc
 
 
+def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: str | None) -> bool:
+    key = resend_api_key()
+    if not key:
+        return False
+    import requests
+
+    payload: dict[str, Any] = {
+        "from": resend_from_email(),
+        "to": [to],
+        "subject": subject,
+        "text": text_body,
+    }
+    if html_body:
+        payload["html"] = html_body
+    res = requests.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=30,
+    )
+    if res.status_code >= 400:
+        raise RuntimeError(f"Resend HTTP {res.status_code}: {res.text[:200]}")
+    logger.info("Email sent to %s (%s) via Resend", to, subject)
+    return True
+
+
 def send_email(*, to: str, subject: str, text_body: str, html_body: str | None = None) -> bool:
+    # Prefer Resend API when configured — more reliable than consumer SMTP from a VPS.
+    if resend_api_key():
+        try:
+            return _send_via_resend(to=to, subject=subject, text_body=text_body, html_body=html_body)
+        except Exception:
+            logger.exception("Resend send failed for %s — falling back to SMTP if any", to)
+
     profiles = smtp_profiles()
     if not profiles:
-        logger.warning("SMTP not configured — email to %s skipped (%s)", to, subject)
+        if resend_api_key():
+            raise RuntimeError("Resend 발송 실패 (SMTP 폴백 없음)")
+        logger.warning("Mail not configured — email to %s skipped (%s)", to, subject)
         return False
 
     last_exc: Exception | None = None
@@ -223,12 +268,29 @@ def send_email(*, to: str, subject: str, text_body: str, html_body: str | None =
 
 
 def diagnose_smtp(*, to: str | None = None) -> dict[str, Any]:
-    """Test login (and optional send) for each configured profile. No secrets returned."""
+    """Test Resend + SMTP login. No secrets returned."""
+    out: dict[str, Any] = {
+        "ok": False,
+        "configured": smtp_configured(),
+        "resend": {"configured": bool(resend_api_key()), "ok": False, "error": None},
+        "profiles": [],
+        "message": "",
+    }
+    if resend_api_key():
+        try:
+            target = (to or "").strip() or "delivered@resend.dev"
+            _send_via_resend(
+                to=target,
+                subject="[Orbinex] Resend 진단",
+                text_body="Resend 진단 메일입니다.",
+                html_body=None,
+            )
+            out["resend"]["ok"] = True
+        except Exception as exc:
+            out["resend"]["error"] = safe_smtp_error(exc)
+
     profiles = smtp_profiles()
     results: list[dict[str, Any]] = []
-    if not profiles:
-        return {"ok": False, "configured": False, "profiles": [], "message": "SMTP 미설정"}
-
     target = (to or "").strip()
     for profile in profiles:
         host = str(profile["host"])
@@ -245,6 +307,7 @@ def diagnose_smtp(*, to: str | None = None) -> dict[str, Any]:
             "ok": False,
             "error": None,
             "mode": None,
+            "hint": None,
         }
         if not password:
             entry["error"] = "password empty"
@@ -288,15 +351,22 @@ def diagnose_smtp(*, to: str | None = None) -> dict[str, Any]:
                 last_err = safe_smtp_error(exc)
         if not entry["ok"]:
             entry["error"] = last_err or "unknown"
+            if last_err and "535" in last_err:
+                entry["hint"] = (
+                    "앱 비밀번호가 틀렸거나 폐기됨. SMTP 사용함이 꺼져 있을 수도 있음. "
+                    "새 앱 비밀번호 발급 후 .env 갱신."
+                )
         results.append(entry)
 
-    ok = any(r.get("ok") for r in results)
-    return {
-        "ok": ok,
-        "configured": True,
-        "profiles": results,
-        "message": "SMTP 로그인 성공" if ok else "모든 SMTP 프로필 로그인 실패",
-    }
+    out["profiles"] = results
+    out["ok"] = bool(out["resend"]["ok"] or any(r.get("ok") for r in results))
+    if out["ok"]:
+        out["message"] = "메일 발송 경로 OK"
+    elif not out["configured"]:
+        out["message"] = "메일 미설정"
+    else:
+        out["message"] = "모든 메일 경로 실패 — 앱 비밀번호/Resend 확인"
+    return out
 
 
 def send_verify_email(to: str, token: str) -> bool:

@@ -317,25 +317,22 @@ def smtp_profiles() -> list[dict[str, object]]:
 
 
 def smtp_configured() -> bool:
-    return bool(smtp_profiles())
+    return bool(smtp_profiles()) or bool(resend_api_key())
 
 
-def smtp_fail_open() -> bool:
-    """
-    If SMTP login/send fails during signup, still create a verified account.
-    Default true so a broken mail relay does not block all registrations.
-    Set SMTP_FAIL_OPEN=false once SMTP diagnose reports ok.
-    """
-    raw = os.getenv("SMTP_FAIL_OPEN", "true").strip().lower()
-    if raw in ("0", "false", "no"):
-        return False
-    return True
+def resend_api_key() -> str:
+    return os.getenv("RESEND_API_KEY", "").strip().strip('"').strip("'")
+
+
+def resend_from_email() -> str:
+    # Needs a verified domain sender in production, e.g. Orbinex <noreply@orbinex.net>
+    return os.getenv("RESEND_FROM", "").strip() or "Orbinex <onboarding@resend.dev>"
 
 
 def email_require_verification() -> bool:
     """
     Require verified email before login.
-    Default: true when SMTP is configured, else false (local/dev).
+    Default: true when any mail provider is configured, else false (local/dev).
     """
     raw = os.getenv("EMAIL_REQUIRE_VERIFICATION", "").strip().lower()
     if raw in ("1", "true", "yes"):

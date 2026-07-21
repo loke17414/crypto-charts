@@ -24,7 +24,7 @@ from bot.platform_config import (
     email_require_verification,
     jwt_algorithm,
     jwt_secret,
-    smtp_fail_open,
+    resend_api_key,
     smtp_profiles,
 )
 
@@ -167,7 +167,7 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
     profile_hint = ", ".join(
         f"{p.get('name')}:{p.get('host')}/{p.get('user')}/pwLen={len(str(p.get('password') or ''))}"
         for p in profiles
-    ) or "none"
+    ) or ("resend" if resend_api_key() else "none")
 
     user = User(
         email=normalized,
@@ -187,64 +187,37 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
         "smtpProfiles": profile_hint,
     }
     if require_verify:
-        if not any(str(p.get("password") or "") for p in profiles):
-            db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+        if not any(str(p.get("password") or "") for p in profiles) and not resend_api_key():
             db.delete(user)
             db.commit()
             raise ValueError(
-                "SMTP 비밀번호가 비어 있습니다. 서버 .env의 SMTP_PASSWORD / SMTP2_PASSWORD를 확인한 뒤 "
-                "`python -m bot.smtp_diagnose`를 실행하세요."
+                "메일 발송 수단이 없습니다. SMTP_PASSWORD 또는 RESEND_API_KEY를 설정하세요."
             )
         raw = create_email_token(db, user, purpose=PURPOSE_VERIFY, hours=24)
         try:
             meta["emailSent"] = send_verify_email(user.email, raw)
         except Exception as exc:
             logger.exception("verify email send failed for user_id=%s profiles=%s", user.id, profile_hint)
-            if smtp_fail_open():
-                # Do not block signup when Naver/Gmail reject the VPS SMTP login.
-                db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
-                user.email_verified_at = _utcnow()
-                db.commit()
-                db.refresh(user)
-                meta["emailSent"] = False
-                meta["emailVerificationRequired"] = False
-                meta["smtpFailOpen"] = True
-                meta["warning"] = (
-                    "메일 서버 로그인에 실패해 이메일 인증을 건너뛰고 가입을 완료했습니다. "
-                    f"({safe_smtp_error(exc)})"
-                )
-                logger.error(
-                    "SMTP_FAIL_OPEN: registered %s without verification — fix SMTP "
-                    "(python -m bot.smtp_diagnose)",
-                    user.email,
-                )
-                return user, meta
             db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
             db.delete(user)
             db.commit()
             raise ValueError(
                 "인증 메일 발송에 실패했습니다. "
                 f"({safe_smtp_error(exc)}) "
-                f"[SMTP: {profile_hint}] "
-                "서버에서 `python -m bot.smtp_diagnose`로 확인하세요. "
-                "또는 .env에 SMTP_FAIL_OPEN=true 로 가입을 허용하세요."
+                f"[mail: {profile_hint}] "
+                "SMTP 앱 비밀번호가 거부되었습니다(535). "
+                "네이버/Gmail에서 앱 비밀번호를 새로 발급하고 .env를 갱신한 뒤 "
+                "`python -m bot.smtp_diagnose`가 ok 인지 확인하세요. "
+                "또는 RESEND_API_KEY로 발송하세요. "
+                "이메일 인증 없이는 가입할 수 없습니다."
             ) from exc
         if not meta["emailSent"]:
-            if smtp_fail_open():
-                db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
-                user.email_verified_at = _utcnow()
-                db.commit()
-                db.refresh(user)
-                meta["emailVerificationRequired"] = False
-                meta["smtpFailOpen"] = True
-                meta["warning"] = "메일 발송에 실패해 이메일 인증을 건너뛰었습니다."
-                return user, meta
             db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
             db.delete(user)
             db.commit()
             raise ValueError(
-                "인증 메일을 보내지 못했습니다. SMTP 설정을 확인하세요. "
-                f"[SMTP: {profile_hint}]"
+                "인증 메일을 보내지 못했습니다. 메일 설정을 확인하세요. "
+                f"[mail: {profile_hint}]"
             )
     return user, meta
 

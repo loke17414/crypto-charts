@@ -149,7 +149,6 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
         }
 
     token, expires_in = create_access_token(user_id=user.id, email=user.email)
-    message = meta.get("warning") or "가입되었습니다."
     return {
         "ok": True,
         "needsVerification": False,
@@ -157,7 +156,6 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
         "token_type": "bearer",
         "expires_in": expires_in,
         "user": _user_payload(user),
-        "message": message,
         **meta,
     }
 
