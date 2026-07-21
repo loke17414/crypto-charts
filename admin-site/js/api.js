@@ -37,31 +37,48 @@ const AdminApi = (() => {
     return data;
   }
 
+  function post(path, body = {}) {
+    return request(path, { method: 'POST', body: JSON.stringify(body) });
+  }
+
   return {
-    login: (email, password) => request('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
+    login: (email, password) => post('/api/auth/login', { email, password }),
     me: () => request('/api/auth/me'),
     adminMe: () => request('/api/admin/me'),
     overview: () => request('/api/admin/overview'),
     settings: () => request('/api/admin/settings'),
-    users: ({ q = '', limit = 200 } = {}) => {
-      const p = new URLSearchParams({ limit: String(limit) });
+    audit: (limit = 80) => request(`/api/admin/audit?limit=${limit}`),
+    users: ({ q = '', plan = 'all', active = 'all', verified = 'all', bot = 'all', limit = 200 } = {}) => {
+      const p = new URLSearchParams({
+        limit: String(limit),
+        plan,
+        active,
+        verified,
+        bot,
+      });
       if (q) p.set('q', q);
       return request(`/api/admin/users?${p}`);
     },
-    verifyEmail: (id) => request(`/api/admin/users/${id}/verify-email`, { method: 'POST', body: '{}' }),
-    setActive: (id, active) => request(`/api/admin/users/${id}/set-active`, {
-      method: 'POST',
-      body: JSON.stringify({ active: !!active }),
+    userDetail: (id) => request(`/api/admin/users/${id}`),
+    verifyEmail: (id) => post(`/api/admin/users/${id}/verify-email`),
+    resendVerify: (id) => post(`/api/admin/users/${id}/resend-verify`),
+    sendPasswordReset: (id) => post(`/api/admin/users/${id}/send-password-reset`),
+    setActive: (id, active) => post(`/api/admin/users/${id}/set-active`, { active: !!active }),
+    setPlan: (id, plan, days) => post(`/api/admin/users/${id}/set-plan`, {
+      plan,
+      ...(days ? { days: Number(days) } : {}),
     }),
-    setPlan: (id, plan) => request(`/api/admin/users/${id}/set-plan`, {
-      method: 'POST',
-      body: JSON.stringify({ plan }),
-    }),
-    resetQuota: (id) => request(`/api/admin/users/${id}/reset-quota`, { method: 'POST', body: '{}' }),
-    stopBot: (id) => request(`/api/admin/users/${id}/stop-bot`, { method: 'POST', body: '{}' }),
+    grantPro: (id, days) => post(`/api/admin/users/${id}/grant-pro`, { days: Number(days) || 30 }),
+    cancelSubscription: (id, immediate = false) => post(`/api/admin/users/${id}/cancel-subscription`, { immediate: !!immediate }),
+    resetQuota: (id) => post(`/api/admin/users/${id}/reset-quota`),
+    setQuota: (id, body) => post(`/api/admin/users/${id}/set-quota`, body),
+    stopBot: (id) => post(`/api/admin/users/${id}/stop-bot`),
+    clearEntryGate: (id) => post(`/api/admin/users/${id}/clear-entry-gate`),
+    pauseEntry: (id, minutes = 15) => post(`/api/admin/users/${id}/pause-entry`, { minutes }),
+    deleteBinanceKeys: (id) => post(`/api/admin/users/${id}/delete-binance-keys`),
+    deleteOpenAiKey: (id) => post(`/api/admin/users/${id}/delete-openai-key`),
+    bots: () => request('/api/admin/bots'),
+    stopAllBots: () => post('/api/admin/bots/stop-all'),
   };
 })();
 

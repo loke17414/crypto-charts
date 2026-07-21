@@ -442,6 +442,32 @@ def stop_all_bots() -> None:
             logger.warning("Failed to stop bot user=%s: %s", key, exc)
 
 
+def list_bot_fleet() -> list[dict[str, Any]]:
+    """Running + persisted shouldRun bots for admin fleet view."""
+    keys: set[int] = set(_persisted_bot_keys())
+    for key in list(_bots.keys()):
+        if is_running(key):
+            keys.add(int(key))
+    rows: list[dict[str, Any]] = []
+    for key in sorted(keys):
+        status = bot_status(key)
+        rows.append(
+            {
+                "userId": None if key == LEGACY_BOT_KEY else key,
+                "botKey": key,
+                "running": bool(status.get("running")),
+                "persisted": bool(status.get("persisted")),
+                "pid": status.get("pid"),
+                "startedAt": status.get("startedAt"),
+                "liveTrading": status.get("liveTrading"),
+                "dryRun": status.get("dryRun"),
+                "testnet": status.get("testnet"),
+                "entryGate": status.get("entryGate"),
+            }
+        )
+    return rows
+
+
 def _migrate_legacy_root_state() -> None:
     """Move pre-2-C root web-bot-state.json into data/bots/0/ once."""
     legacy_root = ROOT / "web-bot-state.json"

@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow" />
   <meta http-equiv="Cache-Control" content="no-store" />
   <title>Orbinex Console</title>
-  <link rel="stylesheet" href="./css/console.css?v=20260722c" />
+  <link rel="stylesheet" href="./css/console.css?v=20260722d" />
 </head>
 <body>
   <div class="shell">
@@ -18,6 +18,8 @@
       <nav class="nav">
         <button type="button" data-panel="overview" class="active">대시보드</button>
         <button type="button" data-panel="users">사용자</button>
+        <button type="button" data-panel="bots">봇 플릿</button>
+        <button type="button" data-panel="audit">감사 로그</button>
         <button type="button" data-panel="settings">설정</button>
       </nav>
       <div class="sidebar-foot">
@@ -32,24 +34,48 @@
         <div class="page-head">
           <div>
             <h1>대시보드</h1>
-            <p>가입·플랜·봇 상태 요약</p>
+            <p>가입·플랜·봇·인프라 상태</p>
           </div>
-          <button type="button" class="btn" id="refreshOverview">새로고침</button>
+          <div class="toolbar" style="margin:0">
+            <button type="button" class="btn btn-danger" id="stopAllBotsOverview">전체 봇 중지</button>
+            <button type="button" class="btn" id="refreshOverview">새로고침</button>
+          </div>
         </div>
         <div class="cards" id="overviewCards"></div>
+        <div class="cards cards-2" id="overviewFlags"></div>
       </section>
 
       <section class="panel" id="panel-users">
         <div class="page-head">
           <div>
             <h1>사용자</h1>
-            <p>이메일 인증, 활성/플랜, 쿼터, 봇 중지</p>
+            <p>검색·필터·상세·플랜·쿼터·키·메일</p>
           </div>
         </div>
         <div class="toolbar">
-          <input id="userQuery" type="search" placeholder="이메일 / 이름 검색" style="flex:1;min-width:180px" />
+          <input id="userQuery" type="search" placeholder="이메일 / ID 검색" style="flex:1;min-width:160px" />
+          <select id="filterPlan">
+            <option value="all">플랜 전체</option>
+            <option value="free">Free</option>
+            <option value="pro">Pro</option>
+          </select>
+          <select id="filterActive">
+            <option value="all">활성 전체</option>
+            <option value="true">활성</option>
+            <option value="false">비활성</option>
+          </select>
+          <select id="filterVerified">
+            <option value="all">인증 전체</option>
+            <option value="true">인증됨</option>
+            <option value="false">미인증</option>
+          </select>
+          <select id="filterBot">
+            <option value="all">봇 전체</option>
+            <option value="running">실행 중</option>
+            <option value="stopped">중지</option>
+          </select>
           <button type="button" class="btn btn-primary" id="searchUsers">검색</button>
-          <button type="button" class="btn" id="reloadUsers">전체</button>
+          <button type="button" class="btn" id="reloadUsers">초기화</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -60,6 +86,7 @@
                 <th>플랜</th>
                 <th>인증</th>
                 <th>활성</th>
+                <th>키</th>
                 <th>봇</th>
                 <th>쿼터</th>
                 <th>작업</th>
@@ -70,11 +97,65 @@
         </div>
       </section>
 
+      <section class="panel" id="panel-bots">
+        <div class="page-head">
+          <div>
+            <h1>봇 플릿</h1>
+            <p>실행·유지(shouldRun)·테스트넷/실거래</p>
+          </div>
+          <div class="toolbar" style="margin:0">
+            <button type="button" class="btn btn-danger" id="stopAllBots">전체 중지</button>
+            <button type="button" class="btn" id="refreshBots">새로고침</button>
+          </div>
+        </div>
+        <div class="cards" id="botDiagCards"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>상태</th>
+                <th>PID</th>
+                <th>모드</th>
+                <th>시작</th>
+                <th>게이트</th>
+                <th>작업</th>
+              </tr>
+            </thead>
+            <tbody id="botsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-audit">
+        <div class="page-head">
+          <div>
+            <h1>감사 로그</h1>
+            <p>서버 재시작 전까지 최근 관리자 작업 (메모리)</p>
+          </div>
+          <button type="button" class="btn" id="refreshAudit">새로고침</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>시각</th>
+                <th>관리자</th>
+                <th>작업</th>
+                <th>대상</th>
+                <th>상세</th>
+              </tr>
+            </thead>
+            <tbody id="auditBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel" id="panel-settings">
         <div class="page-head">
           <div>
             <h1>설정 (읽기 전용)</h1>
-            <p>서버에 적용된 플랫폼 설정</p>
+            <p>서버에 적용된 플랫폼 한도·플래그·봇 진단</p>
           </div>
           <button type="button" class="btn" id="refreshSettings">새로고침</button>
         </div>
@@ -83,10 +164,22 @@
     </main>
   </div>
 
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="userDrawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <h2 id="drawerTitle">사용자 상세</h2>
+        <p id="drawerSub" class="muted"></p>
+      </div>
+      <button type="button" class="btn btn-sm" id="drawerClose">닫기</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
   <div class="toast" id="toast"></div>
 
-  <script src="./js/config.js?v=20260722c"></script>
-  <script src="./js/api.js?v=20260722c"></script>
-  <script src="./js/app.js?v=20260722c"></script>
+  <script src="./js/config.js?v=20260722d"></script>
+  <script src="./js/api.js?v=20260722d"></script>
+  <script src="./js/app.js?v=20260722d"></script>
 </body>
 </html>

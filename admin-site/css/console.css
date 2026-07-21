@@ -330,8 +330,81 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   color: var(--muted);
 }
 
+.cards-2 { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; }
+.muted { color: var(--muted); font-size: 0.85rem; margin: 4px 0 0; }
+.mono { font-family: var(--mono); font-size: 0.78rem; }
+.pre-block {
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--line);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+  z-index: 40;
+}
+.drawer-backdrop.show { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(520px, 100vw);
+  height: 100%;
+  background: #0b1220;
+  border-left: 1px solid var(--line);
+  z-index: 45;
+  transform: translateX(105%);
+  transition: transform .2s ease;
+  display: flex;
+  flex-direction: column;
+}
+.drawer.open { transform: translateX(0); }
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.drawer-head h2 { margin: 0; font-size: 1.15rem; }
+.drawer-body {
+  padding: 16px 18px 28px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.detail-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+}
+.detail-item .k { color: var(--muted); font-size: 0.72rem; margin-bottom: 4px; }
+.detail-item .v { font-size: 0.88rem; word-break: break-all; }
+.drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
 @media (max-width: 1100px) {
   .cards { grid-template-columns: repeat(2, 1fr); }
+  .cards-2 { grid-template-columns: 1fr 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 800px) {
@@ -344,4 +417,5 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   .nav { flex-direction: row; flex-wrap: wrap; }
   .sidebar-foot { margin-top: 8px; }
   .main { padding: 20px 16px 40px; }
+  .detail-grid { grid-template-columns: 1fr; }
 }
