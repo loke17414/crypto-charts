@@ -25,7 +25,7 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-load_dotenv(app_dir() / ".env", override=False)
+load_dotenv(app_dir() / ".env", override=True)
 LISTEN_HOST = os.environ.get("LISTEN_HOST", "127.0.0.1").strip() or "127.0.0.1"
 REMOTE_MODE = LISTEN_HOST not in ("127.0.0.1", "localhost", "::1")
 

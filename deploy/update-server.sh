@@ -99,6 +99,13 @@ else
 fi
 grep -qE '^JWT_SECRET=.+' .env 2>/dev/null || true
 
+# Refresh systemd unit (stops mangling .env via EnvironmentFile)
+if [ -f deploy/crypto-web.service ]; then
+  echo "==> Install crypto-web.service"
+  cp deploy/crypto-web.service /etc/systemd/system/crypto-web.service
+  systemctl daemon-reload
+fi
+
 echo "==> Install systemd unit (paths -> $ROOT)"
 sed "s|/root/crypto-charts|$ROOT|g" deploy/crypto-web.service > /etc/systemd/system/crypto-web.service
 systemctl daemon-reload

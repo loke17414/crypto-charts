@@ -19,8 +19,9 @@ Type=simple
 User=root
 WorkingDirectory=/root/crypto-charts
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-# LISTEN_HOST comes from .env (0.0.0.0 direct access, 127.0.0.1 behind nginx/HTTPS)
-EnvironmentFile=-/root/crypto-charts/.env
+Environment=PYTHONUNBUFFERED=1
+# Do NOT EnvironmentFile= the whole .env — systemd mangles SMTP_FROM (<…>) and
+# some passwords. launch.py / bot.platform_config load .env via python-dotenv.
 ExecStart=/root/crypto-charts/.venv/bin/python launch.py
 Restart=always
 RestartSec=5

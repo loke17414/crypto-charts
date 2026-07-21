@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 
 from bot.config import ROOT
 
-load_dotenv(ROOT / ".env", override=False)
+# .env is source of truth. override=True so systemd EnvironmentFile cannot leave
+# mangled/empty SMTP_* values that block python-dotenv (override=False) from fixing them.
+load_dotenv(ROOT / ".env", override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -200,12 +202,19 @@ def smtp_user() -> str:
 
 
 def smtp_password() -> str:
-    # Gmail app passwords are often pasted with spaces — strip them.
-    return os.getenv("SMTP_PASSWORD", "").strip().strip('"').strip("'").replace(" ", "")
+    # Gmail/Naver app passwords are often pasted with spaces; systemd may leave quotes.
+    return (
+        os.getenv("SMTP_PASSWORD", "")
+        .strip()
+        .strip('"')
+        .strip("'")
+        .replace(" ", "")
+        .replace("\r", "")
+    )
 
 
 def smtp_from_email() -> str:
-    return os.getenv("SMTP_FROM", "").strip() or smtp_user()
+    return os.getenv("SMTP_FROM", "").strip().strip('"').strip("'") or smtp_user()
 
 
 def smtp_use_tls() -> bool:
@@ -216,15 +225,19 @@ def _smtp_from_usable(from_email: str, user: str) -> str:
     """Prefer a real email address; drop broken display-only From (e.g. systemd ate <...>)."""
     from email.utils import parseaddr
 
-    name, addr = parseaddr((from_email or "").strip())
+    name, addr = parseaddr((from_email or "").strip().strip('"').strip("'"))
     if addr and "@" in addr:
-        return from_email.strip() if name else addr
+        return addr
     if user and "@" in user:
-        return user
-    raw = (from_email or "").strip()
+        return user.strip().strip('"').strip("'")
+    raw = (from_email or "").strip().strip('"').strip("'")
     if "@" in raw and "<" not in raw and ">" not in raw:
         return raw
     return ""
+
+
+def _clean_secret(raw: str) -> str:
+    return (raw or "").strip().strip('"').strip("'").replace(" ", "").replace("\r", "")
 
 
 def _smtp_profile(
@@ -237,6 +250,8 @@ def _smtp_profile(
     from_email: str,
     use_tls: bool,
 ) -> dict[str, object] | None:
+    host = (host or "").strip().strip('"').strip("'")
+    user = (user or "").strip().strip('"').strip("'")
     from_addr = _smtp_from_usable(from_email, user)
     if not host or not from_addr:
         return None
@@ -245,7 +260,7 @@ def _smtp_profile(
         "host": host,
         "port": port,
         "user": user or from_addr,
-        "password": password,
+        "password": _clean_secret(password),
         "from_email": from_addr,
         "use_tls": use_tls,
     }
@@ -254,8 +269,12 @@ def _smtp_profile(
 def smtp_profiles() -> list[dict[str, object]]:
     """
     Primary SMTP_* plus optional secondary SMTP2_* (e.g. Gmail + Naver).
-    First configured profile is preferred; send falls back to the next on failure.
+    Prefer Naver before Gmail when both exist — VPS IPs are often rejected by Google.
     """
+    # Re-read .env each call so `nano .env` + restart isn't required for diagnose scripts;
+    # cheap and avoids stale systemd-mangled values.
+    load_dotenv(ENV_PATH, override=True)
+
     profiles: list[dict[str, object]] = []
     primary = _smtp_profile(
         name="primary",
@@ -278,12 +297,22 @@ def smtp_profiles() -> list[dict[str, object]]:
         host=os.getenv("SMTP2_HOST", "").strip(),
         port=port2,
         user=os.getenv("SMTP2_USER", "").strip(),
-        password=os.getenv("SMTP2_PASSWORD", "").strip().strip('"').strip("'").replace(" ", ""),
+        password=os.getenv("SMTP2_PASSWORD", ""),
         from_email=os.getenv("SMTP2_FROM", "").strip(),
         use_tls=os.getenv("SMTP2_USE_TLS", "true").lower() in ("1", "true", "yes"),
     )
     if secondary:
         profiles.append(secondary)
+
+    def _rank(p: dict[str, object]) -> int:
+        host = str(p.get("host") or "").lower()
+        if "naver.com" in host:
+            return 0
+        if "gmail.com" in host or "google.com" in host:
+            return 2
+        return 1
+
+    profiles.sort(key=_rank)
     return profiles
 
 

@@ -12,7 +12,12 @@ import bcrypt
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from bot.email_service import send_reset_email, send_verify_email, smtp_configured
+from bot.email_service import (
+    send_reset_email,
+    send_verify_email,
+    smtp_configured,
+    safe_smtp_error,
+)
 from bot.models import EmailToken, User
 from bot.platform_config import (
     access_token_expire_minutes,
@@ -169,12 +174,13 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
         raw = create_email_token(db, user, purpose=PURPOSE_VERIFY, hours=24)
         try:
             meta["emailSent"] = send_verify_email(user.email, raw)
-        except Exception:
+        except Exception as exc:
             logger.exception("verify email send failed for user_id=%s", user.id)
             meta["emailSent"] = False
             meta["emailError"] = (
-                "인증 메일 발송에 실패했습니다. 로그인 화면에서 「인증 메일 재전송」을 눌러 주세요. "
-                "계속 실패하면 SMTP 설정을 확인하세요."
+                "인증 메일 발송에 실패했습니다. "
+                f"({safe_smtp_error(exc)}) "
+                "로그인 화면에서 「인증 메일 재전송」을 눌러 주세요."
             )
     return user, meta
 
@@ -216,8 +222,12 @@ def resend_verification(db: Session, email: str) -> dict[str, Any]:
     try:
         send_verify_email(user.email, raw)
     except Exception as exc:
+        detail = safe_smtp_error(exc)
         raise ValueError(
-            "인증 메일 발송에 실패했습니다. SMTP 계정·앱 비밀번호·SMTP 사용 허용을 확인해 주세요."
+            "인증 메일 발송에 실패했습니다. "
+            f"({detail}) "
+            "서버에서 `python -m bot.smtp_diagnose` 로 확인하세요. "
+            "네이버는 SMTP 사용함 + 앱 비밀번호가 필요합니다."
         ) from exc
     return {"ok": True, "message": "인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요."}
 
@@ -232,8 +242,9 @@ def request_password_reset(db: Session, email: str) -> dict[str, Any]:
     try:
         send_reset_email(user.email, raw)
     except Exception as exc:
+        detail = safe_smtp_error(exc)
         raise ValueError(
-            "재설정 메일 발송에 실패했습니다. SMTP 설정을 확인해 주세요."
+            f"재설정 메일 발송에 실패했습니다. ({detail}) SMTP 설정을 확인해 주세요."
         ) from exc
     return {"ok": True, "message": "재설정 안내를 보냈습니다. 받은편지함을 확인해 주세요."}
 
