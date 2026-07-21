@@ -304,11 +304,23 @@ def smtp_profiles() -> list[dict[str, object]]:
     if secondary:
         profiles.append(secondary)
 
+    provider = os.getenv("SMTP_PROVIDER", "").strip().lower()
+    if provider in ("gmail", "google"):
+        profiles = [
+            p
+            for p in profiles
+            if "gmail.com" in str(p.get("host") or "").lower()
+            or "google.com" in str(p.get("host") or "").lower()
+        ]
+    elif provider in ("naver",):
+        profiles = [p for p in profiles if "naver.com" in str(p.get("host") or "").lower()]
+
     def _rank(p: dict[str, object]) -> int:
         host = str(p.get("host") or "").lower()
-        if "naver.com" in host:
-            return 0
+        # Prefer Gmail — consumer Naver SMTP app passwords often fail from VPS.
         if "gmail.com" in host or "google.com" in host:
+            return 0
+        if "naver.com" in host:
             return 2
         return 1
 
