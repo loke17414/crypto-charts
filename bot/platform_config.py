@@ -166,19 +166,20 @@ def billing_enforce() -> bool:
 
 
 def free_bot_seconds_per_week() -> int:
-    """Free plan bot runtime per week. Default 48h."""
+    """Free plan bot runtime per week. Default 8h (tight free tier)."""
     try:
-        hours = float(os.getenv("FREE_BOT_HOURS_PER_WEEK", "48").strip())
+        hours = float(os.getenv("FREE_BOT_HOURS_PER_WEEK", "8").strip())
     except ValueError:
-        hours = 48.0
+        hours = 8.0
     return max(0, int(hours * 3600))
 
 
 def free_gpt_calls_per_week() -> int:
+    """Free plan GPT calls per week. Default 5 (mini only)."""
     try:
-        return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "20").strip()))
+        return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "5").strip()))
     except ValueError:
-        return 20
+        return 5
 
 
 def billing_week_timezone() -> str:
