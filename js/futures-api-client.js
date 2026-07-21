@@ -336,6 +336,10 @@ const FuturesApiClient = (() => {
     });
   }
 
+  async function billingResume() {
+    return request('/api/billing/resume', { method: 'POST', body: '{}' });
+  }
+
   async function billingHistory() {
     // Older deploys may not have this route yet — don't hard-fail the billing page.
     try {
@@ -451,6 +455,7 @@ const FuturesApiClient = (() => {
     billingPrepare,
     billingConfirm,
     billingCancel,
+    billingResume,
     billingHistory,
     authExport,
     authDeleteAccount,

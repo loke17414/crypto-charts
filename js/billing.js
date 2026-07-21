@@ -23,6 +23,7 @@ const AppBilling = (() => {
     const noteEl = $('billingNote');
     const upgradeBtn = $('billingUpgradeBtn');
     const cancelBtn = $('billingCancelBtn');
+    const resumeBtn = $('billingResumeBtn');
 
     if (!snap) {
       if (planEl) planEl.textContent = '—';
@@ -76,9 +77,14 @@ const AppBilling = (() => {
       upgradeBtn.disabled = busy;
     }
     if (cancelBtn) {
-      cancelBtn.classList.toggle('hidden', !snap.pro);
-      cancelBtn.disabled = busy || !!snap.cancelAtPeriodEnd;
-      cancelBtn.textContent = snap.cancelAtPeriodEnd ? '해지 예약됨' : '구독 해지';
+      // Hide cancel while a period-end cancel is already scheduled
+      cancelBtn.classList.toggle('hidden', !snap.pro || !!snap.cancelAtPeriodEnd);
+      cancelBtn.disabled = busy;
+      cancelBtn.textContent = '구독 해지';
+    }
+    if (resumeBtn) {
+      resumeBtn.classList.toggle('hidden', !(snap.pro && snap.cancelAtPeriodEnd));
+      resumeBtn.disabled = busy;
     }
   }
 
@@ -176,7 +182,7 @@ const AppBilling = (() => {
 
   async function cancelSubscription() {
     if (busy) return;
-    if (!confirm('기간이 끝나면 Free로 전환됩니다. 구독을 해지할까요?')) return;
+    if (!confirm('기간이 끝나면 Free로 전환됩니다. 구독을 해지할까요?\n(기간이 남았으면 언제든 해지 취소할 수 있습니다.)')) return;
     busy = true;
     render(lastSnap);
     try {
@@ -185,6 +191,23 @@ const AppBilling = (() => {
       await refresh();
     } catch (err) {
       alert(err.message || '해지 실패');
+    } finally {
+      busy = false;
+      render(lastSnap);
+    }
+  }
+
+  async function resumeSubscription() {
+    if (busy) return;
+    if (!confirm('해지 예약을 취소하고 구독을 계속할까요?')) return;
+    busy = true;
+    render(lastSnap);
+    try {
+      const data = await FuturesApiClient.billingResume();
+      alert(data.message || '해지 예약을 취소했습니다.');
+      await refresh();
+    } catch (err) {
+      alert(err.message || '해지 취소 실패');
     } finally {
       busy = false;
       render(lastSnap);
@@ -232,6 +255,7 @@ const AppBilling = (() => {
   function init() {
     $('billingUpgradeBtn')?.addEventListener('click', () => startCheckout());
     $('billingCancelBtn')?.addEventListener('click', () => cancelSubscription());
+    $('billingResumeBtn')?.addEventListener('click', () => resumeSubscription());
     handleReturnQuery().then(() => refresh());
   }
 

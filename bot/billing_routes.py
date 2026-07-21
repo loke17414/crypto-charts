@@ -14,6 +14,7 @@ from bot.billing_service import (
     confirm_billing_auth,
     list_payment_history,
     prepare_billing_auth,
+    resume_subscription,
     usage_snapshot,
 )
 from bot.db import get_db
@@ -124,6 +125,15 @@ def billing_cancel(
 ) -> dict[str, Any]:
     immediate = bool(body.immediate) if body else False
     return cancel_subscription(db, user, immediate=immediate)
+
+
+@router.post("/resume")
+def billing_resume(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Undo cancel-at-period-end while the paid period remains."""
+    return resume_subscription(db, user)
 
 
 @router.get("/history")

@@ -597,3 +597,40 @@ def cancel_subscription(db: Session, user: User, *, immediate: bool = False) -> 
         "currentPeriodEnd": sub.current_period_end.isoformat() if sub.current_period_end else None,
         "message": "기간 종료 후 Free로 전환됩니다. 그동안 Pro를 계속 사용할 수 있습니다.",
     }
+
+
+def resume_subscription(db: Session, user: User) -> dict[str, Any]:
+    """Undo period-end cancellation while Pro period is still active."""
+    sub = ensure_subscription(db, user.id)
+    if not is_pro(sub):
+        raise HTTPException(status_code=400, detail="활성 Pro 구독이 없습니다.")
+    if not sub.cancel_at_period_end:
+        return {
+            "ok": True,
+            "plan": "pro",
+            "status": sub.status,
+            "cancelAtPeriodEnd": False,
+            "currentPeriodEnd": sub.current_period_end.isoformat() if sub.current_period_end else None,
+            "message": "이미 해지 예약이 없습니다.",
+        }
+    end = sub.current_period_end
+    if end is not None:
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if _utcnow() >= end:
+            raise HTTPException(
+                status_code=400,
+                detail="이용 기간이 이미 끝났습니다. 다시 Pro를 구독해 주세요.",
+            )
+    sub.cancel_at_period_end = False
+    if sub.status not in PRO_STATUSES:
+        sub.status = "active"
+    db.commit()
+    return {
+        "ok": True,
+        "plan": "pro",
+        "status": sub.status,
+        "cancelAtPeriodEnd": False,
+        "currentPeriodEnd": sub.current_period_end.isoformat() if sub.current_period_end else None,
+        "message": "해지 예약을 취소했습니다. 구독이 계속됩니다.",
+    }
