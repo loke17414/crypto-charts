@@ -336,6 +336,51 @@ const FuturesApiClient = (() => {
     });
   }
 
+  async function adminMe() {
+    return request('/api/admin/me');
+  }
+
+  async function adminOverview() {
+    return request('/api/admin/overview');
+  }
+
+  async function adminSettings() {
+    return request('/api/admin/settings');
+  }
+
+  async function adminUsers({ q = '', limit = 100 } = {}) {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    params.set('limit', String(limit));
+    return request(`/api/admin/users?${params}`);
+  }
+
+  async function adminVerifyEmail(userId) {
+    return request(`/api/admin/users/${userId}/verify-email`, { method: 'POST', body: '{}' });
+  }
+
+  async function adminSetActive(userId, active) {
+    return request(`/api/admin/users/${userId}/set-active`, {
+      method: 'POST',
+      body: JSON.stringify({ active: !!active }),
+    });
+  }
+
+  async function adminSetPlan(userId, plan) {
+    return request(`/api/admin/users/${userId}/set-plan`, {
+      method: 'POST',
+      body: JSON.stringify({ plan }),
+    });
+  }
+
+  async function adminResetQuota(userId) {
+    return request(`/api/admin/users/${userId}/reset-quota`, { method: 'POST', body: '{}' });
+  }
+
+  async function adminStopBot(userId) {
+    return request(`/api/admin/users/${userId}/stop-bot`, { method: 'POST', body: '{}' });
+  }
+
   function isConnected() {
     return connected;
   }
@@ -382,6 +427,15 @@ const FuturesApiClient = (() => {
     billingPrepare,
     billingConfirm,
     billingCancel,
+    adminMe,
+    adminOverview,
+    adminSettings,
+    adminUsers,
+    adminVerifyEmail,
+    adminSetActive,
+    adminSetPlan,
+    adminResetQuota,
+    adminStopBot,
     isConnected,
     setConnected,
   };

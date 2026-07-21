@@ -1,4 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /admin.html
+Disallow: /login.html
+Disallow: /register.html
+Disallow: /billing.html
 
 Sitemap: https://orbinex.net/sitemap.xml

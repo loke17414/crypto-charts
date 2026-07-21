@@ -91,6 +91,10 @@ const AppAuth = (() => {
     }
     const loginLink = document.getElementById('authLoginPageLink');
     if (loginLink) loginLink.href = loginPageUrl('trading.html');
+    const adminLink = document.getElementById('adminPanelLink');
+    if (adminLink) {
+      adminLink.classList.toggle('hidden', !(loggedIn && getUser()?.isAdmin));
+    }
   }
 
   async function register(email, password, acceptTerms) {
@@ -150,7 +154,9 @@ const AppAuth = (() => {
   async function validateSession() {
     if (!authRequired || !getToken()) return false;
     try {
-      await FuturesApiClient.authMe();
+      const data = await FuturesApiClient.authMe();
+      if (data?.user) setSession(getToken(), data.user);
+      else syncUi();
       return true;
     } catch {
       return Boolean(getToken());

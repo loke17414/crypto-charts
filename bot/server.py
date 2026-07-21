@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session as DbSession
 from starlette.responses import JSONResponse
 
 from bot.auth_routes import get_optional_user, peek_optional_user, router as auth_router
+from bot.admin_routes import router as admin_router
 from bot.auth_service import decode_access_token
 from bot.billing_routes import router as billing_router
 from bot.billing_service import (
@@ -221,6 +222,7 @@ PUBLIC_API_PATHS = {
 app = FastAPI(title="Orbinex Futures API", version="1.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(billing_router)
+app.include_router(admin_router)
 
 
 @app.middleware("http")

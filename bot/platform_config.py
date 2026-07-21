@@ -34,6 +34,20 @@ def auth_required() -> bool:
     return os.getenv("AUTH_REQUIRED", "false").lower() in ("1", "true", "yes")
 
 
+def admin_emails() -> set[str]:
+    """Comma-separated admin emails (case-insensitive). Empty = no admins."""
+    raw = os.getenv("ADMIN_EMAILS", "").strip()
+    if not raw:
+        return set()
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def is_admin_email(email: str | None) -> bool:
+    if not email:
+        return False
+    return email.strip().lower() in admin_emails()
+
+
 def _persist_jwt_secret(secret: str) -> None:
     """Keep JWT_SECRET stable across restarts so existing logins stay valid."""
     lines: list[str] = []

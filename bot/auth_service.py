@@ -306,9 +306,12 @@ def reset_password_with_token(db: Session, raw: str, new_password: str) -> User:
 
 
 def user_public_dict(user: User) -> dict[str, Any]:
+    from bot.platform_config import is_admin_email
+
     return {
         "id": user.id,
         "email": user.email,
         "emailVerified": user.email_verified_at is not None,
         "termsAccepted": user.terms_accepted_at is not None,
+        "isAdmin": is_admin_email(user.email),
     }
