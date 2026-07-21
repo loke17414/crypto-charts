@@ -201,14 +201,23 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
             db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
             db.delete(user)
             db.commit()
+            detail = safe_smtp_error(exc)
+            hint = (
+                "서버 .env에서 SMTP_* / SMTP2_* 를 주석 처리하고 "
+                "RESEND_API_KEY + RESEND_FROM(인증 도메인)만 설정한 뒤 "
+                "`python -m bot.smtp_diagnose --to you@email.com` 으로 확인하세요."
+            )
+            if "535" in detail or "BadCredentials" in detail or "앱 비밀번호" in detail:
+                raise ValueError(
+                    "인증 메일 발송에 실패했습니다. "
+                    f"({detail}) [mail: {profile_hint}] "
+                    f"{hint} "
+                    "이메일 인증 없이는 가입할 수 없습니다."
+                ) from exc
             raise ValueError(
                 "인증 메일 발송에 실패했습니다. "
-                f"({safe_smtp_error(exc)}) "
-                f"[mail: {profile_hint}] "
-                "SMTP 앱 비밀번호가 거부되었습니다(535). "
-                "네이버/Gmail에서 앱 비밀번호를 새로 발급하고 .env를 갱신한 뒤 "
-                "`python -m bot.smtp_diagnose`가 ok 인지 확인하세요. "
-                "또는 RESEND_API_KEY로 발송하세요. "
+                f"({detail}) [mail: {profile_hint}] "
+                f"{hint} "
                 "이메일 인증 없이는 가입할 수 없습니다."
             ) from exc
         if not meta["emailSent"]:

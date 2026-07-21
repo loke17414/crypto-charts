@@ -70,19 +70,24 @@ def _apply_deliverability_headers(msg: EmailMessage, *, to: str, from_header: st
 
 
 def safe_smtp_error(exc: BaseException) -> str:
-    """Short operator-facing SMTP error (never includes credentials)."""
+    """Short operator-facing mail error (never includes credentials)."""
     text = str(exc) or type(exc).__name__
     text = " ".join(text.split())
     lower = text.lower()
+    if "resend" in lower or "api.resend.com" in lower:
+        if len(text) > 220:
+            text = text[:217] + "..."
+        return text
     if "535" in text or "not accepted" in lower or "badcredentials" in lower:
         return (
             "SMTPAuthenticationError: 앱 비밀번호가 거부됨(535). "
-            "네이버 SMTP 사용함 + 새 앱 비밀번호, 또는 Gmail 앱 비밀번호를 다시 발급하세요."
+            "서버 .env의 SMTP_* 를 비우고 RESEND_API_KEY만 쓰세요. "
+            "또는 Gmail/네이버 앱 비밀번호를 다시 발급하세요."
         )
     if len(text) > 180:
         text = text[:177] + "..."
     for bad in ("password", "passwd", "secret"):
-        if bad in lower and "535" not in text:
+        if bad in lower and "535" not in text and "resend" not in lower:
             return type(exc).__name__
     return f"{type(exc).__name__}: {text}"
 
@@ -258,11 +263,23 @@ def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: str | 
 
 def send_email(*, to: str, subject: str, text_body: str, html_body: str | None = None) -> bool:
     # Prefer Resend API when configured — more reliable than consumer SMTP from a VPS.
+    # When Resend is set, do NOT fall back to Gmail/Naver SMTP unless MAIL_FALLBACK_SMTP=true
+    # (those often fail with 535 from a VPS and hide the real Resend error).
+    import os
+
     if resend_api_key():
         try:
             return _send_via_resend(to=to, subject=subject, text_body=text_body, html_body=html_body)
-        except Exception:
-            logger.exception("Resend send failed for %s — falling back to SMTP if any", to)
+        except Exception as exc:
+            allow_fallback = os.getenv("MAIL_FALLBACK_SMTP", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if not allow_fallback:
+                logger.exception("Resend send failed for %s (no SMTP fallback)", to)
+                raise RuntimeError(f"Resend 발송 실패: {exc}") from exc
+            logger.exception("Resend send failed for %s — falling back to SMTP", to)
 
     profiles = smtp_profiles()
     if not profiles:
