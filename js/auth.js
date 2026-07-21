@@ -112,10 +112,12 @@ const AppAuth = (() => {
     }
     if (typeof FuturesBotApp !== 'undefined') {
       FuturesBotApp.resetClientSessionState?.({ keepLog: false });
+      FuturesBotApp.refreshPlanFeatures?.();
     }
     if (typeof StrategyAI !== 'undefined') {
       StrategyAI.resetForAccountSwitch?.();
       StrategyAI.refreshStatus?.({ verify: false });
+      StrategyAI.syncPlanGates?.();
     }
   }
 
@@ -167,9 +169,11 @@ const AppAuth = (() => {
     if (typeof FuturesBotApp !== 'undefined') {
       await FuturesBotApp.restoreSessionFromServer?.();
       await FuturesBotApp.restoreStrategyPersistence?.();
+      await FuturesBotApp.refreshPlanFeatures?.();
     }
     if (typeof StrategyAI !== 'undefined') {
       await StrategyAI.reloadForUser?.();
+      StrategyAI.syncPlanGates?.();
     }
     if (typeof AppBilling !== 'undefined') {
       await AppBilling.refresh?.();

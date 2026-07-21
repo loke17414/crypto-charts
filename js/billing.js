@@ -67,7 +67,7 @@ const AppBilling = (() => {
         const botH = snap.bot?.hoursLimit ?? 48;
         const gptN = snap.gpt?.callsLimit ?? 10;
         const slots = snap.features?.maxStrategySlots ?? 1;
-        noteEl.textContent = `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개 · 웹 리서치 없음. Pro는 무제한·멀티슬롯·리서치 · 월 ${won}원.`;
+        noteEl.textContent = `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개 · 추천/리서치 없음. Pro는 무제한·멀티슬롯·추천 · 월 ${won}원.`;
       }
     }
 

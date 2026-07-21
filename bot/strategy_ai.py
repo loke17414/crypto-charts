@@ -1601,6 +1601,7 @@ def interpret_strategy(
     user_id: int | None = None,
     force_mini: bool = False,
     allow_web_research: bool = True,
+    allow_recommended_strategies: bool = True,
     max_strategy_slots: int | None = None,
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
@@ -1615,8 +1616,16 @@ def interpret_strategy(
         client_context=market_context,
         use_testnet=True,
     )
+    if not allow_recommended_strategies:
+        market.pop("recommendedStrategies", None)
 
     append_turn(role="user", content=prompt.strip(), user_id=user_id)
+
+    if not allow_recommended_strategies and _RECOMMENDED_ID_RE.search(prompt or ""):
+        raise ValueError(
+            "AI 추천 전략은 Pro 플랜에서 사용할 수 있습니다. "
+            "요금제에서 Pro로 업그레이드하거나, 직접 조건을 설명해 주세요."
+        )
 
     web_research: list[dict[str, Any]] = []
     if allow_web_research and looks_like_research_request(prompt):
@@ -1661,7 +1670,9 @@ def interpret_strategy(
     # Rule templates also run on empty patches — e.g. "1분봉 캔들 상승시 롱 진입".
     patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
     # UI recommended strategies: force exact settings when user names an id.
-    rec_patch = _recommended_preset_patch(prompt.strip(), market)
+    rec_patch = None
+    if allow_recommended_strategies:
+        rec_patch = _recommended_preset_patch(prompt.strip(), market)
     if rec_patch:
         patch = {**patch, **rec_patch}
         rec_match = _RECOMMENDED_ID_RE.search(prompt.strip())

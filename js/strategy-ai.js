@@ -37,8 +37,39 @@ const StrategyAI = (() => {
     $('#strategyAiPopup')?.classList.remove('hidden');
     $('#strategyAiToggleBtn')?.classList.add('is-active');
     $('#strategyAiInput')?.focus();
+    syncPlanGates();
     // Reuse cached list if present — avoid wiping UI on every open.
     refreshRecommendedStrategies({ force: false });
+  }
+
+  function recommendedAllowed() {
+    const feats = window.FuturesBotApp?.getPlanFeatures?.();
+    if (feats && typeof feats.recommendedStrategies === 'boolean') {
+      return !!feats.recommendedStrategies;
+    }
+    // Default locked when billing says free / unknown logged-in free
+    if (typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn?.()) {
+      return !!feats?.pro;
+    }
+    return true;
+  }
+
+  function syncPlanGates() {
+    const allowed = recommendedAllowed();
+    const section = $('#strategyRecommendSection');
+    const list = $('#strategyRecommendList');
+    const note = $('#strategyRecommendNote');
+    const refreshBtn = $('#strategyRecommendRefresh');
+    const lock = $('#strategyRecommendProLock');
+    section?.classList.toggle('is-pro-locked', !allowed);
+    lock?.classList.toggle('hidden', allowed);
+    if (list) list.classList.toggle('hidden', !allowed);
+    if (refreshBtn) refreshBtn.classList.toggle('hidden', !allowed);
+    if (!allowed) {
+      if (note) note.textContent = 'Pro 전용 기능입니다.';
+      if (list) list.innerHTML = '';
+      window.__lastRecommendedStrategies = null;
+    }
   }
 
   function getChartCandles() {
@@ -113,6 +144,8 @@ const StrategyAI = (() => {
     const list = $('#strategyRecommendList');
     const note = $('#strategyRecommendNote');
     if (!list) return;
+    syncPlanGates();
+    if (!recommendedAllowed()) return;
     if (!window.StrategyPresets?.recommend) {
       if (note) note.textContent = '추천 전략 모듈을 불러오지 못했습니다.';
       return;
@@ -153,6 +186,10 @@ const StrategyAI = (() => {
   }
 
   function applyRecommendedDirect(id) {
+    if (!recommendedAllowed()) {
+      addMessage('assistant', '⚠️ AI 추천 전략은 Pro 플랜에서 사용할 수 있습니다. 요금제에서 업그레이드해 주세요.', { persist: false });
+      return;
+    }
     const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id)
       || (() => {
         const preset = StrategyPresets.getPreset(id);
@@ -181,6 +218,10 @@ const StrategyAI = (() => {
   }
 
   function applyRecommendedViaGpt(id) {
+    if (!recommendedAllowed()) {
+      addMessage('assistant', '⚠️ AI 추천 전략은 Pro 플랜에서 사용할 수 있습니다. 요금제에서 업그레이드해 주세요.', { persist: false });
+      return;
+    }
     const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id);
     const preset = StrategyPresets.getPreset(id);
     const prompt = pack?.gptPrompt || preset?.gptPrompt
@@ -778,6 +819,7 @@ const StrategyAI = (() => {
     reloadForUser,
     refreshRecommendedStrategies,
     handlePrompt,
+    syncPlanGates,
   };
 })();
 

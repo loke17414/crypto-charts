@@ -101,30 +101,113 @@ const FuturesBotApp = (() => {
   const MAX_STRATEGY_SLOTS = 6;
   let planFeatures = {
     pro: false,
-    maxStrategySlots: MAX_STRATEGY_SLOTS,
-    webResearch: true,
+    maxStrategySlots: 1,
+    webResearch: false,
+    recommendedStrategies: false,
   };
+  let lastBillingSnap = null;
 
   async function refreshPlanFeatures() {
     try {
-      if (typeof FuturesApiClient === 'undefined' || !FuturesApiClient.billingMe) return;
+      if (typeof FuturesApiClient === 'undefined' || !FuturesApiClient.billingMe) return lastBillingSnap;
       if (typeof AppAuth !== 'undefined' && !AppAuth.isLoggedIn?.()) {
-        planFeatures = { pro: false, maxStrategySlots: 1, webResearch: false };
-        return;
+        planFeatures = {
+          pro: false,
+          maxStrategySlots: 1,
+          webResearch: false,
+          recommendedStrategies: false,
+        };
+        lastBillingSnap = null;
+        renderFreeQuotaPanel();
+        updateStrategySlotsLimitHint();
+        if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
+        return null;
       }
       const snap = await FuturesApiClient.billingMe();
+      lastBillingSnap = snap;
       planFeatures = {
         pro: !!snap?.pro,
         maxStrategySlots: Number(snap?.features?.maxStrategySlots) || (snap?.pro ? MAX_STRATEGY_SLOTS : 1),
-        webResearch: snap?.features?.webResearch !== false && !!snap?.pro,
+        webResearch: !!snap?.features?.webResearch,
+        recommendedStrategies: !!snap?.features?.recommendedStrategies,
       };
+      renderFreeQuotaPanel();
+      updateStrategySlotsLimitHint();
+      if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
+      return snap;
     } catch {
-      /* keep last / defaults when billing unavailable */
+      renderFreeQuotaPanel();
+      updateStrategySlotsLimitHint();
+      return lastBillingSnap;
     }
   }
 
   function maxAllowedStrategySlots() {
     return Math.max(1, Math.min(MAX_STRATEGY_SLOTS, Number(planFeatures.maxStrategySlots) || 1));
+  }
+
+  function getPlanFeatures() {
+    return { ...planFeatures, snap: lastBillingSnap };
+  }
+
+  function formatHours(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  }
+
+  function renderFreeQuotaPanel() {
+    const panel = document.getElementById('freeQuotaPanel');
+    if (!panel) return;
+    const loggedIn = typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn?.();
+    const snap = lastBillingSnap;
+    const show = loggedIn && snap && !snap.pro;
+    panel.classList.toggle('hidden', !show);
+    if (!show) return;
+
+    const planEl = document.getElementById('freeQuotaPlan');
+    const botEl = document.getElementById('freeQuotaBotRemain');
+    const gptEl = document.getElementById('freeQuotaGpt');
+    const slotsEl = document.getElementById('freeQuotaSlots');
+    const noteEl = document.getElementById('freeQuotaNote');
+
+    if (planEl) planEl.textContent = 'Free';
+    const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
+    const usedH = snap.bot?.hoursUsed ?? 0;
+    const limH = snap.bot?.hoursLimit ?? 48;
+    if (botEl) botEl.textContent = `${formatHours(remH)}시간 남음 (${formatHours(usedH)}/${formatHours(limH)}h)`;
+    const gptUsed = snap.gpt?.callsUsed ?? 0;
+    const gptLim = snap.gpt?.callsLimit ?? 10;
+    const gptRem = snap.gpt?.remaining ?? Math.max(0, gptLim - gptUsed);
+    if (gptEl) gptEl.textContent = `${gptRem}회 남음 (${gptUsed}/${gptLim})`;
+    const maxSlots = maxAllowedStrategySlots();
+    const usedSlots = (state.strategySlots || []).length;
+    if (slotsEl) slotsEl.textContent = `${usedSlots}/${maxSlots}개`;
+    if (noteEl) {
+      noteEl.textContent = '추천 전략 · 멀티슬롯 · 웹 리서치는 Pro';
+    }
+
+    const mini = document.getElementById('freeQuotaMini');
+    if (mini) {
+      mini.classList.toggle('hidden', !show);
+      if (show) {
+        const maxSlots = maxAllowedStrategySlots();
+        const usedSlots = (state.strategySlots || []).length;
+        mini.textContent = `Free · 봇 ${formatHours(remH)}h 남음 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${gptRem}회`;
+      }
+    }
+  }
+
+  function updateStrategySlotsLimitHint() {
+    const el = document.getElementById('strategySlotsLimitHint');
+    if (!el) return;
+    const maxSlots = maxAllowedStrategySlots();
+    const used = (state.strategySlots || []).length;
+    if (planFeatures.pro) {
+      el.textContent = `(${used}/${maxSlots})`;
+    } else {
+      el.textContent = `(${used}/${maxSlots} · Free)`;
+    }
   }
 
   function strategyStorageSuffix() {
@@ -729,27 +812,29 @@ const FuturesBotApp = (() => {
     }
 
     // Recommended strategies (winRate measured on this chart) for GPT "추천전략 적용"
-    if (window.__lastRecommendedStrategies?.items?.length) {
-      ctx.recommendedStrategies = {
-        note: window.__lastRecommendedStrategies.note,
-        minWinRate: 50,
-        items: window.__lastRecommendedStrategies.items.map((it) => ({
-          id: it.id,
-          name: it.name,
-          blurb: it.blurb,
-          winRate: it.winRate,
-          trades: it.trades,
-          totalPnlPct: it.totalPnlPct,
-          ok: it.ok,
-          settings: it.settings,
-          gptPrompt: it.gptPrompt,
-        })),
-      };
-    } else if (window.StrategyPresets?.listCatalog) {
-      ctx.recommendedStrategies = {
-        note: 'UI에서 추천 목록을 새로고침하면 승률이 채워집니다.',
-        catalog: StrategyPresets.listCatalog(),
-      };
+    if (planFeatures.recommendedStrategies) {
+      if (window.__lastRecommendedStrategies?.items?.length) {
+        ctx.recommendedStrategies = {
+          note: window.__lastRecommendedStrategies.note,
+          minWinRate: 50,
+          items: window.__lastRecommendedStrategies.items.map((it) => ({
+            id: it.id,
+            name: it.name,
+            blurb: it.blurb,
+            winRate: it.winRate,
+            trades: it.trades,
+            totalPnlPct: it.totalPnlPct,
+            ok: it.ok,
+            settings: it.settings,
+            gptPrompt: it.gptPrompt,
+          })),
+        };
+      } else if (window.StrategyPresets?.listCatalog) {
+        ctx.recommendedStrategies = {
+          note: 'UI에서 추천 목록을 새로고침하면 승률이 채워집니다.',
+          catalog: StrategyPresets.listCatalog(),
+        };
+      }
     }
 
     return ctx;
@@ -760,6 +845,10 @@ const FuturesBotApp = (() => {
   }
 
   function applyRecommendedPreset(id, options = {}) {
+    if (!planFeatures.recommendedStrategies) {
+      addLog('AI 추천 전략은 Pro 플랜에서 사용할 수 있습니다.', 'warn');
+      return { applied: false, reason: 'AI 추천 전략은 Pro 전용입니다.' };
+    }
     if (!window.StrategyPresets?.getPreset) return false;
     const preset = StrategyPresets.getPreset(id);
     if (!preset) return false;
@@ -971,6 +1060,8 @@ const FuturesBotApp = (() => {
     saveStrategySlots();
     renderStrategySlotsPanel();
     updateStrategyAiSlotOptions();
+    updateStrategySlotsLimitHint();
+    renderFreeQuotaPanel();
     if (recompute) recomputeAfterSlotsChange();
     else updateStrategyRulesDisplay();
   }
@@ -3894,6 +3985,9 @@ const FuturesBotApp = (() => {
     restoreSessionFromServer,
     restoreStrategyPersistence,
     resetClientSessionState,
+    refreshPlanFeatures,
+    getPlanFeatures,
+    renderFreeQuotaPanel,
   };
 })();
 

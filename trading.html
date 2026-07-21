@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260721d">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260721e">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -150,13 +150,18 @@
                   <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전고점 돌파 롱 / 전저점 이탈 숏 (스윙 pivotBars 5), SL 캔들 극단 TP 1.5R">전고저 돌파</button>
                   <button type="button" class="ai-quick-btn" data-strategy-ai-cmd="전저점 지지 롱 / 전고점 저항 숏 (스윙 반등, pivotBars 5, 허용 0.5%), SL 캔들 극단 TP 1.5R">전고저 반등</button>
                 </div>
-                <div class="strategy-recommend">
+                <div class="strategy-recommend" id="strategyRecommendSection">
                   <div class="strategy-recommend__head">
                     <span class="strategy-recommend__title">추천 전략 (RR≥1:1 · PnL+)</span>
                     <button type="button" id="strategyRecommendRefresh" class="btn btn--ghost btn--sm">새로고침</button>
                   </div>
                   <p id="strategyRecommendNote" class="strategy-recommend__note api-hint">현재 차트 기준으로 측정합니다.</p>
                   <div id="strategyRecommendList" class="strategy-recommend__list"></div>
+                  <div id="strategyRecommendProLock" class="strategy-recommend__lock hidden">
+                    <p class="strategy-recommend__lock-title">AI 추천 전략은 Pro 전용입니다</p>
+                    <p class="api-hint">차트 기반 승률 추천·원클릭 적용은 Pro에서 사용할 수 있습니다.</p>
+                    <a href="billing.html" class="btn btn--simple-primary btn--sm" style="text-align:center;text-decoration:none;display:inline-block;margin-top:0.4rem;">Pro 업그레이드</a>
+                  </div>
                 </div>
                 <div class="strategy-ai-target">
                   <label for="strategyAiTargetSlot">슬롯</label>
@@ -194,6 +199,7 @@
             <span>가용</span><strong id="availableMargin">—</strong>
             <span>손익</span><strong id="totalPnl">—</strong>
           </div>
+          <p id="freeQuotaMini" class="free-quota-mini hidden" aria-live="polite"></p>
           <div class="position-card">
             <div id="positionInfo" class="position-card__info"><span class="text-muted">포지션 없음</span></div>
             <div id="positionPnl" class="position-card__pnl"></div>
@@ -234,6 +240,25 @@
             </div>
             <div id="authLoggedIn" class="hidden">
               <p class="auth-panel__user"><span class="text-muted">로그인:</span> <strong id="authUserEmail">—</strong></p>
+              <div id="freeQuotaPanel" class="free-quota-panel hidden" aria-live="polite">
+                <div class="free-quota-panel__row">
+                  <span class="text-muted">플랜</span>
+                  <strong id="freeQuotaPlan">Free</strong>
+                </div>
+                <div class="free-quota-panel__row">
+                  <span class="text-muted">봇 남은 시간</span>
+                  <strong id="freeQuotaBotRemain">—</strong>
+                </div>
+                <div class="free-quota-panel__row">
+                  <span class="text-muted">GPT</span>
+                  <strong id="freeQuotaGpt">—</strong>
+                </div>
+                <div class="free-quota-panel__row">
+                  <span class="text-muted">전략 슬롯</span>
+                  <strong id="freeQuotaSlots">—</strong>
+                </div>
+                <p id="freeQuotaNote" class="free-quota-panel__note">추천 전략·멀티슬롯·웹 리서치는 Pro</p>
+              </div>
               <div class="auth-panel__actions" style="display:flex;flex-direction:column;gap:0.4rem;margin:0.75rem 0;">
                 <a href="billing.html" class="btn btn--simple-primary btn--block btn--sm" style="text-align:center;text-decoration:none;">요금제 · 결제</a>
                 <button type="button" id="authLogoutBtn" class="btn btn--simple-ghost btn--block btn--sm">로그아웃</button>
@@ -277,7 +302,7 @@
             <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
             <div class="strategy-slots">
               <div class="strategy-slots__header">
-                <h3 class="strategy-slots__title">진입 조건</h3>
+                <h3 class="strategy-slots__title">진입 조건 <span id="strategySlotsLimitHint" class="strategy-slots__limit text-muted"></span></h3>
                 <button type="button" id="addStrategySlotBtn" class="btn btn--ghost btn--sm">+ 추가</button>
               </div>
               <div id="strategySlotsList" class="strategy-slots__list"></div>
@@ -379,13 +404,13 @@
   <script src="js/backtest-engine.js?v=20260719a"></script>
   <script src="js/backtest-client.js?v=20260718q"></script>
   <script src="js/futures-api-client.js?v=20260721e"></script>
-  <script src="js/auth.js?v=20260721f"></script>
+  <script src="js/auth.js?v=20260721g"></script>
   <script src="js/risk-sizing.js?v=20260720a"></script>
   <script src="js/entry-pause.js?v=20260718s"></script>
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
   <script src="js/strategy-presets.js?v=20260720c"></script>
-  <script src="js/futures-bot-app.js?v=20260721g"></script>
-  <script src="js/strategy-ai.js?v=20260720f"></script>
+  <script src="js/futures-bot-app.js?v=20260721h"></script>
+  <script src="js/strategy-ai.js?v=20260721g"></script>
 </body>
 </html>

@@ -208,6 +208,16 @@ def free_web_research_allowed() -> bool:
     return False
 
 
+def free_recommended_strategies_allowed() -> bool:
+    """Whether Free may use AI recommended strategies. Default false (Pro feature)."""
+    raw = os.getenv("FREE_RECOMMENDED_STRATEGIES", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return False
+
+
 def billing_week_timezone() -> str:
     """IANA tz for weekly quota reset. Default Asia/Seoul."""
     return os.getenv("BILLING_WEEK_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"

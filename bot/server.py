@@ -43,6 +43,7 @@ from bot.platform_config import (
     database_url,
     email_require_verification,
     free_max_strategy_slots,
+    free_recommended_strategies_allowed,
     free_web_research_allowed,
     pro_max_strategy_slots,
 )
@@ -584,12 +585,14 @@ def strategy_interpret(
     assert_can_use_gpt(db, user)
     force_mini = False
     allow_web_research = True
+    allow_recommended = True
     max_slots = pro_max_strategy_slots()
     if user is not None and billing_enforce():
         sub = ensure_subscription(db, user.id)
         pro = is_pro(sub)
         force_mini = not pro
         allow_web_research = True if pro else free_web_research_allowed()
+        allow_recommended = True if pro else free_recommended_strategies_allowed()
         max_slots = pro_max_strategy_slots() if pro else free_max_strategy_slots()
     # Use platform OPENAI_API_KEY; keep chat memory scoped per user.
     try:
@@ -605,6 +608,7 @@ def strategy_interpret(
             user_id=user.id if user is not None else None,
             force_mini=force_mini,
             allow_web_research=allow_web_research,
+            allow_recommended_strategies=allow_recommended,
             max_strategy_slots=max_slots,
         )
     except ValueError as exc:

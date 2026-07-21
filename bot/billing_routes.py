@@ -23,6 +23,7 @@ from bot.platform_config import (
     free_bot_seconds_per_week,
     free_gpt_calls_per_week,
     free_max_strategy_slots,
+    free_recommended_strategies_allowed,
     free_web_research_allowed,
     pro_max_strategy_slots,
     toss_client_key,
@@ -58,6 +59,7 @@ def billing_me(
             "freeMaxStrategySlots": free_max_strategy_slots(),
             "proMaxStrategySlots": pro_max_strategy_slots(),
             "freeWebResearch": free_web_research_allowed(),
+            "freeRecommendedStrategies": free_recommended_strategies_allowed(),
         },
     }
 
@@ -77,6 +79,7 @@ def billing_status() -> dict[str, Any]:
             "freeMaxStrategySlots": free_max_strategy_slots(),
             "proMaxStrategySlots": pro_max_strategy_slots(),
             "freeWebResearch": free_web_research_allowed(),
+            "freeRecommendedStrategies": free_recommended_strategies_allowed(),
         },
     }
 

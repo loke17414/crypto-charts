@@ -23,6 +23,7 @@ from bot.platform_config import (
     free_bot_seconds_per_week,
     free_gpt_calls_per_week,
     free_max_strategy_slots,
+    free_recommended_strategies_allowed,
     free_web_research_allowed,
     pro_max_strategy_slots,
     toss_client_key,
@@ -171,6 +172,7 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
     gpt_used = int(usage.gpt_calls_used or 0)
     max_slots = pro_max_strategy_slots() if pro else free_max_strategy_slots()
     web_research = True if pro else free_web_research_allowed()
+    recommended = True if pro else free_recommended_strategies_allowed()
 
     return {
         "plan": "pro" if pro else "free",
@@ -189,6 +191,7 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
             "hoursUsed": round(bot_used / 3600, 2),
             "hoursLimit": None if pro else round(bot_limit / 3600, 2),
             "remainingSeconds": None if pro else max(0, bot_limit - bot_used),
+            "remainingHours": None if pro else round(max(0, bot_limit - bot_used) / 3600, 2),
         },
         "gpt": {
             "callsUsed": gpt_used,
@@ -199,6 +202,7 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
         "features": {
             "maxStrategySlots": max_slots,
             "webResearch": web_research,
+            "recommendedStrategies": recommended,
         },
     }
 

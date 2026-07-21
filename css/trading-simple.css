@@ -1288,11 +1288,56 @@
   color: var(--simple-accent, #f97316);
 }
 
-.trading-page--simple .billing-panel__quota,
-.trading-page--simple .billing-panel__note {
-  margin: 0.15rem 0;
+.trading-page--simple .free-quota-mini {
+  margin: 0.35rem 0 0.15rem;
   font-size: 0.72rem;
   line-height: 1.35;
+  color: var(--simple-accent, #f97316);
+}
+
+.trading-page--simple .free-quota-panel__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.2rem 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.trading-page--simple .free-quota-panel__row strong {
+  font-weight: 600;
+  text-align: right;
+}
+
+.trading-page--simple .free-quota-panel__note {
+  margin: 0.45rem 0 0;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--text-muted, #9ca3af);
+}
+
+.trading-page--simple .strategy-slots__limit {
+  font-weight: 500;
+  font-size: 0.78em;
+}
+
+.trading-page--simple .strategy-recommend.is-pro-locked .strategy-recommend__head {
+  opacity: 0.85;
+}
+
+.trading-page--simple .strategy-recommend__lock {
+  margin-top: 0.45rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px dashed var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.trading-page--simple .strategy-recommend__lock-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .trading-page--simple .auth-panel__consent {
