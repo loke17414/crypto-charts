@@ -27,7 +27,14 @@ const FuturesApiClient = (() => {
     if (detail && typeof detail === 'object') {
       return detail.message || JSON.stringify(detail);
     }
-    return data?.message || (status === 404 ? 'Not Found' : `API error ${status}`);
+    if (data?.message) return data.message;
+    if (status === 401) return '이메일 또는 비밀번호가 올바르지 않습니다.';
+    if (status === 403) return '접근이 거부되었습니다.';
+    if (status === 404) return 'Not Found';
+    if (status === 500 || status === 503) {
+      return '서버 오류입니다. 잠시 후 다시 시도해 주세요.';
+    }
+    return `API error ${status}`;
   }
 
   function formatNotFoundHint(path, method) {

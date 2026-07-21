@@ -164,9 +164,19 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> d
             detail=f"로그인 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-    user = authenticate_user(db, body.email, body.password)
+    try:
+        user = authenticate_user(db, body.email, body.password)
+    except Exception as exc:
+        # Missing DB columns / schema drift used to surface as opaque 500 "API error 500".
+        raise HTTPException(
+            status_code=503,
+            detail="로그인 서버 오류입니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.",
+        ) from exc
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(
+            status_code=401,
+            detail="이메일 또는 비밀번호가 올바르지 않습니다.",
+        )
     try:
         assert_email_verified_for_login(user)
     except ValueError as exc:
@@ -179,6 +189,7 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> d
         "expires_in": expires_in,
         "user": _user_payload(user),
     }
+
 
 
 @router.post("/verify-email")
