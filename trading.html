@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260716d">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260721f">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260722a">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -192,7 +192,10 @@
 
       <aside class="bot-control-panel">
         <div class="control-section control-section--primary">
-          <div class="control-section__label">봇 제어</div>
+          <div class="control-section__label-row">
+            <div class="control-section__label">봇 제어</div>
+            <button type="button" class="panel-guide-btn" data-panel-guide="bot" title="가이드" aria-label="봇 제어 가이드">?</button>
+          </div>
           <div class="status-mini">
             <span>상태</span><span id="botStatus" class="bot-status bot-status--off">정지</span>
             <span>자산</span><strong id="equityInfo">—</strong>
@@ -229,7 +232,10 @@
 
         <div class="control-accordions">
         <details class="control-section control-section--fold" id="authSection" open>
-          <summary class="control-section__summary"><span class="control-section__summary-text">계정</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">계정</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="account" title="가이드" aria-label="계정 가이드">?</button>
+          </summary>
           <div class="control-section__body auth-panel">
             <div id="authStatus" class="api-hint auth-panel__status">확인 중...</div>
             <div id="authLoggedOut">
@@ -267,7 +273,10 @@
           </div>
         </details>
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary"><span class="control-section__summary-text">API 연결</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">API 연결</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="api" title="가이드" aria-label="API 연결 가이드">?</button>
+          </summary>
           <div class="control-section__body">
             <div id="apiServerStatus" class="api-status api-status--offline">API 서버: 확인 중...</div>
             <div id="apiIpWhitelist" class="api-ip-whitelist hidden">
@@ -296,7 +305,10 @@
         </details>
 
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary"><span class="control-section__summary-text">전략</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">전략</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="strategy" title="가이드" aria-label="전략 가이드">?</button>
+          </summary>
           <div class="control-section__body">
             <p class="api-hint" id="slTpStrategyHint">SL/TP는 AI 전략에서 자동 설정됩니다.</p>
             <p class="api-hint strategy-rules hidden" id="strategyRules"></p>
@@ -311,7 +323,10 @@
         </details>
 
         <details class="control-section control-section--fold">
-          <summary class="control-section__summary"><span class="control-section__summary-text">리스크 관리</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">리스크 관리</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="risk" title="가이드" aria-label="리스크 관리 가이드">?</button>
+          </summary>
           <div class="control-section__body">
             <p class="api-hint">포지션 크기·손익비(RR) 계산에 왕복 수수료 0.1%를 포함합니다.</p>
             <div class="form-group">
@@ -327,7 +342,10 @@
         </details>
 
         <details class="control-section control-section--fold log-section" open>
-          <summary class="control-section__summary"><span class="control-section__summary-text">전략 로그</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">전략 로그</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="strategyLog" title="가이드" aria-label="전략 로그 가이드">?</button>
+          </summary>
           <div class="control-section__body">
             <p class="api-hint strategy-log__hint">캔들패턴 · BoS/CHOCH · 지표 요약 (GPT에도 동일 전달)</p>
             <div id="strategyLog" class="trade-log strategy-log" aria-live="polite"></div>
@@ -335,7 +353,10 @@
         </details>
 
         <details class="control-section control-section--fold log-section">
-          <summary class="control-section__summary"><span class="control-section__summary-text">거래 로그</span></summary>
+          <summary class="control-section__summary">
+            <span class="control-section__summary-text">거래 로그</span>
+            <button type="button" class="panel-guide-btn" data-panel-guide="tradeLog" title="가이드" aria-label="거래 로그 가이드">?</button>
+          </summary>
           <div class="control-section__body">
             <div id="tradeLog" class="trade-log"></div>
           </div>
@@ -386,6 +407,17 @@
     </div>
   </div>
 
+  <div id="panelGuideModal" class="panel-guide-modal hidden" aria-hidden="true" role="dialog" aria-labelledby="panelGuideTitle">
+    <div id="panelGuideBackdrop" class="panel-guide-modal__backdrop"></div>
+    <div class="panel-guide-modal__panel">
+      <div class="panel-guide-modal__header">
+        <h3 id="panelGuideTitle">가이드</h3>
+        <button type="button" id="panelGuideClose" class="panel-guide-modal__close" aria-label="닫기">×</button>
+      </div>
+      <div id="panelGuideBody" class="panel-guide-modal__body"></div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="js/ta-math.js?v=20260714e"></script>
   <script src="js/ta-extended.js?v=20260714e"></script>
@@ -412,5 +444,6 @@
   <script src="js/strategy-presets.js?v=20260720c"></script>
   <script src="js/futures-bot-app.js?v=20260721i"></script>
   <script src="js/strategy-ai.js?v=20260721h"></script>
+  <script src="js/panel-guides.js?v=20260722a"></script>
 </body>
 </html>
