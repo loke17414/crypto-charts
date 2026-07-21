@@ -65,6 +65,19 @@ def _header_and_envelope(from_email: str, user: str) -> tuple[str, str]:
     return header, addr
 
 
+def _login_candidates(host: str, user: str) -> list[str]:
+    """Naver sometimes accepts id-only; Gmail wants full address. Try both."""
+    u = (user or "").strip()
+    out: list[str] = []
+    if u:
+        out.append(u)
+    if "@" in u:
+        local = u.split("@", 1)[0]
+        if local and local not in out and "naver.com" in host.lower():
+            out.append(local)
+    return out
+
+
 def _smtp_connect_and_send(
     *,
     host: str,
@@ -79,24 +92,36 @@ def _smtp_connect_and_send(
     if not recipients:
         raise ValueError("수신 이메일이 없습니다.")
     payload = msg.as_bytes()
+    users = _login_candidates(host, user)
+    last_exc: Exception | None = None
 
-    if use_tls:
-        context = ssl.create_default_context()
-        with smtplib.SMTP(host, port, timeout=45) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            if user:
-                server.login(user, password)
-            # sendmail is more compatible with Naver than send_message()
-            server.sendmail(envelope_from, recipients, payload)
-    else:
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, timeout=45, context=context) as server:
-            server.ehlo()
-            if user:
-                server.login(user, password)
-            server.sendmail(envelope_from, recipients, payload)
+    for login_user in users:
+        try:
+            if use_tls:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(host, port, timeout=45) as server:
+                    server.ehlo()
+                    server.starttls(context=context)
+                    server.ehlo()
+                    server.login(login_user, password)
+                    server.sendmail(envelope_from, recipients, payload)
+            else:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, timeout=45, context=context) as server:
+                    server.ehlo()
+                    server.login(login_user, password)
+                    server.sendmail(envelope_from, recipients, payload)
+            return
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "SMTP login/send failed host=%s user=%s — %s",
+                host,
+                login_user,
+                safe_smtp_error(exc),
+            )
+    assert last_exc is not None
+    raise last_exc
 
 
 def _attempts_for(host: str, port: int, use_tls: bool) -> list[tuple[int, bool]]:

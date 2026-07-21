@@ -24,6 +24,7 @@ from bot.platform_config import (
     email_require_verification,
     jwt_algorithm,
     jwt_secret,
+    smtp_fail_open,
     smtp_profiles,
 )
 
@@ -199,7 +200,25 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
             meta["emailSent"] = send_verify_email(user.email, raw)
         except Exception as exc:
             logger.exception("verify email send failed for user_id=%s profiles=%s", user.id, profile_hint)
-            # Roll back so the email can be used again after SMTP is fixed.
+            if smtp_fail_open():
+                # Do not block signup when Naver/Gmail reject the VPS SMTP login.
+                db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+                user.email_verified_at = _utcnow()
+                db.commit()
+                db.refresh(user)
+                meta["emailSent"] = False
+                meta["emailVerificationRequired"] = False
+                meta["smtpFailOpen"] = True
+                meta["warning"] = (
+                    "메일 서버 로그인에 실패해 이메일 인증을 건너뛰고 가입을 완료했습니다. "
+                    f"({safe_smtp_error(exc)})"
+                )
+                logger.error(
+                    "SMTP_FAIL_OPEN: registered %s without verification — fix SMTP "
+                    "(python -m bot.smtp_diagnose)",
+                    user.email,
+                )
+                return user, meta
             db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
             db.delete(user)
             db.commit()
@@ -208,10 +227,18 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
                 f"({safe_smtp_error(exc)}) "
                 f"[SMTP: {profile_hint}] "
                 "서버에서 `python -m bot.smtp_diagnose`로 확인하세요. "
-                "네이버: 메일 환경설정에서 SMTP 사용함 + 앱 비밀번호. "
-                "Gmail: 앱 비밀번호(공백 없이)."
+                "또는 .env에 SMTP_FAIL_OPEN=true 로 가입을 허용하세요."
             ) from exc
         if not meta["emailSent"]:
+            if smtp_fail_open():
+                db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+                user.email_verified_at = _utcnow()
+                db.commit()
+                db.refresh(user)
+                meta["emailVerificationRequired"] = False
+                meta["smtpFailOpen"] = True
+                meta["warning"] = "메일 발송에 실패해 이메일 인증을 건너뛰었습니다."
+                return user, meta
             db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
             db.delete(user)
             db.commit()

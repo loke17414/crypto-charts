@@ -225,6 +225,9 @@ const AppAuth = (() => {
           window.location.href = `login.html?${loginQs.toString()}`;
           return;
         }
+        if (data.warning || data.smtpFailOpen) {
+          alert(data.warning || data.message || '가입되었습니다.');
+        }
         if (currentPageName() === 'login.html' || currentPageName() === 'register.html') {
           redirectAfterAuth();
           return;

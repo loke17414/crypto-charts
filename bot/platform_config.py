@@ -320,6 +320,18 @@ def smtp_configured() -> bool:
     return bool(smtp_profiles())
 
 
+def smtp_fail_open() -> bool:
+    """
+    If SMTP login/send fails during signup, still create a verified account.
+    Default true so a broken mail relay does not block all registrations.
+    Set SMTP_FAIL_OPEN=false once SMTP diagnose reports ok.
+    """
+    raw = os.getenv("SMTP_FAIL_OPEN", "true").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    return True
+
+
 def email_require_verification() -> bool:
     """
     Require verified email before login.
