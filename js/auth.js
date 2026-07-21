@@ -221,9 +221,9 @@ const AppAuth = (() => {
         clearTradingState();
         const data = await register(email, password, acceptTerms);
         if (data.needsVerification) {
-          alert(data.message || data.emailError || '가입되었습니다. 이메일 인증 링크를 확인해 주세요.');
+          alert(data.message || data.emailError || '가입되었습니다. 이메일 인증 링크를 확인해 주세요. (스팸함·프로모션함도 확인)');
           const statusEl = document.getElementById('authStatus');
-          if (statusEl) statusEl.textContent = '이메일 인증 대기 중 — 메일을 확인하세요';
+          if (statusEl) statusEl.textContent = '이메일 인증 대기 중 — 받은편지함·스팸함을 확인하세요';
           const loginQs = new URLSearchParams();
           loginQs.set('email', email);
           window.location.href = `login.html?${loginQs.toString()}`;
