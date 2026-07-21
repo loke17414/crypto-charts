@@ -177,6 +177,23 @@ async def lifespan(app: FastAPI):
         "configured" if billing_configured() else "off",
         "on" if billing_enforce() else "off",
     )
+    try:
+        from bot.platform_config import smtp_profiles as _smtp_profiles_log
+
+        profiles = _smtp_profiles_log()
+        if profiles:
+            for p in profiles:
+                logger.info(
+                    "SMTP profile %s host=%s user=%s passwordLen=%s",
+                    p.get("name"),
+                    p.get("host"),
+                    p.get("user"),
+                    len(str(p.get("password") or "")),
+                )
+        else:
+            logger.info("SMTP: not configured (email verification disabled)")
+    except Exception:
+        logger.exception("SMTP profile log failed")
     if not auth_required():
         auto_connect_from_env()
     restore_bot_if_needed()

@@ -24,6 +24,7 @@ from bot.platform_config import (
     email_require_verification,
     jwt_algorithm,
     jwt_secret,
+    smtp_profiles,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,11 +150,24 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
     if not accept_terms:
         raise ValueError("이용약관·개인정보·위험고지에 동의해 주세요.")
     normalized = email.lower().strip()
-    if get_user_by_email(db, normalized):
-        raise ValueError("Email already registered")
+    existing = get_user_by_email(db, normalized)
+    if existing is not None:
+        # Unverified leftovers (SMTP failed on first attempt) block re-signup — remove them.
+        if existing.email_verified_at is None:
+            db.query(EmailToken).filter(EmailToken.user_id == existing.id).delete()
+            db.delete(existing)
+            db.commit()
+        else:
+            raise ValueError("Email already registered")
 
     now = _utcnow()
     require_verify = email_require_verification() and smtp_configured()
+    profiles = smtp_profiles()
+    profile_hint = ", ".join(
+        f"{p.get('name')}:{p.get('host')}/{p.get('user')}/pwLen={len(str(p.get('password') or ''))}"
+        for p in profiles
+    ) or "none"
+
     user = User(
         email=normalized,
         password_hash=hash_password(password),
@@ -169,18 +183,41 @@ def create_user(db: Session, email: str, password: str, *, accept_terms: bool) -
         "emailVerificationRequired": require_verify,
         "emailSent": False,
         "smtpConfigured": smtp_configured(),
+        "smtpProfiles": profile_hint,
     }
     if require_verify:
+        if not any(str(p.get("password") or "") for p in profiles):
+            db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+            db.delete(user)
+            db.commit()
+            raise ValueError(
+                "SMTP 비밀번호가 비어 있습니다. 서버 .env의 SMTP_PASSWORD / SMTP2_PASSWORD를 확인한 뒤 "
+                "`python -m bot.smtp_diagnose`를 실행하세요."
+            )
         raw = create_email_token(db, user, purpose=PURPOSE_VERIFY, hours=24)
         try:
             meta["emailSent"] = send_verify_email(user.email, raw)
         except Exception as exc:
-            logger.exception("verify email send failed for user_id=%s", user.id)
-            meta["emailSent"] = False
-            meta["emailError"] = (
+            logger.exception("verify email send failed for user_id=%s profiles=%s", user.id, profile_hint)
+            # Roll back so the email can be used again after SMTP is fixed.
+            db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+            db.delete(user)
+            db.commit()
+            raise ValueError(
                 "인증 메일 발송에 실패했습니다. "
                 f"({safe_smtp_error(exc)}) "
-                "로그인 화면에서 「인증 메일 재전송」을 눌러 주세요."
+                f"[SMTP: {profile_hint}] "
+                "서버에서 `python -m bot.smtp_diagnose`로 확인하세요. "
+                "네이버: 메일 환경설정에서 SMTP 사용함 + 앱 비밀번호. "
+                "Gmail: 앱 비밀번호(공백 없이)."
+            ) from exc
+        if not meta["emailSent"]:
+            db.query(EmailToken).filter(EmailToken.user_id == user.id).delete()
+            db.delete(user)
+            db.commit()
+            raise ValueError(
+                "인증 메일을 보내지 못했습니다. SMTP 설정을 확인하세요. "
+                f"[SMTP: {profile_hint}]"
             )
     return user, meta
 

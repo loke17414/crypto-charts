@@ -123,10 +123,20 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     try:
         user, meta = create_user(db, body.email, body.password, accept_terms=body.accept_terms)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        msg = str(exc)
+        # SMTP / mail delivery problems → 503 so the client shows a clear retry message
+        if "SMTP" in msg or "인증 메일" in msg or "메일 발송" in msg:
+            raise HTTPException(status_code=503, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
 
     # If verification required, do not issue JWT until verified
     if meta.get("emailVerificationRequired"):
+        if not meta.get("emailSent"):
+            raise HTTPException(
+                status_code=503,
+                detail=meta.get("emailError")
+                or "인증 메일 발송에 실패했습니다. SMTP 설정을 확인해 주세요.",
+            )
         return {
             "ok": True,
             "needsVerification": True,
@@ -135,11 +145,7 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
             "expires_in": 0,
             "user": _user_payload(user),
             **meta,
-            "message": (
-                "가입되었습니다. 이메일로 보낸 인증 링크를 확인해 주세요."
-                if meta.get("emailSent")
-                else meta.get("emailError") or "가입되었습니다. 인증 메일을 재전송해 주세요."
-            ),
+            "message": "가입되었습니다. 이메일로 보낸 인증 링크를 확인해 주세요.",
         }
 
     token, expires_in = create_access_token(user_id=user.id, email=user.email)

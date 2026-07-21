@@ -19,7 +19,7 @@ def app_root() -> Path:
 
 
 ROOT = app_root()
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
 
 
 def _optional_float(key: str) -> float | None:
