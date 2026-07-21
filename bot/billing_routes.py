@@ -22,6 +22,9 @@ from bot.platform_config import (
     billing_enforce,
     free_bot_seconds_per_week,
     free_gpt_calls_per_week,
+    free_max_strategy_slots,
+    free_web_research_allowed,
+    pro_max_strategy_slots,
     toss_client_key,
     toss_pro_amount_krw,
 )
@@ -52,6 +55,9 @@ def billing_me(
         "limits": {
             "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
             "freeGptCallsPerWeek": free_gpt_calls_per_week(),
+            "freeMaxStrategySlots": free_max_strategy_slots(),
+            "proMaxStrategySlots": pro_max_strategy_slots(),
+            "freeWebResearch": free_web_research_allowed(),
         },
     }
 
@@ -68,6 +74,9 @@ def billing_status() -> dict[str, Any]:
         "limits": {
             "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
             "freeGptCallsPerWeek": free_gpt_calls_per_week(),
+            "freeMaxStrategySlots": free_max_strategy_slots(),
+            "proMaxStrategySlots": pro_max_strategy_slots(),
+            "freeWebResearch": free_web_research_allowed(),
         },
     }
 

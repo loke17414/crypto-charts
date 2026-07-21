@@ -42,6 +42,9 @@ from bot.platform_config import (
     cors_allow_origins,
     database_url,
     email_require_verification,
+    free_max_strategy_slots,
+    free_web_research_allowed,
+    pro_max_strategy_slots,
 )
 from bot.email_service import smtp_configured
 from bot.platform_network import binance_ip_whitelist_hint, get_outbound_ip, parse_binance_request_ip
@@ -580,8 +583,14 @@ def strategy_interpret(
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
     assert_can_use_gpt(db, user)
     force_mini = False
+    allow_web_research = True
+    max_slots = pro_max_strategy_slots()
     if user is not None and billing_enforce():
-        force_mini = not is_pro(ensure_subscription(db, user.id))
+        sub = ensure_subscription(db, user.id)
+        pro = is_pro(sub)
+        force_mini = not pro
+        allow_web_research = True if pro else free_web_research_allowed()
+        max_slots = pro_max_strategy_slots() if pro else free_max_strategy_slots()
     # Use platform OPENAI_API_KEY; keep chat memory scoped per user.
     try:
         result = interpret_strategy(
@@ -595,6 +604,8 @@ def strategy_interpret(
             api_key=None,
             user_id=user.id if user is not None else None,
             force_mini=force_mini,
+            allow_web_research=allow_web_research,
+            max_strategy_slots=max_slots,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -99,6 +99,33 @@ const FuturesBotApp = (() => {
   const STRATEGY_SLOTS_KEY = 'crypto-charts-strategy-slots';
   const STRATEGY_FORM_KEY = 'crypto-charts-strategy-form';
   const MAX_STRATEGY_SLOTS = 6;
+  let planFeatures = {
+    pro: false,
+    maxStrategySlots: MAX_STRATEGY_SLOTS,
+    webResearch: true,
+  };
+
+  async function refreshPlanFeatures() {
+    try {
+      if (typeof FuturesApiClient === 'undefined' || !FuturesApiClient.billingMe) return;
+      if (typeof AppAuth !== 'undefined' && !AppAuth.isLoggedIn?.()) {
+        planFeatures = { pro: false, maxStrategySlots: 1, webResearch: false };
+        return;
+      }
+      const snap = await FuturesApiClient.billingMe();
+      planFeatures = {
+        pro: !!snap?.pro,
+        maxStrategySlots: Number(snap?.features?.maxStrategySlots) || (snap?.pro ? MAX_STRATEGY_SLOTS : 1),
+        webResearch: snap?.features?.webResearch !== false && !!snap?.pro,
+      };
+    } catch {
+      /* keep last / defaults when billing unavailable */
+    }
+  }
+
+  function maxAllowedStrategySlots() {
+    return Math.max(1, Math.min(MAX_STRATEGY_SLOTS, Number(planFeatures.maxStrategySlots) || 1));
+  }
 
   function strategyStorageSuffix() {
     try {
@@ -949,8 +976,13 @@ const FuturesBotApp = (() => {
   }
 
   function addStrategySlot({ name = null, entryRules = null, exitRules = null, enabled = true } = {}) {
-    if (state.strategySlots.length >= MAX_STRATEGY_SLOTS) {
-      addLog(`진입 조건은 최대 ${MAX_STRATEGY_SLOTS}개까지 만들 수 있습니다.`, 'warn');
+    const maxSlots = maxAllowedStrategySlots();
+    if (state.strategySlots.length >= maxSlots) {
+      if (!planFeatures.pro && maxSlots < MAX_STRATEGY_SLOTS) {
+        addLog(`무료 플랜은 진입 조건 ${maxSlots}개까지입니다. 멀티 슬롯은 Pro에서 사용할 수 있습니다.`, 'warn');
+      } else {
+        addLog(`진입 조건은 최대 ${maxSlots}개까지 만들 수 있습니다.`, 'warn');
+      }
       return null;
     }
     const slot = {
@@ -1126,7 +1158,7 @@ const FuturesBotApp = (() => {
         };
         return;
       }
-      if (merged.length >= MAX_STRATEGY_SLOTS) return;
+      if (merged.length >= maxAllowedStrategySlots()) return;
       if (incoming.entryRules && !entryRulesHaveSignals(incoming.entryRules)) return;
       merged.push(incoming);
       indexById.set(incoming.id, merged.length - 1);
@@ -3670,6 +3702,7 @@ const FuturesBotApp = (() => {
 
       await restoreSessionFromServer();
       await restoreStrategyPersistence();
+      await refreshPlanFeatures();
       setModeBadge();
 
       if ((Chart.getCandles() || []).length) {

@@ -1600,6 +1600,8 @@ def interpret_strategy(
     api_key: str | None = None,
     user_id: int | None = None,
     force_mini: bool = False,
+    allow_web_research: bool = True,
+    max_strategy_slots: int | None = None,
 ) -> dict[str, Any]:
     raw_settings = dict(current_settings or {})
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
@@ -1617,11 +1619,13 @@ def interpret_strategy(
     append_turn(role="user", content=prompt.strip(), user_id=user_id)
 
     web_research: list[dict[str, Any]] = []
-    if looks_like_research_request(prompt):
+    if allow_web_research and looks_like_research_request(prompt):
         try:
             web_research = research_strategies(prompt.strip())
         except Exception:
             logger.exception("Web strategy research failed — continuing without it")
+    elif looks_like_research_request(prompt) and not allow_web_research:
+        logger.info("Web strategy research skipped (plan limit) user=%s", user_id)
 
     chosen_model, route_reason = select_openai_model(
         prompt.strip(),
@@ -1685,6 +1689,21 @@ def interpret_strategy(
             changed_fields = list(patch.keys())
     else:
         merged = current
+
+    if max_strategy_slots is not None:
+        slots = list(merged.strategySlots or [])
+        cur_n = len(list(current.strategySlots or []))
+        if len(slots) > max_strategy_slots and len(slots) > cur_n:
+            raise ValueError(
+                f"무료 플랜은 진입 조건 {max_strategy_slots}개까지입니다. "
+                "멀티 슬롯은 Pro에서 사용할 수 있습니다."
+            )
+        if len(slots) > max_strategy_slots:
+            trimmed = slots[:max_strategy_slots]
+            merged = merged.merged({"strategySlots": trimmed})
+            patch = {**patch, "strategySlots": trimmed}
+            if "strategySlots" not in changed_fields:
+                changed_fields = [*changed_fields, "strategySlots"]
 
     _validate_strategy_apply_or_raise(
         prompt.strip(),

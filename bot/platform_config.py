@@ -166,20 +166,46 @@ def billing_enforce() -> bool:
 
 
 def free_bot_seconds_per_week() -> int:
-    """Free plan bot runtime per week. Default 8h (tight free tier)."""
+    """Free plan bot runtime per week. Default 48h."""
     try:
-        hours = float(os.getenv("FREE_BOT_HOURS_PER_WEEK", "8").strip())
+        hours = float(os.getenv("FREE_BOT_HOURS_PER_WEEK", "48").strip())
     except ValueError:
-        hours = 8.0
+        hours = 48.0
     return max(0, int(hours * 3600))
 
 
 def free_gpt_calls_per_week() -> int:
-    """Free plan GPT calls per week. Default 5 (mini only)."""
+    """Free plan GPT calls per week. Default 10 (mini only)."""
     try:
-        return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "5").strip()))
+        return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "10").strip()))
     except ValueError:
-        return 5
+        return 10
+
+
+def free_max_strategy_slots() -> int:
+    """Free plan max entry-condition slots. Default 1 (multi-slot is Pro)."""
+    try:
+        return max(1, int(os.getenv("FREE_MAX_STRATEGY_SLOTS", "1").strip()))
+    except ValueError:
+        return 1
+
+
+def pro_max_strategy_slots() -> int:
+    """Pro plan max entry-condition slots. Default 6."""
+    try:
+        return max(1, int(os.getenv("PRO_MAX_STRATEGY_SLOTS", "6").strip()))
+    except ValueError:
+        return 6
+
+
+def free_web_research_allowed() -> bool:
+    """Whether Free may use web strategy research. Default false (Pro feature)."""
+    raw = os.getenv("FREE_WEB_RESEARCH", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return False
 
 
 def billing_week_timezone() -> str:

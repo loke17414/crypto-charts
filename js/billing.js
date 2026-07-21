@@ -39,13 +39,13 @@ const AppBilling = (() => {
     if (botEl) {
       botEl.textContent = snap.pro
         ? '봇 가동: 무제한'
-        : `봇 가동: ${snap.bot?.hoursUsed ?? 0} / ${snap.bot?.hoursLimit ?? 8}시간 (이번 주)`;
+        : `봇 가동: ${snap.bot?.hoursUsed ?? 0} / ${snap.bot?.hoursLimit ?? 48}시간 (이번 주)`;
     }
 
     if (gptEl) {
       gptEl.textContent = snap.pro
-        ? 'GPT: Pro (hybrid)'
-        : `GPT: ${snap.gpt?.callsUsed ?? 0} / ${snap.gpt?.callsLimit ?? 5}회 (이번 주 · mini)`;
+        ? 'GPT: Pro (hybrid · 웹 리서치)'
+        : `GPT: ${snap.gpt?.callsUsed ?? 0} / ${snap.gpt?.callsLimit ?? 10}회 (이번 주 · mini)`;
     }
 
     if (noteEl) {
@@ -64,9 +64,10 @@ const AppBilling = (() => {
           : `Pro 월 ${won}원 구독 중`;
       } else {
         const won = Number(snap.amountKrw || 29000).toLocaleString('ko-KR');
-        const botH = snap.bot?.hoursLimit ?? 8;
-        const gptN = snap.gpt?.callsLimit ?? 5;
-        noteEl.textContent = `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini). Pro는 무제한 · 월 ${won}원.`;
+        const botH = snap.bot?.hoursLimit ?? 48;
+        const gptN = snap.gpt?.callsLimit ?? 10;
+        const slots = snap.features?.maxStrategySlots ?? 1;
+        noteEl.textContent = `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개 · 웹 리서치 없음. Pro는 무제한·멀티슬롯·리서치 · 월 ${won}원.`;
       }
     }
 

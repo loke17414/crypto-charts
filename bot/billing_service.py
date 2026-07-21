@@ -22,6 +22,9 @@ from bot.platform_config import (
     billing_week_timezone,
     free_bot_seconds_per_week,
     free_gpt_calls_per_week,
+    free_max_strategy_slots,
+    free_web_research_allowed,
+    pro_max_strategy_slots,
     toss_client_key,
     toss_pro_amount_krw,
     toss_pro_order_name,
@@ -166,6 +169,8 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
     gpt_limit = free_gpt_calls_per_week()
     bot_used = int(usage.bot_seconds_used or 0)
     gpt_used = int(usage.gpt_calls_used or 0)
+    max_slots = pro_max_strategy_slots() if pro else free_max_strategy_slots()
+    web_research = True if pro else free_web_research_allowed()
 
     return {
         "plan": "pro" if pro else "free",
@@ -190,6 +195,10 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
             "callsLimit": None if pro else gpt_limit,
             "remaining": None if pro else max(0, gpt_limit - gpt_used),
             "modelNote": "Free: gpt-4o-mini only" if not pro else "Pro: hybrid routing",
+        },
+        "features": {
+            "maxStrategySlots": max_slots,
+            "webResearch": web_research,
         },
     }
 
