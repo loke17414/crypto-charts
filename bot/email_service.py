@@ -6,8 +6,9 @@ import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
-from email.utils import formataddr, parseaddr
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from typing import Any
+from urllib.parse import urlparse
 
 from bot.platform_config import (
     app_origin,
@@ -34,6 +35,38 @@ def _origin() -> str:
     if origin == "*" or not origin.startswith("http"):
         return "http://127.0.0.1:8765"
     return origin
+
+
+def _mail_domain() -> str:
+    try:
+        host = urlparse(_origin()).hostname or ""
+        if host and "." in host and host not in ("localhost", "127.0.0.1"):
+            return host
+    except Exception:
+        pass
+    return "orbinex.net"
+
+
+def _apply_deliverability_headers(msg: EmailMessage, *, to: str, from_header: str) -> None:
+    """Headers that reduce spam-folder risk for transactional mail."""
+    _, from_addr = parseaddr(from_header)
+    if "Date" not in msg:
+        msg["Date"] = formatdate(localtime=False)
+    if "Message-ID" not in msg:
+        msg["Message-ID"] = make_msgid(domain=_mail_domain())
+    if "MIME-Version" not in msg:
+        msg["MIME-Version"] = "1.0"
+    if from_addr and "Reply-To" not in msg:
+        msg["Reply-To"] = from_addr
+    # Help filters classify as transactional (not bulk marketing)
+    msg["Auto-Submitted"] = "auto-generated"
+    msg["X-Auto-Response-Suppress"] = "All"
+    origin = _origin()
+    if origin.startswith("http") and "List-Unsubscribe" not in msg:
+        msg["List-Unsubscribe"] = f"<{origin}/login.html>"
+    # Avoid spammy multiparts: ensure To is set cleanly
+    if "To" not in msg:
+        msg["To"] = to
 
 
 def safe_smtp_error(exc: BaseException) -> str:
@@ -204,6 +237,10 @@ def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: str | 
         "to": [to],
         "subject": subject,
         "text": text_body,
+        "headers": {
+            "Auto-Submitted": "auto-generated",
+            "X-Entity-Ref-ID": make_msgid(domain=_mail_domain()),
+        },
     }
     if html_body:
         payload["html"] = html_body
@@ -371,34 +408,54 @@ def diagnose_smtp(*, to: str | None = None) -> dict[str, Any]:
 
 def send_verify_email(to: str, token: str) -> bool:
     link = f"{_origin()}/verify.html?token={token}"
-    subject = "[Orbinex] 이메일 인증"
+    subject = "Orbinex 이메일 인증"
     text = (
-        "Orbinex 가입을 환영합니다.\n\n"
-        f"아래 링크를 열어 이메일을 인증해 주세요 (24시간 유효):\n{link}\n\n"
-        "본인이 요청하지 않았다면 이 메일을 무시하세요.\n"
+        "안녕하세요,\n\n"
+        "Orbinex 계정 가입을 완료하려면 아래 주소로 이메일 인증을 진행해 주세요.\n\n"
+        f"{link}\n\n"
+        "이 링크는 24시간 동안만 유효합니다.\n"
+        "본인이 요청하지 않았다면 이 메일은 무시하셔도 됩니다.\n\n"
+        "Orbinex\n"
+        f"{_origin()}\n"
     )
     html = (
-        "<p>Orbinex 가입을 환영합니다.</p>"
-        f'<p><a href="{link}">이메일 인증하기</a></p>'
-        f"<p>링크가 열리지 않으면 아래 주소를 복사해 브라우저에 붙여넣으세요:<br>"
-        f"<code>{link}</code></p>"
-        "<p>링크는 24시간 동안 유효합니다.</p>"
+        "<div style='font-family:sans-serif;line-height:1.5;color:#222'>"
+        "<p>안녕하세요,</p>"
+        "<p>Orbinex 계정 가입을 완료하려면 아래 버튼으로 이메일을 인증해 주세요.</p>"
+        f"<p><a href=\"{link}\" style=\"display:inline-block;padding:10px 16px;"
+        "background:#2563eb;color:#fff;text-decoration:none;border-radius:6px\">"
+        "이메일 인증하기</a></p>"
+        f"<p style='font-size:13px;color:#555'>버튼이 안 되면 이 주소를 브라우저에 붙여넣으세요:<br>{link}</p>"
+        "<p style='font-size:13px;color:#555'>링크는 24시간 동안 유효합니다. "
+        "본인이 요청하지 않았다면 무시하세요.</p>"
+        f"<p style='font-size:12px;color:#888'>Orbinex · {_origin()}</p>"
+        "</div>"
     )
     return send_email(to=to, subject=subject, text_body=text, html_body=html)
 
 
 def send_reset_email(to: str, token: str) -> bool:
     link = f"{_origin()}/reset-password.html?token={token}"
-    subject = "[Orbinex] 비밀번호 재설정"
+    subject = "Orbinex 비밀번호 재설정"
     text = (
-        "비밀번호 재설정을 요청하셨습니다.\n\n"
-        f"아래 링크에서 새 비밀번호를 설정하세요 (1시간 유효):\n{link}\n\n"
-        "본인이 요청하지 않았다면 이 메일을 무시하세요.\n"
+        "안녕하세요,\n\n"
+        "비밀번호 재설정을 요청하셨습니다. 아래 주소에서 새 비밀번호를 설정해 주세요.\n\n"
+        f"{link}\n\n"
+        "이 링크는 1시간 동안만 유효합니다.\n"
+        "본인이 요청하지 않았다면 이 메일은 무시하셔도 됩니다.\n\n"
+        "Orbinex\n"
+        f"{_origin()}\n"
     )
     html = (
-        "<p>비밀번호 재설정을 요청하셨습니다.</p>"
-        f'<p><a href="{link}">새 비밀번호 설정</a></p>'
-        f"<p>링크가 열리지 않으면:<br><code>{link}</code></p>"
-        "<p>링크는 1시간 동안 유효합니다.</p>"
+        "<div style='font-family:sans-serif;line-height:1.5;color:#222'>"
+        "<p>안녕하세요,</p>"
+        "<p>비밀번호 재설정을 요청하셨습니다. 아래 버튼에서 새 비밀번호를 설정해 주세요.</p>"
+        f"<p><a href=\"{link}\" style=\"display:inline-block;padding:10px 16px;"
+        "background:#2563eb;color:#fff;text-decoration:none;border-radius:6px\">"
+        "새 비밀번호 설정</a></p>"
+        f"<p style='font-size:13px;color:#555'>버튼이 안 되면:<br>{link}</p>"
+        "<p style='font-size:13px;color:#555'>링크는 1시간 동안 유효합니다.</p>"
+        f"<p style='font-size:12px;color:#888'>Orbinex · {_origin()}</p>"
+        "</div>"
     )
     return send_email(to=to, subject=subject, text_body=text, html_body=html)
