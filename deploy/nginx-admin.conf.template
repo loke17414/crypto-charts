@@ -1,0 +1,77 @@
+# Orbinex Admin Console — separate host (admin.__DOMAIN__)
+# Installed by deploy/setup-admin-subdomain.sh
+
+upstream cryptocharts_api_admin {
+    server 127.0.0.1:8000;
+    keepalive 8;
+}
+
+upstream cryptocharts_web_admin {
+    server 127.0.0.1:8765;
+    keepalive 8;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name admin.__DOMAIN__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name admin.__DOMAIN__;
+
+    ssl_certificate     /etc/letsencrypt/live/admin.__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.__DOMAIN__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    client_max_body_size 4m;
+
+    # Same-origin API for the console (avoids CORS)
+    location /api/ {
+        proxy_pass http://cryptocharts_api_admin;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 120s;
+    }
+
+    # Serve only the admin-site tree as the site root
+    location = / {
+        proxy_pass http://cryptocharts_web_admin/admin-site/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://cryptocharts_web_admin/admin-site/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+    }
+}

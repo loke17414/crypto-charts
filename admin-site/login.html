@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Orbinex Console — Login</title>
+  <link rel="stylesheet" href="./css/console.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="brand" style="padding:0 0 8px">
+        <div class="brand-mark">Orbinex</div>
+        <div class="brand-sub">Admin Console</div>
+      </div>
+      <h1>관리자 로그인</h1>
+      <p class="lead">운영 콘솔은 별도 사이트입니다. <code>ADMIN_EMAILS</code>에 등록된 계정만 접근할 수 있습니다.</p>
+      <form id="loginForm">
+        <div class="field">
+          <label for="email">이메일</label>
+          <input id="email" type="email" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+        </div>
+        <button class="btn btn-primary" type="submit" id="loginBtn">로그인</button>
+        <div class="login-error" id="loginError"></div>
+      </form>
+      <div class="login-meta">
+        <a id="tradingLink" href="https://orbinex.net/trading.html">트레이딩 사이트로</a>
+      </div>
+    </div>
+  </div>
+  <script src="./js/config.js"></script>
+  <script src="./js/api.js"></script>
+  <script>
+    (function () {
+      const cfg = window.AdminConfig;
+      document.getElementById('tradingLink').href = cfg.tradingUrl;
+
+      const token = localStorage.getItem(cfg.tokenKey);
+      if (token) {
+        AdminApi.adminMe()
+          .then(() => { location.href = './index.html'; })
+          .catch(() => {
+            localStorage.removeItem(cfg.tokenKey);
+            localStorage.removeItem(cfg.userKey);
+          });
+      }
+
+      document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errEl = document.getElementById('loginError');
+        const btn = document.getElementById('loginBtn');
+        errEl.classList.remove('show');
+        btn.disabled = true;
+        try {
+          const email = document.getElementById('email').value.trim();
+          const password = document.getElementById('password').value;
+          const data = await AdminApi.login(email, password);
+          const token = data?.access_token || data?.token;
+          if (!token) throw new Error('토큰이 없습니다');
+          localStorage.setItem(cfg.tokenKey, token);
+          if (data.user) localStorage.setItem(cfg.userKey, JSON.stringify(data.user));
+          await AdminApi.adminMe();
+          location.href = './index.html';
+        } catch (err) {
+          errEl.textContent = err.message || '로그인 실패';
+          errEl.classList.add('show');
+          localStorage.removeItem(cfg.tokenKey);
+          localStorage.removeItem(cfg.userKey);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

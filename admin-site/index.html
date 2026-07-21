@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Orbinex Console</title>
+  <link rel="stylesheet" href="./css/console.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">Orbinex</div>
+        <div class="brand-sub">Admin Console</div>
+      </div>
+      <nav class="nav">
+        <button type="button" data-panel="overview" class="active">대시보드</button>
+        <button type="button" data-panel="users">사용자</button>
+        <button type="button" data-panel="settings">설정</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="user-chip" id="adminEmail">—</div>
+        <a class="btn btn-ghost btn-sm" id="tradingLink" href="#">트레이딩</a>
+        <button type="button" class="btn btn-sm" id="logoutBtn">로그아웃</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="panel active" id="panel-overview">
+        <div class="page-head">
+          <div>
+            <h1>대시보드</h1>
+            <p>가입·플랜·봇 상태 요약</p>
+          </div>
+          <button type="button" class="btn" id="refreshOverview">새로고침</button>
+        </div>
+        <div class="cards" id="overviewCards"></div>
+      </section>
+
+      <section class="panel" id="panel-users">
+        <div class="page-head">
+          <div>
+            <h1>사용자</h1>
+            <p>이메일 인증, 활성/플랜, 쿼터, 봇 중지</p>
+          </div>
+        </div>
+        <div class="toolbar">
+          <input id="userQuery" type="search" placeholder="이메일 / 이름 검색" style="flex:1;min-width:180px" />
+          <button type="button" class="btn btn-primary" id="searchUsers">검색</button>
+          <button type="button" class="btn" id="reloadUsers">전체</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>이메일</th>
+                <th>플랜</th>
+                <th>인증</th>
+                <th>활성</th>
+                <th>봇</th>
+                <th>쿼터</th>
+                <th>작업</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-settings">
+        <div class="page-head">
+          <div>
+            <h1>설정 (읽기 전용)</h1>
+            <p>서버에 적용된 플랫폼 설정</p>
+          </div>
+          <button type="button" class="btn" id="refreshSettings">새로고침</button>
+        </div>
+        <div class="settings-grid" id="settingsGrid"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/api.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /
 Disallow: /admin.html
+Disallow: /admin-site/
 Disallow: /login.html
 Disallow: /register.html
 Disallow: /billing.html

@@ -1,100 +1,24 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>관리자 — Orbinex</title>
-  <meta name="robots" content="noindex, nofollow">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/account-pages.css?v=20260722a">
-  <link rel="stylesheet" href="css/admin.css?v=20260722a">
+  <meta charset="UTF-8" />
+  <meta name="robots" content="noindex,nofollow" />
+  <meta http-equiv="refresh" content="0;url=/admin-site/" />
+  <title>Redirecting — Orbinex Console</title>
+  <script>
+    // Prefer dedicated subdomain when configured; otherwise path-based console.
+    (function () {
+      var host = location.hostname || '';
+      var target = '/admin-site/';
+      if (host === 'orbinex.net' || host === 'www.orbinex.net') {
+        target = 'https://admin.orbinex.net/';
+      }
+      location.replace(target);
+    })();
+  </script>
 </head>
-<body class="account-page admin-page">
-  <header class="account-page__header">
-    <a class="account-page__brand" href="index.html">
-      <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
-        <path d="M12 16L15 19L20 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      Orbinex Admin
-    </a>
-    <nav class="account-page__nav">
-      <a href="trading.html">트레이딩</a>
-      <a href="billing.html">요금제</a>
-      <a href="login.html?next=admin.html">로그인</a>
-    </nav>
-  </header>
-
-  <main class="account-page__main admin-main">
-    <div class="account-card account-card--wide">
-      <h1>개발자 패널</h1>
-      <p class="account-card__lead">사용자·플랜·쿼터·봇을 관리합니다. <code>ADMIN_EMAILS</code>에 등록된 계정만 접근할 수 있습니다.</p>
-      <div id="adminStatus" class="account-card__status">확인 중…</div>
-
-      <div id="adminDenied" class="hidden">
-        <p class="account-card__lead">관리자 권한이 없거나 로그인이 필요합니다.</p>
-        <div class="account-card__actions">
-          <a class="btn btn--primary" href="login.html?next=admin.html" style="text-align:center;text-decoration:none;display:block;">로그인</a>
-        </div>
-      </div>
-
-      <div id="adminPanel" class="hidden">
-        <p class="admin-who"><span class="text-muted">관리자</span> <strong id="adminEmail">—</strong></p>
-
-        <section class="admin-section">
-          <h2>대시보드</h2>
-          <div id="adminOverview" class="admin-stats">불러오는 중…</div>
-        </section>
-
-        <section class="admin-section">
-          <h2>플랫폼 설정 <span class="text-muted">(읽기 전용)</span></h2>
-          <p class="api-hint">한도·키 변경은 서버 <code>.env</code> 수정 후 <code>systemctl restart crypto-web</code> 이 필요합니다.</p>
-          <pre id="adminSettings" class="admin-pre">—</pre>
-        </section>
-
-        <section class="admin-section">
-          <div class="admin-section__head">
-            <h2>사용자</h2>
-            <div class="admin-search">
-              <input type="search" id="adminUserQuery" placeholder="이메일 또는 ID" autocomplete="off">
-              <button type="button" id="adminUserSearchBtn" class="btn btn--primary btn--sm">검색</button>
-              <button type="button" id="adminUserRefreshBtn" class="btn btn--ghost btn--sm">새로고침</button>
-            </div>
-          </div>
-          <div id="adminUsersNote" class="api-hint"></div>
-          <div class="admin-table-wrap">
-            <table class="admin-table" id="adminUsersTable">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>이메일</th>
-                  <th>상태</th>
-                  <th>플랜</th>
-                  <th>사용량</th>
-                  <th>봇</th>
-                  <th>조작</th>
-                </tr>
-              </thead>
-              <tbody id="adminUsersBody">
-                <tr><td colspan="7">불러오는 중…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </div>
-  </main>
-
-  <footer class="account-page__footer">
-    <a href="trading.html">트레이딩</a>
-    <a href="billing.html">요금제</a>
-  </footer>
-
-  <script src="js/futures-api-client.js?v=20260722a"></script>
-  <script src="js/auth.js?v=20260722a"></script>
-  <script src="js/admin.js?v=20260722a"></script>
+<body>
+  <p>관리자 콘솔이 별도 사이트로 이동했습니다.
+    <a href="/admin-site/">여기</a>로 이동합니다.</p>
 </body>
 </html>
