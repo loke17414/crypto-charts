@@ -93,9 +93,13 @@ fi
 grep -q '^LISTEN_HOST=' .env 2>/dev/null || echo 'LISTEN_HOST=0.0.0.0' >> .env
 # Keep login sessions from expiring so Binance/GPT APIs stay usable after save.
 if grep -qE '^ACCESS_TOKEN_EXPIRE_MINUTES=' .env 2>/dev/null; then
-  sed -i 's/^ACCESS_TOKEN_EXPIRE_MINUTES=.*/ACCESS_TOKEN_EXPIRE_MINUTES=0/' .env
+  # Keep existing value; only seed default when missing
+  true
 else
-  echo 'ACCESS_TOKEN_EXPIRE_MINUTES=0' >> .env
+  echo 'ACCESS_TOKEN_EXPIRE_MINUTES=10080' >> .env
+fi
+if ! grep -qE '^SUPPORT_EMAIL=' .env 2>/dev/null; then
+  echo 'SUPPORT_EMAIL=support@orbinex.net' >> .env
 fi
 grep -qE '^JWT_SECRET=.+' .env 2>/dev/null || true
 

@@ -91,12 +91,30 @@ def jwt_algorithm() -> str:
 
 
 def access_token_expire_minutes() -> int:
-    """0 = never expire (default). Positive = minutes until JWT expires."""
-    raw = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "0").strip()
+    """Minutes until JWT expires. 0 = never expire (dev only).
+
+    Production default recommendation: 10080 (7 days).
+    """
+    raw = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080").strip()
     try:
         return max(0, int(raw))
     except ValueError:
-        return 0
+        return 10080
+
+
+def support_email() -> str:
+    return os.getenv("SUPPORT_EMAIL", "support@orbinex.net").strip() or "support@orbinex.net"
+
+
+def business_profile() -> dict[str, str]:
+    """Optional KR business identity shown on legal/footer pages."""
+    return {
+        "name": os.getenv("BUSINESS_NAME", "").strip(),
+        "representative": os.getenv("BUSINESS_REPRESENTATIVE", "").strip(),
+        "registrationNumber": os.getenv("BUSINESS_REGISTRATION_NUMBER", "").strip(),
+        "address": os.getenv("BUSINESS_ADDRESS", "").strip(),
+        "supportEmail": support_email(),
+    }
 
 
 def master_encryption_key() -> str:

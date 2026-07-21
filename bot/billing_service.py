@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from bot.crypto_vault import decrypt_secret, encrypt_secret
-from bot.models import Subscription, UsageQuota, User
+from bot.models import PaymentRecord, Subscription, UsageQuota, User
 from bot.platform_config import (
     app_origin,
     billing_configured,
@@ -348,11 +348,68 @@ def _activate_pro(db: Session, sub: Subscription, *, months: int = 1) -> None:
     db.commit()
 
 
+def _record_payment(
+    db: Session,
+    *,
+    user_id: int,
+    order_id: str,
+    payment: dict[str, Any],
+    amount: int,
+    kind: str,
+) -> PaymentRecord:
+    method = None
+    card = payment.get("card")
+    if isinstance(card, dict):
+        method = str(card.get("company") or card.get("number") or "card")[:64]
+    elif payment.get("method"):
+        method = str(payment.get("method"))[:64]
+    row = PaymentRecord(
+        user_id=user_id,
+        order_id=order_id,
+        payment_key=(str(payment.get("paymentKey"))[:200] if payment.get("paymentKey") else None),
+        amount=int(payment.get("totalAmount") or amount),
+        currency=str(payment.get("currency") or "KRW")[:8],
+        status="paid",
+        kind=kind,
+        method=method,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_payment_history(db: Session, user_id: int, *, limit: int = 50) -> list[dict[str, Any]]:
+    rows = (
+        db.query(PaymentRecord)
+        .filter(PaymentRecord.user_id == user_id)
+        .order_by(PaymentRecord.id.desc())
+        .limit(max(1, min(200, limit)))
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "orderId": r.order_id,
+            "paymentKey": r.payment_key,
+            "amount": r.amount,
+            "currency": r.currency,
+            "status": r.status,
+            "kind": r.kind,
+            "method": r.method,
+            "createdAt": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
 def _charge_billing_key(
     db: Session,
     user: User,
     sub: Subscription,
     billing_key: str,
+    *,
+    kind: str = "subscribe",
 ) -> dict[str, Any]:
     order_id = f"orb-pro-{user.id}-{uuid.uuid4().hex[:16]}"
     amount = toss_pro_amount_krw()
@@ -369,11 +426,23 @@ def _charge_billing_key(
         },
     )
     _activate_pro(db, sub)
+    try:
+        _record_payment(
+            db,
+            user_id=user.id,
+            order_id=str(payment.get("orderId") or order_id),
+            payment=payment if isinstance(payment, dict) else {},
+            amount=amount,
+            kind=kind,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist payment record user=%s order=%s", user.id, order_id)
     logger.info(
-        "Toss charge OK user=%s order=%s amount=%s",
+        "Toss charge OK user=%s order=%s amount=%s kind=%s",
         user.id,
         order_id,
         amount,
+        kind,
     )
     return payment
 
@@ -405,7 +474,7 @@ def confirm_billing_auth(db: Session, user: User, auth_key: str, customer_key: s
     sub.toss_billing_key_encrypted = encrypt_secret(billing_key)
     db.commit()
 
-    payment = _charge_billing_key(db, user, sub, billing_key)
+    payment = _charge_billing_key(db, user, sub, billing_key, kind="subscribe")
     return {
         "ok": True,
         "plan": "pro",
@@ -447,16 +516,50 @@ def try_renew_if_due(db: Session, user_id: int) -> bool:
         return False
     try:
         billing_key = decrypt_secret(sub.toss_billing_key_encrypted)
-        _charge_billing_key(db, user, sub, billing_key)
+        _charge_billing_key(db, user, sub, billing_key, kind="renew")
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("Renewal failed user=%s: %s", user_id, exc)
         sub.status = "past_due"
-        # Keep pro briefly; expire on next check if still past end + past_due long
         # Soft: downgrade immediately on failed renew
         sub.plan = "free"
         db.commit()
         return False
+
+
+def renew_due_subscriptions(db: Session) -> dict[str, Any]:
+    """Cron entry: renew or expire all Pro periods that are past due."""
+    now = _utcnow()
+    rows = (
+        db.query(Subscription)
+        .filter(
+            Subscription.plan == "pro",
+            Subscription.current_period_end.isnot(None),
+            Subscription.current_period_end <= now,
+        )
+        .all()
+    )
+    renewed = 0
+    expired = 0
+    failed = 0
+    for sub in rows:
+        before_plan = sub.plan
+        before_status = sub.status
+        ok = try_renew_if_due(db, sub.user_id)
+        db.refresh(sub)
+        if ok:
+            renewed += 1
+        elif sub.plan != "pro" or sub.status != before_status or before_plan != sub.plan:
+            expired += 1
+        else:
+            failed += 1
+    return {
+        "ok": True,
+        "checked": len(rows),
+        "renewed": renewed,
+        "expired": expired,
+        "failed": failed,
+    }
 
 
 def cancel_subscription(db: Session, user: User, *, immediate: bool = False) -> dict[str, Any]:

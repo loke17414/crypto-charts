@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from bot.account_service import delete_user_account, export_user_data
 from bot.auth_service import (
     assert_email_verified_for_login,
     authenticate_user,
@@ -32,6 +33,7 @@ _reg_max, _reg_window = register_rate_limit()
 _register_limiter = RateLimiter(max_calls=_reg_max, window_seconds=_reg_window)
 _login_limiter = RateLimiter(max_calls=max(10, _reg_max * 4), window_seconds=_reg_window)
 _email_limiter = RateLimiter(max_calls=5, window_seconds=3600)
+_account_limiter = RateLimiter(max_calls=10, window_seconds=3600)
 
 
 class RegisterBody(BaseModel):
@@ -56,6 +58,11 @@ class TokenBody(BaseModel):
 class ResetPasswordBody(BaseModel):
     token: str = Field(min_length=10, max_length=200)
     password: str = Field(min_length=8, max_length=128)
+
+
+class DeleteAccountBody(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    confirm: str = Field(min_length=1, max_length=32)
 
 
 def _user_payload(user: User) -> dict[str, Any]:
@@ -297,3 +304,43 @@ def me(
         "credentialsUseTestnet": use_testnet,
         "openaiKeySaved": has_openai_key(db, user.id),
     }
+
+
+@router.get("/export")
+def export_account(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _account_limiter.check(f"export:{ip}:{user.id}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"요청이 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return export_user_data(db, user)
+
+
+@router.post("/delete-account")
+def delete_account(
+    body: DeleteAccountBody,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _account_limiter.check(f"delete:{ip}:{user.id}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"요청이 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    if body.confirm.strip().upper() != "DELETE":
+        raise HTTPException(status_code=400, detail='확인 문구로 DELETE 를 입력해 주세요.')
+    try:
+        return delete_user_account(db, user, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

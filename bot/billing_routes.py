@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from bot.auth_routes import get_current_user
 from bot.billing_service import (
     cancel_subscription,
     confirm_billing_auth,
+    list_payment_history,
     prepare_billing_auth,
     usage_snapshot,
 )
@@ -29,9 +30,12 @@ from bot.platform_config import (
     toss_client_key,
     toss_pro_amount_krw,
 )
+from bot.rate_limit import RateLimiter, client_ip
 from bot.server_bot import is_running
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
+
+_billing_limiter = RateLimiter(max_calls=20, window_seconds=3600)
 
 
 class ConfirmBody(BaseModel):
@@ -96,10 +100,19 @@ def billing_prepare(
 @router.post("/confirm")
 def billing_confirm(
     body: ConfirmBody,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Exchange authKey → billingKey, charge first month, activate Pro."""
+    ip = client_ip(request)
+    allowed, retry_after = _billing_limiter.check(f"billing-confirm:{ip}:{user.id}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"결제 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
     return confirm_billing_auth(db, user, body.authKey, body.customerKey)
 
 
@@ -111,3 +124,12 @@ def billing_cancel(
 ) -> dict[str, Any]:
     immediate = bool(body.immediate) if body else False
     return cancel_subscription(db, user, immediate=immediate)
+
+
+@router.get("/history")
+def billing_history(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    rows = list_payment_history(db, user.id, limit=50)
+    return {"ok": True, "count": len(rows), "payments": rows}

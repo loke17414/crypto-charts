@@ -336,6 +336,21 @@ const FuturesApiClient = (() => {
     });
   }
 
+  async function billingHistory() {
+    return request('/api/billing/history');
+  }
+
+  async function authExport() {
+    return request('/api/auth/export');
+  }
+
+  async function authDeleteAccount({ password, confirm }) {
+    return request('/api/auth/delete-account', {
+      method: 'POST',
+      body: JSON.stringify({ password, confirm }),
+    });
+  }
+
   async function adminMe() {
     return request('/api/admin/me');
   }
@@ -427,6 +442,9 @@ const FuturesApiClient = (() => {
     billingPrepare,
     billingConfirm,
     billingCancel,
+    billingHistory,
+    authExport,
+    authDeleteAccount,
     adminMe,
     adminOverview,
     adminSettings,

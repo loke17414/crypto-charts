@@ -82,6 +82,30 @@ const AppBilling = (() => {
     }
   }
 
+  async function renderHistory() {
+    const el = $('billingHistory');
+    if (!el || typeof FuturesApiClient.billingHistory !== 'function') return;
+    try {
+      const data = await FuturesApiClient.billingHistory();
+      const rows = data.payments || [];
+      if (!rows.length) {
+        el.textContent = '결제 내역이 없습니다.';
+        return;
+      }
+      el.innerHTML = `<ul style="list-style:none;padding:0;margin:0;font-size:0.86rem;">${rows.map((p) => {
+        const when = p.createdAt ? new Date(p.createdAt).toLocaleString('ko-KR') : '—';
+        const amt = Number(p.amount || 0).toLocaleString('ko-KR');
+        const kind = p.kind === 'renew' ? '갱신' : '구독';
+        return `<li style="padding:0.45rem 0;border-bottom:1px solid var(--border, #333);">
+          <strong>${kind}</strong> · ${amt}${p.currency || 'KRW'} · ${p.status || 'paid'}
+          <div class="text-muted" style="font-size:0.78rem;">${when} · ${p.orderId || ''}</div>
+        </li>`;
+      }).join('')}</ul>`;
+    } catch (err) {
+      el.textContent = err.message || '결제 내역을 불러오지 못했습니다.';
+    }
+  }
+
   async function refresh() {
     if (typeof AppAuth === 'undefined' || !AppAuth.isLoggedIn()) {
       render(null);
@@ -91,6 +115,7 @@ const AppBilling = (() => {
     try {
       const data = await FuturesApiClient.billingMe();
       render(data);
+      await renderHistory();
       return data;
     } catch (err) {
       const noteEl = $('billingNote');

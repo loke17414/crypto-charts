@@ -216,6 +216,7 @@ PUBLIC_API_PATHS = {
     "/api/auth/reset-password",
     "/api/platform/outbound-ip",
     "/api/billing/status",
+    "/api/public/site",
 }
 
 
@@ -379,6 +380,26 @@ def _shift_sl_tp_to_fill(
         if tp is not None:
             tp = entry_price - (ref_price - tp)
     return sl, tp
+
+
+@app.get("/api/public/site")
+def public_site_info() -> dict[str, Any]:
+    """Public support / business identity for legal pages and footers."""
+    from bot.platform_config import business_profile, support_email
+
+    profile = business_profile()
+    return {
+        "ok": True,
+        "appName": "Orbinex",
+        "supportEmail": support_email(),
+        "business": profile,
+        "links": {
+            "terms": "/terms.html",
+            "privacy": "/privacy.html",
+            "risk": "/risk-disclosure.html",
+            "refund": "/refund.html",
+        },
+    }
 
 
 @app.get("/api/health")

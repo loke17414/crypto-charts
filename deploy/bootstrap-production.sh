@@ -70,6 +70,9 @@ bash "$ROOT/deploy/backup.sh" /var/backups/orbinex || echo "WARN: first backup f
 echo "======== 4) Monitor cron ========"
 bash "$ROOT/deploy/install-monitor-cron.sh"
 
+echo "======== 4b) Renew cron ========"
+bash "$ROOT/deploy/install-renew-cron.sh"
+
 echo "======== 5) Restart web ========"
 if [[ -f /etc/systemd/system/crypto-web.service ]] || systemctl list-unit-files | grep -q crypto-web; then
   systemctl daemon-reload || true

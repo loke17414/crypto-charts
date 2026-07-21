@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections import deque
 from datetime import datetime, timedelta, timezone
-from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,7 +23,7 @@ from bot.billing_service import (
 )
 from bot.db import get_db
 from bot.email_service import smtp_configured
-from bot.models import ExchangeCredential, Subscription, User
+from bot.models import AdminAuditLog, ExchangeCredential, Subscription, User
 from bot.platform_config import (
     admin_emails,
     billing_configured,
@@ -58,9 +56,6 @@ from bot.user_credentials import delete_credentials
 from bot.user_openai import delete_openai_key, has_openai_key
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-
-_AUDIT_LOCK = Lock()
-_AUDIT_LOG: deque[dict[str, Any]] = deque(maxlen=300)
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
@@ -99,17 +94,24 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _audit(admin: User, action: str, *, target_user_id: int | None = None, detail: str = "") -> None:
-    row = {
-        "at": _utcnow().isoformat(),
-        "adminId": admin.id,
-        "adminEmail": admin.email,
-        "action": action,
-        "targetUserId": target_user_id,
-        "detail": detail,
-    }
-    with _AUDIT_LOCK:
-        _AUDIT_LOG.appendleft(row)
+def _audit(
+    db: Session,
+    admin: User,
+    action: str,
+    *,
+    target_user_id: int | None = None,
+    detail: str = "",
+) -> None:
+    db.add(
+        AdminAuditLog(
+            admin_id=admin.id,
+            admin_email=admin.email,
+            action=action[:64],
+            target_user_id=target_user_id,
+            detail=(detail or "")[:500],
+        )
+    )
+    db.commit()
 
 
 def _get_user_or_404(db: Session, user_id: int) -> User:
@@ -244,10 +246,26 @@ def admin_overview(
 def admin_audit(
     limit: int = Query(default=80, ge=1, le=300),
     admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    with _AUDIT_LOCK:
-        rows = list(_AUDIT_LOG)[:limit]
-    return {"ok": True, "count": len(rows), "actions": rows}
+    rows = (
+        db.query(AdminAuditLog)
+        .order_by(AdminAuditLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    actions = [
+        {
+            "at": r.created_at.isoformat() if r.created_at else None,
+            "adminId": r.admin_id,
+            "adminEmail": r.admin_email,
+            "action": r.action,
+            "targetUserId": r.target_user_id,
+            "detail": r.detail,
+        }
+        for r in rows
+    ]
+    return {"ok": True, "count": len(actions), "actions": actions}
 
 
 @router.get("/users")
@@ -319,7 +337,7 @@ def admin_verify_email(
     user = _get_user_or_404(db, user_id)
     user.email_verified_at = _utcnow()
     db.commit()
-    _audit(admin, "verify-email", target_user_id=user.id)
+    _audit(db, admin, "verify-email", target_user_id=user.id)
     return {"ok": True, "user": _user_row(db, user), "message": "이메일 인증을 완료 처리했습니다."}
 
 
@@ -334,7 +352,7 @@ def admin_resend_verify(
         result = resend_verification(db, user.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _audit(admin, "resend-verify", target_user_id=user.id)
+    _audit(db, admin, "resend-verify", target_user_id=user.id)
     return {"ok": True, "user": _user_row(db, user), **result}
 
 
@@ -349,7 +367,7 @@ def admin_send_password_reset(
         result = request_password_reset(db, user.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _audit(admin, "send-password-reset", target_user_id=user.id)
+    _audit(db, admin, "send-password-reset", target_user_id=user.id)
     return {"ok": True, "user": _user_row(db, user), **result}
 
 
@@ -368,7 +386,7 @@ def admin_set_active(
     if not user.is_active and is_running(user.id):
         stop_bot(user.id)
         mark_bot_stopped(db, user.id)
-    _audit(admin, "set-active", target_user_id=user.id, detail=str(body.active))
+    _audit(db, admin, "set-active", target_user_id=user.id, detail=str(body.active))
     return {"ok": True, "user": _user_row(db, user)}
 
 
@@ -396,7 +414,7 @@ def admin_set_plan(
         sub.current_period_end = None
         message = "Free로 내렸습니다."
     db.commit()
-    _audit(admin, "set-plan", target_user_id=user.id, detail=f"{plan}:{days if plan == 'pro' else 0}")
+    _audit(db, admin, "set-plan", target_user_id=user.id, detail=f"{plan}:{days if plan == 'pro' else 0}")
     return {"ok": True, "user": _user_row(db, user), "message": message}
 
 
@@ -418,7 +436,7 @@ def admin_grant_pro(
     sub.cancel_at_period_end = False
     sub.current_period_end = base + timedelta(days=body.days)
     db.commit()
-    _audit(admin, "grant-pro", target_user_id=user.id, detail=f"+{body.days}d")
+    _audit(db, admin, "grant-pro", target_user_id=user.id, detail=f"+{body.days}d")
     return {
         "ok": True,
         "user": _user_row(db, user),
@@ -441,6 +459,7 @@ def admin_cancel_subscription(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _audit(
+        db,
         admin,
         "cancel-subscription",
         target_user_id=user.id,
@@ -462,7 +481,7 @@ def admin_reset_quota(
     if usage.bot_session_started_at is not None:
         usage.bot_session_started_at = _utcnow()
     db.commit()
-    _audit(admin, "reset-quota", target_user_id=user.id)
+    _audit(db, admin, "reset-quota", target_user_id=user.id)
     return {"ok": True, "user": _user_row(db, user), "message": "주간 쿼터를 리셋했습니다."}
 
 
@@ -487,7 +506,7 @@ def admin_set_quota(
     if usage.bot_session_started_at is not None:
         usage.bot_session_started_at = _utcnow()
     db.commit()
-    _audit(admin, "set-quota", target_user_id=user.id, detail=",".join(parts))
+    _audit(db, admin, "set-quota", target_user_id=user.id, detail=",".join(parts))
     return {"ok": True, "user": _user_row(db, user), "message": "쿼터를 수정했습니다."}
 
 
@@ -500,7 +519,7 @@ def admin_stop_bot(
     user = _get_user_or_404(db, user_id)
     result = stop_bot(user.id)
     mark_bot_stopped(db, user.id)
-    _audit(admin, "stop-bot", target_user_id=user.id)
+    _audit(db, admin, "stop-bot", target_user_id=user.id)
     return {
         "ok": True,
         "user": _user_row(db, user),
@@ -517,7 +536,7 @@ def admin_clear_entry_gate(
 ) -> dict[str, Any]:
     user = _get_user_or_404(db, user_id)
     clear_entry_gate(user.id)
-    _audit(admin, "clear-entry-gate", target_user_id=user.id)
+    _audit(db, admin, "clear-entry-gate", target_user_id=user.id)
     return {"ok": True, "user": _user_row(db, user), "bot": bot_status(user.id), "message": "진입 게이트를 해제했습니다."}
 
 
@@ -532,7 +551,7 @@ def admin_pause_entry(
     # reuse pause helper with approximate interval
     interval = "15m" if body.minutes <= 15 else ("1h" if body.minutes <= 60 else "4h")
     gate = pause_bot_entry(user_id=user.id, manual=True, interval=interval)
-    _audit(admin, "pause-entry", target_user_id=user.id, detail=f"{body.minutes}m")
+    _audit(db, admin, "pause-entry", target_user_id=user.id, detail=f"{body.minutes}m")
     return {
         "ok": True,
         "user": _user_row(db, user),
@@ -552,7 +571,7 @@ def admin_delete_binance_keys(
         stop_bot(user.id)
         mark_bot_stopped(db, user.id)
     deleted = delete_credentials(db, user.id)
-    _audit(admin, "delete-binance-keys", target_user_id=user.id, detail=str(deleted))
+    _audit(db, admin, "delete-binance-keys", target_user_id=user.id, detail=str(deleted))
     return {
         "ok": True,
         "user": _user_row(db, user),
@@ -569,7 +588,7 @@ def admin_delete_openai_key(
 ) -> dict[str, Any]:
     user = _get_user_or_404(db, user_id)
     deleted = delete_openai_key(db, user.id)
-    _audit(admin, "delete-openai-key", target_user_id=user.id, detail=str(deleted))
+    _audit(db, admin, "delete-openai-key", target_user_id=user.id, detail=str(deleted))
     return {
         "ok": True,
         "user": _user_row(db, user),
@@ -608,7 +627,7 @@ def admin_stop_all_bots(
         uid = row.get("userId")
         if uid:
             mark_bot_stopped(db, int(uid))
-    _audit(admin, "stop-all-bots", detail=f"targets={len(before)}")
+    _audit(db, admin, "stop-all-bots", detail=f"targets={len(before)}")
     return {
         "ok": True,
         "stopped": len(before),

@@ -5,5 +5,10 @@ Disallow: /admin-site/
 Disallow: /login.html
 Disallow: /register.html
 Disallow: /billing.html
+Disallow: /account.html
+Disallow: /refund.html
+Disallow: /terms.html
+Disallow: /privacy.html
+Disallow: /risk-disclosure.html
 
 Sitemap: https://orbinex.net/sitemap.xml
