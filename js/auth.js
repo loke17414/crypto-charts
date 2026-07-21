@@ -41,6 +41,42 @@ const AppAuth = (() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  function currentPageName() {
+    const path = window.location.pathname || '';
+    const name = path.split('/').pop() || 'index.html';
+    return name.includes('.') ? name : 'index.html';
+  }
+
+  function safeNextPath(raw) {
+    if (!raw) return '';
+    try {
+      const u = new URL(String(raw), window.location.origin);
+      if (u.origin !== window.location.origin) return '';
+      let path = u.pathname.replace(/^\//, '');
+      if (!path || path.endsWith('/')) path = `${path}index.html`;
+      if (!/\.html$/i.test(path.split('?')[0])) return '';
+      if (path.includes('..')) return '';
+      return `${path}${u.search}${u.hash}`;
+    } catch {
+      return '';
+    }
+  }
+
+  function loginPageUrl(next) {
+    const target = safeNextPath(next) || currentPageName() + window.location.search;
+    return `login.html?next=${encodeURIComponent(target)}`;
+  }
+
+  function redirectToLogin(next) {
+    window.location.href = loginPageUrl(next);
+  }
+
+  function redirectAfterAuth() {
+    const params = new URLSearchParams(window.location.search);
+    const next = safeNextPath(params.get('next')) || 'trading.html';
+    window.location.href = next;
+  }
+
   function syncUi() {
     const loggedIn = isLoggedIn();
     document.getElementById('authLoggedOut')?.classList.toggle('hidden', loggedIn);
@@ -53,6 +89,8 @@ const AppAuth = (() => {
       else if (loggedIn) statusEl.textContent = '로그인됨';
       else statusEl.textContent = '로그인 필요';
     }
+    const loginLink = document.getElementById('authLoginPageLink');
+    if (loginLink) loginLink.href = loginPageUrl('trading.html');
   }
 
   async function register(email, password, acceptTerms) {
@@ -84,6 +122,13 @@ const AppAuth = (() => {
   function logout() {
     clearSession();
     clearTradingState();
+    if (typeof AppBilling !== 'undefined') {
+      AppBilling.refresh?.();
+    }
+    const page = currentPageName();
+    if (page === 'billing.html' || page === 'login.html') {
+      window.location.href = 'login.html';
+    }
   }
 
   function handleUnauthorized(message) {
@@ -93,6 +138,10 @@ const AppAuth = (() => {
     const statusEl = document.getElementById('authStatus');
     if (statusEl) {
       statusEl.textContent = message || '로그인 세션 만료 — 다시 로그인해 주세요';
+    }
+    const page = currentPageName();
+    if (page === 'trading.html' || page === 'billing.html') {
+      redirectToLogin(page);
     }
   }
 
@@ -127,10 +176,7 @@ const AppAuth = (() => {
     }
   }
 
-  async function init() {
-    if (initialized) return;
-    initialized = true;
-    syncUi();
+  function bindFormHandlers() {
     document.getElementById('authLoginBtn')?.addEventListener('click', async () => {
       const email = document.getElementById('authEmail')?.value?.trim();
       const password = document.getElementById('authPassword')?.value || '';
@@ -141,6 +187,10 @@ const AppAuth = (() => {
       try {
         clearTradingState();
         await login(email, password);
+        if (currentPageName() === 'login.html') {
+          redirectAfterAuth();
+          return;
+        }
         await afterLoginHooks();
       } catch (err) {
         alert(err.message || '로그인 실패');
@@ -165,6 +215,10 @@ const AppAuth = (() => {
           alert(data.message || '가입되었습니다. 이메일 인증 링크를 확인해 주세요.');
           const statusEl = document.getElementById('authStatus');
           if (statusEl) statusEl.textContent = '이메일 인증 대기 중';
+          return;
+        }
+        if (currentPageName() === 'login.html') {
+          redirectAfterAuth();
           return;
         }
         await afterLoginHooks();
@@ -200,10 +254,47 @@ const AppAuth = (() => {
     });
     document.getElementById('authLogoutBtn')?.addEventListener('click', () => {
       logout();
-      if (typeof AppBilling !== 'undefined') {
-        AppBilling.refresh?.();
-      }
     });
+  }
+
+  async function init() {
+    if (initialized) return;
+    initialized = true;
+    syncUi();
+    bindFormHandlers();
+  }
+
+  async function loadHealthAndSync() {
+    try {
+      const health = await FuturesApiClient.getHealth();
+      await refreshFromHealth(health);
+      return health;
+    } catch {
+      await refreshFromHealth({ authRequired: true });
+      return null;
+    }
+  }
+
+  async function bootLoginPage() {
+    await init();
+    await loadHealthAndSync();
+    if (isLoggedIn() && authRequired) {
+      // Stay on page so user can logout, or auto-jump if next is set
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('next')) redirectAfterAuth();
+    }
+  }
+
+  async function bootBillingPage() {
+    await init();
+    await loadHealthAndSync();
+    if (authRequired && !isLoggedIn()) {
+      syncUi();
+      return;
+    }
+    if (typeof AppBilling !== 'undefined') {
+      await AppBilling.refresh?.();
+    }
   }
 
   return {
@@ -218,11 +309,19 @@ const AppAuth = (() => {
     handleUnauthorized,
     validateSession,
     logout,
+    redirectToLogin,
+    loginPageUrl,
+    bootLoginPage,
+    bootBillingPage,
   };
 })();
 
 window.AppAuth = AppAuth;
 
 document.addEventListener('DOMContentLoaded', () => {
-  AppAuth.init();
+  // login/billing pages call boot* explicitly; trading still uses init via FuturesBotApp
+  const page = (window.location.pathname || '').split('/').pop() || '';
+  if (page !== 'login.html' && page !== 'billing.html') {
+    AppAuth.init();
+  }
 });

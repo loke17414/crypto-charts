@@ -13,6 +13,7 @@ const AppBilling = (() => {
     if (!box) return;
 
     const loggedIn = typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn();
+    // On dedicated billing page the panel sits inside #authLoggedIn; keep it visible when logged in.
     box.classList.toggle('hidden', !loggedIn);
     if (!loggedIn) return;
 

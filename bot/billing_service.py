@@ -322,8 +322,8 @@ def prepare_billing_auth(db: Session, user: User) -> dict[str, Any]:
         "customerName": user.email.split("@")[0][:50] or "Orbinex",
         "amountKrw": toss_pro_amount_krw(),
         "orderName": toss_pro_order_name(),
-        "successUrl": f"{origin}/trading.html?billing=success",
-        "failUrl": f"{origin}/trading.html?billing=fail",
+        "successUrl": f"{origin}/billing.html?billing=success",
+        "failUrl": f"{origin}/billing.html?billing=fail",
     }
 
 

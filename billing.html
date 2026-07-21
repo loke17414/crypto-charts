@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>요금제 · 결제 — Orbinex</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/account-pages.css?v=20260721a">
+</head>
+<body class="account-page">
+  <header class="account-page__header">
+    <a class="account-page__brand" href="index.html">
+      <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 16L15 19L20 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Orbinex
+    </a>
+    <nav class="account-page__nav">
+      <a href="login.html">로그인</a>
+      <a href="trading.html">트레이딩</a>
+    </nav>
+  </header>
+
+  <main class="account-page__main">
+    <div class="account-card account-card--wide">
+      <h1>요금제</h1>
+      <p class="account-card__lead">Free 한도와 Pro 구독을 확인하고 결제할 수 있습니다.</p>
+      <div id="authStatus" class="account-card__status">확인 중…</div>
+
+      <div id="authLoggedOut" class="hidden">
+        <p class="account-card__lead">결제·구독 관리를 위해 로그인이 필요합니다.</p>
+        <div class="account-card__actions">
+          <a id="billingLoginLink" class="btn btn--primary" href="login.html?next=billing.html" style="text-align:center;text-decoration:none;display:block;">로그인하기</a>
+        </div>
+      </div>
+
+      <div id="authLoggedIn" class="hidden">
+        <p class="auth-panel__user" style="margin-bottom:1rem;font-size:0.9rem;">
+          <span class="text-muted">계정</span> <strong id="authUserEmail">—</strong>
+        </p>
+        <div id="billingPanel" class="billing-panel">
+          <div class="billing-panel__row">
+            <span class="text-muted">플랜</span>
+            <strong id="billingPlanLabel" class="billing-panel__plan">—</strong>
+          </div>
+          <p id="billingBotQuota" class="billing-panel__quota">봇 가동: —</p>
+          <p id="billingGptQuota" class="billing-panel__quota">GPT: —</p>
+          <p id="billingNote" class="billing-panel__note">구독 정보를 불러오는 중…</p>
+          <div class="billing-panel__actions">
+            <button type="button" id="billingUpgradeBtn" class="btn btn--primary hidden">Pro 구독 (토스페이먼츠)</button>
+            <button type="button" id="billingCancelBtn" class="btn btn--ghost hidden">구독 해지</button>
+            <a class="btn btn--ghost" href="trading.html" style="text-align:center;text-decoration:none;display:block;padding:0.65rem;border:1px solid var(--border);border-radius:var(--radius);">트레이딩으로 이동</a>
+            <button type="button" id="authLogoutBtn" class="btn btn--ghost">로그아웃</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="account-page__footer">
+    <a href="terms.html">이용약관</a>
+    <a href="privacy.html">개인정보</a>
+    <a href="risk-disclosure.html">위험고지</a>
+  </footer>
+
+  <script src="js/futures-api-client.js?v=20260721e"></script>
+  <script src="js/auth.js?v=20260721f"></script>
+  <script src="js/billing.js?v=20260721f"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      AppAuth.bootBillingPage();
+    });
+  </script>
+</body>
+</html>

@@ -3647,7 +3647,9 @@ const FuturesBotApp = (() => {
       updateApiServerStatus(Boolean(bootHealth?.ok), Boolean(bootHealth?.connected));
       await loadPlatformOutboundIp();
       if (AppAuth.isRequired() && !AppAuth.isLoggedIn()) {
-        addLog('로그인이 필요합니다 — 계정 패널에서 로그인하세요.', 'warn');
+        addLog('로그인이 필요합니다 — 로그인 페이지로 이동합니다.', 'warn');
+        AppAuth.redirectToLogin?.('trading.html');
+        return;
       } else if (AppAuth.isRequired()) {
         syncExchangeEnv(false);
       }
