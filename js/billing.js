@@ -88,6 +88,10 @@ const AppBilling = (() => {
     try {
       const data = await FuturesApiClient.billingHistory();
       const rows = data.payments || [];
+      if (data.unsupported) {
+        el.textContent = '결제 내역 API가 아직 서버에 없습니다. VPS에서 git pull 후 crypto-web 재시작이 필요합니다.';
+        return;
+      }
       if (!rows.length) {
         el.textContent = '결제 내역이 없습니다.';
         return;

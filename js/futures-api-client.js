@@ -337,7 +337,16 @@ const FuturesApiClient = (() => {
   }
 
   async function billingHistory() {
-    return request('/api/billing/history');
+    // Older deploys may not have this route yet — don't hard-fail the billing page.
+    try {
+      return await request('/api/billing/history');
+    } catch (err) {
+      const msg = String(err?.message || '');
+      if (/Not Found|구버전|\/api\/billing\/history/i.test(msg)) {
+        return { ok: true, count: 0, payments: [], unsupported: true };
+      }
+      throw err;
+    }
   }
 
   async function authExport() {
