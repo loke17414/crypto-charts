@@ -186,6 +186,10 @@ PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/register",
     "/api/auth/login",
+    "/api/auth/verify-email",
+    "/api/auth/resend-verification",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
     "/api/platform/outbound-ip",
     "/api/billing/status",
 }

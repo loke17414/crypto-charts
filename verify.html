@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>이메일 인증 — Orbinex</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .auth-page { max-width: 420px; margin: 3rem auto; padding: 0 1.25rem; }
+    .auth-page h1 { font-size: 1.35rem; }
+    .auth-page p { font-size: 0.9rem; line-height: 1.5; }
+    .auth-page .msg { margin-top: 1rem; padding: 0.75rem; border-radius: 8px; background: rgba(0,0,0,.06); }
+  </style>
+</head>
+<body>
+  <main class="auth-page">
+    <h1>이메일 인증</h1>
+    <p id="verifyStatus">인증을 처리하는 중…</p>
+    <div id="verifyMsg" class="msg hidden"></div>
+    <p><a href="trading.html">트레이딩으로 이동</a></p>
+  </main>
+  <script src="js/futures-api-client.js?v=20260721d"></script>
+  <script src="js/auth.js?v=20260721d"></script>
+  <script>
+    (async () => {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('token') || '';
+      const status = document.getElementById('verifyStatus');
+      const msg = document.getElementById('verifyMsg');
+      if (!token) {
+        status.textContent = '인증 토큰이 없습니다.';
+        return;
+      }
+      try {
+        const data = await FuturesApiClient.authVerifyEmail(token);
+        if (data.access_token) {
+          AppAuth.setSession?.(data.access_token, data.user)
+            || localStorage.setItem('crypto-charts-auth-token', data.access_token);
+          if (data.user) localStorage.setItem('crypto-charts-auth-user', JSON.stringify(data.user));
+        }
+        status.textContent = '인증 완료';
+        msg.classList.remove('hidden');
+        msg.textContent = data.message || '이메일이 인증되었습니다. 트레이딩 페이지에서 로그인 상태를 확인해 주세요.';
+      } catch (err) {
+        status.textContent = '인증 실패';
+        msg.classList.remove('hidden');
+        msg.textContent = err.message || '링크가 만료되었거나 유효하지 않습니다.';
+      }
+    })();
+  </script>
+</body>
+</html>

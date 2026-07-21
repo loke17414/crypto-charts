@@ -17,6 +17,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -32,6 +34,9 @@ class User(Base):
     )
     usage_quota: Mapped["UsageQuota | None"] = relationship(
         "UsageQuota", back_populates="user", uselist=False
+    )
+    email_tokens: Mapped[list["EmailToken"]] = relationship(
+        "EmailToken", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -119,3 +124,21 @@ class UsageQuota(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="usage_quota")
+
+
+class EmailToken(Base):
+    """One-time tokens for email verification and password reset."""
+
+    __tablename__ = "email_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)  # verify | reset
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="email_tokens")

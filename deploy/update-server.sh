@@ -57,6 +57,13 @@ fi
 source .venv/bin/activate
 pip install -q -r requirements.txt
 
+echo "==> Alembic migrate"
+if alembic upgrade head; then
+  echo "    migrations OK"
+else
+  echo "    WARN: alembic failed — check DATABASE_URL / models"
+fi
+
 if ! command -v node >/dev/null; then
   echo "==> Installing Node.js..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -

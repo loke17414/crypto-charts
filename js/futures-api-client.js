@@ -257,10 +257,10 @@ const FuturesApiClient = (() => {
     return request('/api/bot/clear-entry-pause', { method: 'POST' });
   }
 
-  async function authRegister(email, password) {
+  async function authRegister(email, password, acceptTerms = false) {
     return request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, accept_terms: Boolean(acceptTerms) }),
     });
   }
 
@@ -273,6 +273,34 @@ const FuturesApiClient = (() => {
 
   async function authMe() {
     return request('/api/auth/me');
+  }
+
+  async function authVerifyEmail(token) {
+    return request('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async function authResendVerification(email) {
+    return request('/api/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async function authForgotPassword(email) {
+    return request('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async function authResetPassword(token, password) {
+    return request('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
   }
 
   async function billingMe() {
@@ -338,6 +366,10 @@ const FuturesApiClient = (() => {
     authRegister,
     authLogin,
     authMe,
+    authVerifyEmail,
+    authResendVerification,
+    authForgotPassword,
+    authResetPassword,
     billingMe,
     billingStatus,
     billingPrepare,

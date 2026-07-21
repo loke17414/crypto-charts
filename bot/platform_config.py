@@ -182,3 +182,43 @@ def free_gpt_calls_per_week() -> int:
 def billing_week_timezone() -> str:
     """IANA tz for weekly quota reset. Default Asia/Seoul."""
     return os.getenv("BILLING_WEEK_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"
+
+
+def smtp_host() -> str:
+    return os.getenv("SMTP_HOST", "").strip()
+
+
+def smtp_port() -> int:
+    try:
+        return max(1, int(os.getenv("SMTP_PORT", "587").strip()))
+    except ValueError:
+        return 587
+
+
+def smtp_user() -> str:
+    return os.getenv("SMTP_USER", "").strip()
+
+
+def smtp_password() -> str:
+    return os.getenv("SMTP_PASSWORD", "").strip().strip('"').strip("'")
+
+
+def smtp_from_email() -> str:
+    return os.getenv("SMTP_FROM", "").strip() or smtp_user()
+
+
+def smtp_use_tls() -> bool:
+    return os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+
+
+def email_require_verification() -> bool:
+    """
+    Require verified email before login.
+    Default: true when SMTP is configured, else false (local/dev).
+    """
+    raw = os.getenv("EMAIL_REQUIRE_VERIFICATION", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return bool(smtp_host() and smtp_from_email())

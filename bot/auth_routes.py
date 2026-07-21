@@ -1,4 +1,4 @@
-"""Auth API routes — register, login, me."""
+"""Auth API routes — register, login, me, email verify, password reset."""
 
 from __future__ import annotations
 
@@ -8,23 +8,36 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from bot.auth_service import authenticate_user, create_access_token, create_user, decode_access_token
+from bot.auth_service import (
+    assert_email_verified_for_login,
+    authenticate_user,
+    create_access_token,
+    create_user,
+    decode_access_token,
+    request_password_reset,
+    resend_verification,
+    reset_password_with_token,
+    user_public_dict,
+    verify_email_with_token,
+)
 from bot.db import get_db
+from bot.email_service import smtp_configured
 from bot.models import User
-from bot.platform_config import auth_required, register_rate_limit
+from bot.platform_config import auth_required, email_require_verification, register_rate_limit
 from bot.rate_limit import RateLimiter, client_ip
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _reg_max, _reg_window = register_rate_limit()
 _register_limiter = RateLimiter(max_calls=_reg_max, window_seconds=_reg_window)
-# Login brute-force guard (same window knobs as register by default)
 _login_limiter = RateLimiter(max_calls=max(10, _reg_max * 4), window_seconds=_reg_window)
+_email_limiter = RateLimiter(max_calls=5, window_seconds=3600)
 
 
 class RegisterBody(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    accept_terms: bool = False
 
 
 class LoginBody(BaseModel):
@@ -32,8 +45,21 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class EmailBody(BaseModel):
+    email: EmailStr
+
+
+class TokenBody(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+class ResetPasswordBody(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=8, max_length=128)
+
+
 def _user_payload(user: User) -> dict[str, Any]:
-    return {"id": user.id, "email": user.email}
+    return user_public_dict(user)
 
 
 def _user_from_authorization(authorization: str | None, db: Session) -> User:
@@ -65,7 +91,6 @@ def get_optional_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> User | None:
-    """Return logged-in user, or None when AUTH_REQUIRED=false and no token."""
     if not authorization or not authorization.startswith("Bearer "):
         if auth_required():
             raise HTTPException(status_code=401, detail="Login required")
@@ -77,7 +102,6 @@ def peek_optional_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> User | None:
-    """Like get_optional_user but never 401 — for public endpoints (e.g. /api/health)."""
     if not authorization or not authorization.startswith("Bearer "):
         return None
     try:
@@ -97,16 +121,36 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
             headers={"Retry-After": str(retry_after)},
         )
     try:
-        user = create_user(db, body.email, body.password)
+        user, meta = create_user(db, body.email, body.password, accept_terms=body.accept_terms)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # If verification required, do not issue JWT until verified
+    if meta.get("emailVerificationRequired"):
+        return {
+            "ok": True,
+            "needsVerification": True,
+            "access_token": None,
+            "token_type": "bearer",
+            "expires_in": 0,
+            "user": _user_payload(user),
+            **meta,
+            "message": (
+                "가입되었습니다. 이메일로 보낸 인증 링크를 확인해 주세요."
+                if meta.get("emailSent")
+                else meta.get("emailError") or "가입되었습니다. 인증 메일을 재전송해 주세요."
+            ),
+        }
+
     token, expires_in = create_access_token(user_id=user.id, email=user.email)
     return {
         "ok": True,
+        "needsVerification": False,
         "access_token": token,
         "token_type": "bearer",
         "expires_in": expires_in,
         "user": _user_payload(user),
+        **meta,
     }
 
 
@@ -123,9 +167,87 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> d
     user = authenticate_user(db, body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    try:
+        assert_email_verified_for_login(user)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     token, expires_in = create_access_token(user_id=user.id, email=user.email)
     return {
         "ok": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": expires_in,
+        "user": _user_payload(user),
+    }
+
+
+@router.post("/verify-email")
+def verify_email(body: TokenBody, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        user = verify_email_with_token(db, body.token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    token, expires_in = create_access_token(user_id=user.id, email=user.email)
+    return {
+        "ok": True,
+        "message": "이메일 인증이 완료되었습니다.",
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": expires_in,
+        "user": _user_payload(user),
+    }
+
+
+@router.post("/resend-verification")
+def resend_verification_route(
+    body: EmailBody,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _email_limiter.check(f"resend:{ip}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"요청이 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        return resend_verification(db, body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    body: EmailBody,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ip = client_ip(request)
+    allowed, retry_after = _email_limiter.check(f"forgot:{ip}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"요청이 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        return request_password_reset(db, body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordBody, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        user = reset_password_with_token(db, body.token, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    token, expires_in = create_access_token(user_id=user.id, email=user.email)
+    return {
+        "ok": True,
+        "message": "비밀번호가 변경되었습니다.",
         "access_token": token,
         "token_type": "bearer",
         "expires_in": expires_in,
@@ -152,6 +274,8 @@ def me(
         "ok": True,
         "user": _user_payload(user),
         "authRequired": auth_required(),
+        "emailRequireVerification": email_require_verification(),
+        "smtpConfigured": smtp_configured(),
         "credentialsSaved": saved,
         "credentialsUseTestnet": use_testnet,
         "openaiKeySaved": has_openai_key(db, user.id),
