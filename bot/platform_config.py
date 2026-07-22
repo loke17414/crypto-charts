@@ -209,13 +209,13 @@ def toss_pro_annual_amount_krw() -> int:
 
 
 def toss_pro_order_name() -> str:
-    return os.getenv("TOSS_PRO_ORDER_NAME", "Orbinex Pro 월간 구독").strip() or "Orbinex Pro 월간 구독"
+    return os.getenv("TOSS_PRO_ORDER_NAME", "Orbinex Pro Monthly").strip() or "Orbinex Pro Monthly"
 
 
 def toss_pro_annual_order_name() -> str:
     return (
-        os.getenv("TOSS_PRO_ANNUAL_ORDER_NAME", "Orbinex Pro 연간 구독").strip()
-        or "Orbinex Pro 연간 구독"
+        os.getenv("TOSS_PRO_ANNUAL_ORDER_NAME", "Orbinex Pro Annual").strip()
+        or "Orbinex Pro Annual"
     )
 
 
@@ -236,7 +236,7 @@ def gpt_pack_calls() -> int:
 
 
 def gpt_pack_order_name() -> str:
-    return os.getenv("GPT_PACK_ORDER_NAME", "Orbinex GPT 추가 팩").strip() or "Orbinex GPT 추가 팩"
+    return os.getenv("GPT_PACK_ORDER_NAME", "Orbinex GPT Pack").strip() or "Orbinex GPT Pack"
 
 
 def billing_configured() -> bool:
