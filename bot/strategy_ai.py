@@ -1551,7 +1551,7 @@ _BAND_INDICATOR_MARKERS: tuple[tuple[str, str], ...] = (
     ("kc", ("keltner", "켈트너", "켈트")),
     ("dc", ("donchian", "돈치안", "돈치")),
 )
-_FVG_MARKERS = ("fvg", "페어밸류", "fair value", "fairvalue", "갭", "gap", "공정가치", "imbalance")
+_FVG_MARKERS = ("fvg", "페어밸류", "fair value", "fairvalue", "공정가치", "imbalance", "fairvaluegap")
 _DIVERGENCE_MARKERS = ("다이버", "divergence", "diver")
 _SWING_MARKERS = (
     "전고점", "전저점", "전고", "전저", "스윙", "swing",
@@ -1560,6 +1560,20 @@ _SWING_MARKERS = (
 _STRATEGY_CONTEXT_MARKERS = (
     "진입", "롱", "숏", "long", "short", "매수", "매도", "전략", "조건",
     "재진입", "이탈", "터치", "밴드", "하단", "상단", "들어", "안으로", "적용", "설정",
+)
+_BAND_REENTRY_MARKERS = (
+    "재진입", "다시 들어", "안으로", "복귀", "밴드 안", "이탈 후", "이탈후",
+    "터치", "닿", "접촉", "touch",
+)
+# Indicators local templates cannot fully compile → force GPT (except pure divergence).
+_COMPLEX_INDICATOR_MARKERS = (
+    "macd", "stochrsi", "stoch", "스토캐", "kdj", "cci", "atr", "natr",
+    "adx", "dmi", "+di", "-di", "pdi", "mdi", "mfi", "williams", "%r",
+    "roc", "sroc", "ppo", "aroon", "trix", "cmf", "obv", "vwap", "ichimoku",
+    "일목", "전환선", "기준선", "구름", "sar", "psar", "슈퍼트렌드", "supertrend",
+    "cho", "adtm", "cmo", "uo", "nvi", "pvi", "mass", "bop", "dma", "dpo",
+    "brar", "asi", "wvad", "pvt", "vroc", "mi", "priceosc",
+    # Band breakouts (not reentry) also need GPT — see _prompt_wants_band_strategy.
 )
 
 
@@ -1581,15 +1595,27 @@ def _prompt_band_indicator(prompt: str) -> str:
 
 
 def _prompt_wants_band_strategy(prompt: str) -> bool:
+    """Local band template is reentry/touch only — pure breakouts go to GPT."""
     text = _prompt_text(prompt)
     if not _prompt_mentions_band(prompt):
         return False
-    return any(k in text for k in _STRATEGY_CONTEXT_MARKERS)
+    if not any(k in text for k in _STRATEGY_CONTEXT_MARKERS):
+        return False
+    has_reentry = any(k in text for k in _BAND_REENTRY_MARKERS) or "이탈" in text
+    breakout_only = any(k in text for k in ("돌파", "breakout", "상향돌파", "하향돌파")) and not has_reentry
+    if breakout_only:
+        return False
+    return has_reentry
 
 
 def _prompt_wants_fvg(prompt: str) -> bool:
     text = _prompt_text(prompt)
-    return any(k in text for k in _FVG_MARKERS)
+    if any(k in text for k in _FVG_MARKERS):
+        return True
+    # Bare "갭/gap" is ambiguous (price gap vs FVG) — require FVG context.
+    if "갭" in text or "gap" in text:
+        return any(k in text for k in ("fvg", "페어", "fair", "imbalance", "존", "메움", "채우", "공정"))
+    return False
 
 
 def _prompt_wants_divergence(prompt: str) -> bool:
@@ -1612,36 +1638,68 @@ def _strip_exit_only_swing_phrases(prompt: str) -> str:
         " ",
         text,
     )
+    # "손절 ATR …" etc. — leave ATR for complex detector; only strip pivot words above.
     return text
+
+
+def _prompt_mentions_rsi(prompt: str) -> bool:
+    """RSI mention — avoid \\b (fails on 'RSI가' where 가 is a word char)."""
+    text = _prompt_text(prompt)
+    return "rsi" in text or "알에스아이" in text
+
+
+def _prompt_mentions_complex_indicator(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if any(k in text for k in _COMPLEX_INDICATOR_MARKERS):
+        return True
+    return _prompt_mentions_rsi(prompt)
 
 
 def _prompt_has_complex_indicator_entry(prompt: str) -> bool:
     """
-    True when entry is driven by MACD/RSI/etc logic that local swing/band
-    templates cannot express (e.g. consecutive MACD momentum weakening).
+    True when entry is driven by indicator logic that local templates cannot
+    express (MACD momentum, Stoch cross, ADX filter, combos, etc.).
+    Pure MA-touch / simple RSI threshold / band-reentry stay local.
     """
     text = _prompt_text(prompt)
-    has_macd = "macd" in text
-    has_rsi = bool(re.search(r"\brsi\b|알에스아이", text))
-    has_stoch = any(k in text for k in ("스토캐", "stoch", "kdj"))
-    if not (has_macd or has_rsi or has_stoch):
+    # Pure MA/이평 touch strategies have their own local compiler.
+    if _looks_like_ma_line_touch(prompt) and not _prompt_mentions_complex_indicator(prompt):
         return False
-    # Momentum / consecutive / cross style — needs GPT (or dedicated local MACD later)
+
+    has_ind = _prompt_mentions_complex_indicator(prompt)
+    if not has_ind:
+        return False
+
     complex_kw = (
         "모멘텀", "momentum", "히스토그램", "histogram", "연속", "약화", "강화",
         "크로스", "골든", "데드", "다이버전", "divergence",
-        "기울", "감소", "증가", "수렴", "발산",
+        "기울", "감소", "증가", "수렴", "발산", "반전", "전환", "돌파",
+        "상향", "하향", "시그널", "signal", "필터",
+        "해머", "hammer", "장악", "engulf", "핀바", "pin",
+        "그리고", "동시에", "같이", "+", "및",
     )
     if any(k in text for k in complex_kw):
         return True
-    # "MACD … 진입" without being a pure divergence keyword hit handled elsewhere
-    if has_macd and any(k in text for k in ("진입", "조건", "롱", "숏", "long", "short")):
+
+    # Any named complex indicator + entry/side language → GPT
+    # (covers "CCI -100 롱", "TRIX 0선 롱", etc.)
+    if any(k in text for k in ("진입", "조건", "롱", "숏", "long", "short", "매수", "매도", "전략")):
+        # Simple RSI-only threshold stays local (handled by _local_rsi_patch).
+        rsi_only = (
+            (_prompt_mentions_rsi(prompt) or "과매도" in text or "과매수" in text)
+            and not any(k in text for k in _COMPLEX_INDICATOR_MARKERS)
+        )
+        if rsi_only and not any(k in text for k in ("연속", "모멘텀", "크로스", "골든", "해머", "장악", "macd")):
+            return False
         return True
     return False
 
 
 def _prompt_wants_swing(prompt: str) -> bool:
     if _prompt_wants_band_strategy(prompt) or _prompt_wants_fvg(prompt) or _prompt_wants_divergence(prompt):
+        return False
+    # Band breakouts (not reentry) must go to GPT — do not steal via "돌파".
+    if _prompt_mentions_band(prompt):
         return False
     # Do not hijack MACD/RSI momentum entries just because SL says 전저점.
     if _prompt_has_complex_indicator_entry(prompt):
@@ -1732,8 +1790,13 @@ def _looks_like_bullish_candle_long(prompt: str) -> bool:
     # MA/이평 터치 + 다음봉 is NOT a simple "양봉만 롱" strategy.
     if _looks_like_ma_line_touch(prompt):
         return False
+    if _prompt_has_complex_indicator_entry(prompt) or _prompt_mentions_complex_indicator(prompt):
+        return False
+    if _prompt_wants_band_strategy(prompt) or _prompt_wants_swing(prompt) or _prompt_wants_fvg(prompt):
+        return False
     long_side = any(k in text for k in ("롱", "long", "매수", "진입"))
-    candle_kw = any(k in text for k in ("캔들", "봉", "양봉", "상승", "bullish", "올라"))
+    # Require explicit candle words — bare "상승/전환" must not steal indicator prompts.
+    candle_kw = any(k in text for k in ("캔들", "양봉", "음봉", "bullish", "bearish", "봉이"))
     return long_side and candle_kw
 
 
@@ -2174,6 +2237,15 @@ def _local_rsi_patch(prompt: str) -> dict[str, Any] | None:
     text = _prompt_text(prompt)
     if _prompt_wants_divergence(prompt):
         return None
+    # Combos / momentum / candle hybrids need GPT.
+    if any(
+        k in text
+        for k in (
+            "macd", "연속", "모멘텀", "크로스", "골든", "데드", "해머", "hammer",
+            "장악", "engulf", "히스토그램", "stoch", "kdj", "cci", "adx",
+        )
+    ):
+        return None
     has_rsi = "rsi" in text or "과매도" in text or "과매수" in text
     if not has_rsi:
         return None
@@ -2270,15 +2342,15 @@ def _local_strategy_template(
         )
         return ma, "ma_touch_local_no_gpt", summary
 
+    # Complex indicator entries (MACD/Stoch/ADX/… + combos) → GPT before RSI/swing/band.
+    if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
+        return None
+
     rsi = _local_rsi_patch(text)
     if rsi:
         return rsi, "rsi_local_no_gpt", "RSI 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
     if not _prompt_applyish(text):
-        return None
-
-    # Complex MACD/RSI momentum (consecutive weaken/strengthen, etc.) → GPT.
-    if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
         return None
 
     # Prefer more specific templates before generic bullish-candle.
@@ -2298,6 +2370,17 @@ def _local_strategy_template(
         )
         return patch, "band_reentry_local_no_gpt", "밴드 재진입 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
+    # Pure band breakout (no reentry/touch) → GPT; do not fall through to swing via "돌파".
+    if _prompt_mentions_band(text):
+        return None
+
+    if _prompt_wants_divergence(text):
+        return (
+            _divergence_entry_patch(text),
+            "divergence_local_no_gpt",
+            "다이버전스 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
     if _prompt_wants_swing(text):
         patch = (
             _swing_breakout_patch()
@@ -2311,13 +2394,6 @@ def _local_strategy_template(
             _fvg_entry_patch(text),
             "fvg_local_no_gpt",
             "FVG 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
-        )
-
-    if _prompt_wants_divergence(text):
-        return (
-            _divergence_entry_patch(text),
-            "divergence_local_no_gpt",
-            "다이버전스 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
         )
 
     if (
