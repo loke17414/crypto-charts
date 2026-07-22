@@ -1032,10 +1032,29 @@ def strategy_get(user: User | None = Depends(get_optional_user)) -> dict[str, An
 def strategy_sync(
     body: StrategySyncBody,
     user: User | None = Depends(get_optional_user),
+    db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
     if not body.strategy:
         raise HTTPException(status_code=400, detail="strategy payload required")
-    path = save_strategy_json(body.strategy, user_id=user.id if user else None)
+    strategy = dict(body.strategy)
+    # Auto-stop schedule is Pro-only — strip for free / anonymous.
+    pro = False
+    if user is not None:
+        pro = is_pro(ensure_subscription(db, user.id))
+    if not pro:
+        strategy["botStopMode"] = "none"
+        strategy["botStopValue"] = 0
+    else:
+        mode = str(strategy.get("botStopMode") or "none").lower()
+        if mode not in {"none", "trades", "hours", "minutes"}:
+            mode = "none"
+        try:
+            value = int(strategy.get("botStopValue") or 0)
+        except (TypeError, ValueError):
+            value = 0
+        strategy["botStopMode"] = mode
+        strategy["botStopValue"] = max(0, value) if mode != "none" else 0
+    path = save_strategy_json(strategy, user_id=user.id if user else None)
     return {"ok": True, "path": str(path), "userId": user.id if user else None}
 
 

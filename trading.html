@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>비트코인 선물 자동매매 — BTC 레버리지 봇 | Orbinex</title>
-  <meta name="description" content="Orbinex — 바이낸스 USDT-M 선물 비트코인(BTCUSDT) 자동매매.">
+  <title>선물 자동매매 — USDT-M 레버리지 봇 | Orbinex</title>
+  <meta name="description" content="Orbinex — 바이낸스 USDT-M 선물 자동매매 (BTC, ETH 등).">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23f97316'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260722i">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260722a">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260722p">
 </head>
 <body class="trading-page trading-page--simple">
   <div class="app">
@@ -45,6 +45,20 @@
           </div>
           <div class="float-panel__body">
             <div class="chart-top-bar">
+              <div class="chart-top-bar__symbol">
+                <strong id="tradingSymbolLabel">BTCUSDT</strong>
+                <div class="trading-symbol-search">
+                  <input type="text" id="searchInput" class="trading-symbol-search__input" placeholder="심볼 검색 (ETH, SOL…)" autocomplete="off">
+                  <div id="searchResults" class="search-results trading-symbol-search__results hidden"></div>
+                </div>
+                <div class="trading-symbol-quick" id="tradingSymbolQuick" role="group" aria-label="빠른 심볼">
+                  <button type="button" class="btn btn--tab" data-symbol-quick="BTC">BTC</button>
+                  <button type="button" class="btn btn--tab" data-symbol-quick="ETH">ETH</button>
+                  <button type="button" class="btn btn--tab" data-symbol-quick="SOL">SOL</button>
+                  <button type="button" class="btn btn--tab" data-symbol-quick="XRP">XRP</button>
+                  <button type="button" class="btn btn--tab" data-symbol-quick="DOGE">DOGE</button>
+                </div>
+              </div>
               <p class="chart-top-bar__signal" id="signalInfo">대기 중...</p>
               <div class="chart-top-bar__actions">
                 <div class="chart-top-bar__meta">
@@ -213,6 +227,26 @@
             <button type="button" id="stopBotBtn" class="btn btn--simple-ghost" disabled>봇 정지</button>
           </div>
           <button type="button" id="closeBtn" class="btn btn--simple-ghost btn--block btn--sm bot-close-btn">수동 청산</button>
+
+          <div class="bot-stop-block" id="botStopScheduleBlock">
+            <div class="control-section__label control-section__label--sub">
+              자동 정지
+              <span class="bot-stop-pro-badge" title="Pro 전용">Pro</span>
+            </div>
+            <div class="bot-stop-row">
+              <select id="botStopMode" class="bot-stop-select" aria-label="자동 정지 방식">
+                <option value="none">사용 안 함</option>
+                <option value="trades">N회 거래 후</option>
+                <option value="hours">N시간 후</option>
+                <option value="minutes">N분 후</option>
+              </select>
+              <input type="number" id="botStopValue" class="bot-stop-value" value="10" min="1" max="10000" step="1" aria-label="자동 정지 값">
+            </div>
+            <p id="botStopHint" class="api-hint bot-stop-hint">예: 10회 청산 후, 2시간 후, 30분 후 자동 정지 (Pro)</p>
+            <p id="botStopProLock" class="api-hint bot-stop-lock hidden">
+              Pro 전용입니다. <a href="billing.html">요금제에서 업그레이드</a>
+            </p>
+          </div>
 
           <div class="bot-interval-block">
             <div class="control-section__label control-section__label--sub">봇 진입 분봉</div>
@@ -432,7 +466,7 @@
   <script src="js/drawings.js?v=20260716a"></script>
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
-  <script src="js/app.js?v=20260718o"></script>
+  <script src="js/app.js?v=20260722p"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260720a"></script>
@@ -447,8 +481,8 @@
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
   <script src="js/strategy-presets.js?v=20260720c"></script>
-  <script src="js/futures-bot-app.js?v=20260722o"></script>
+  <script src="js/futures-bot-app.js?v=20260722p"></script>
   <script src="js/strategy-ai.js?v=20260722o"></script>
-  <script src="js/panel-guides.js?v=20260722o"></script>
+  <script src="js/panel-guides.js?v=20260722p"></script>
 </body>
 </html>

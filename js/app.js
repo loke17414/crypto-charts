@@ -1489,6 +1489,7 @@ function changeClass(pct) {
 
 function renderCoinList() {
   const list = $('#coinList');
+  if (!list) return;
   list.innerHTML = state.coins.map((coin, i) => `
     <li class="coin-item ${state.selectedCoin?.id === coin.id ? 'active' : ''}" data-id="${coin.id}">
       <span class="coin-item__rank">${coin.market_cap_rank || i + 1}</span>
@@ -1649,6 +1650,8 @@ async function loadChart(retryCount = 0) {
     state.lastTickTime = 0;
     state.canLoadMore = true;
     state.loadingMore = false;
+    const symLabel = $('#tradingSymbolLabel');
+    if (symLabel) symLabel.textContent = symbol;
 
     const container = $('#chartArea');
     await waitForContainer(container);
@@ -1689,10 +1692,20 @@ async function loadChart(retryCount = 0) {
 async function selectCoin(coinId) {
   const coin = state.coins.find((c) => c.id === coinId);
   if (!coin || state.selectedCoin?.id === coinId) return;
+  if (typeof window.FuturesBotApp?.isBotRunning === 'function' && window.FuturesBotApp.isBotRunning()) {
+    const msg = '봇 실행 중에는 심볼을 변경할 수 없습니다. 먼저 봇을 정지하세요.';
+    if (typeof window.FuturesBotApp?.addLog === 'function') window.FuturesBotApp.addLog(msg, 'loss');
+    else if (typeof UiModal?.alert === 'function') UiModal.alert(msg);
+    else window.alert(msg);
+    return;
+  }
   state.selectedCoin = coin;
   updateCoinHeader(coin);
   renderCoinList();
   await loadChart();
+  window.dispatchEvent(new CustomEvent('orbinex:symbol-changed', {
+    detail: { symbol: state.binanceSymbol, coin },
+  }));
 }
 
 async function initTradingChart() {
@@ -1701,22 +1714,23 @@ async function initTradingChart() {
       KlineLoader.setMarket('futures');
     }
     await loadBinanceSymbols();
-    const btc = {
-      id: 'bitcoin',
-      name: 'Bitcoin',
-      symbol: 'btc',
-      image: 'https://assets.coingecko.com/coins/images/1/small/bitcoin.png',
-      current_price: 0,
-      price_change_percentage_24h: 0,
-      high_24h: 0,
-      low_24h: 0,
-      total_volume: 0,
-      market_cap: null,
-    };
-    state.coins = [btc];
-    state.selectedCoin = btc;
-    updateCoinHeader(btc);
+    connectMiniTickerStream();
+    state.coins = await fetchTopCoinsFromBinance();
+    const defaultCoin = state.coins.find((c) => c.symbol === 'btc') || state.coins[0];
+    if (!defaultCoin) {
+      showError('선물 심볼 목록을 불러오지 못했습니다.');
+      return;
+    }
+    state.selectedCoin = defaultCoin;
+    updateCoinHeader(defaultCoin);
     await loadChart();
+    // Enrich names/icons in the background (same as chart page).
+    fetchTopCoins(30).then((coins) => {
+      if (coins?.length) {
+        state.coins = coins;
+        renderCoinList();
+      }
+    }).catch(() => {});
   } catch (err) {
     console.error('Trading chart init error:', err);
     showError(err?.message || String(err));

@@ -35,6 +35,8 @@ const FuturesBotApp = (() => {
   let lastBacktestMeta = { interval: '', symbol: '', lastTime: 0, count: 0 };
   const chartIndicators = { ema: false, rsi: false, macd: false };
   let sessionStartEquity = 0;
+  let sessionBotStartedAt = 0;
+  let sessionClosedTrades = 0;
   let positionStopPrice = null;
   let positionTakeProfitPrice = null;
   const POS_SLTP_STORAGE_KEY = 'crypto-charts-pos-sltp';
@@ -89,6 +91,8 @@ const FuturesBotApp = (() => {
     slTpMode: 'pct',
     pollSeconds: 60,
     backtestTradeCount: BACKTEST_TRADES_DEFAULT,
+    botStopMode: 'none', // none | trades | hours | minutes (Pro)
+    botStopValue: 10,
     lastPrice: 0,
     entryRules: null,
     exitRules: null,
@@ -127,6 +131,7 @@ const FuturesBotApp = (() => {
         syncHeaderPlanBadge();
         renderFreeQuotaPanel();
         updateStrategySlotsLimitHint();
+        updateBotStopScheduleUi();
         if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
         return null;
       }
@@ -141,14 +146,115 @@ const FuturesBotApp = (() => {
       syncHeaderPlanBadge();
       renderFreeQuotaPanel();
       updateStrategySlotsLimitHint();
+      updateBotStopScheduleUi();
       if (typeof StrategyAI !== 'undefined') StrategyAI.syncPlanGates?.();
       return snap;
     } catch {
       syncHeaderPlanBadge();
       renderFreeQuotaPanel();
       updateStrategySlotsLimitHint();
+      updateBotStopScheduleUi();
       return lastBillingSnap;
     }
+  }
+
+  function isProUser() {
+    return !!planFeatures.pro;
+  }
+
+  function baseAsset() {
+    const sym = String(state.symbol || 'BTCUSDT').toUpperCase();
+    return sym.replace(/USDT$/i, '') || 'BTC';
+  }
+
+  function updateTradingSymbolUi() {
+    const label = document.getElementById('tradingSymbolLabel');
+    if (label) label.textContent = state.symbol || '—';
+    document.querySelectorAll('[data-symbol-quick]').forEach((btn) => {
+      const q = String(btn.dataset.symbolQuick || '').toUpperCase();
+      btn.classList.toggle('active', q === baseAsset());
+    });
+  }
+
+  function normalizeBotStopMode(mode) {
+    const m = String(mode || 'none').toLowerCase();
+    return ['none', 'trades', 'hours', 'minutes'].includes(m) ? m : 'none';
+  }
+
+  function readBotStopSettings() {
+    if (!isProUser()) {
+      state.botStopMode = 'none';
+      state.botStopValue = 0;
+      return;
+    }
+    const modeEl = document.getElementById('botStopMode');
+    const valEl = document.getElementById('botStopValue');
+    state.botStopMode = normalizeBotStopMode(modeEl?.value);
+    let v = parseInt(valEl?.value, 10);
+    if (!Number.isFinite(v) || v < 1) v = 1;
+    if (state.botStopMode === 'trades') v = Math.min(10000, v);
+    if (state.botStopMode === 'hours') v = Math.min(720, v);
+    if (state.botStopMode === 'minutes') v = Math.min(24 * 60, v);
+    state.botStopValue = state.botStopMode === 'none' ? 0 : v;
+    if (valEl && state.botStopMode !== 'none') valEl.value = String(state.botStopValue);
+  }
+
+  function updateBotStopScheduleUi() {
+    const block = document.getElementById('botStopScheduleBlock');
+    const modeEl = document.getElementById('botStopMode');
+    const valEl = document.getElementById('botStopValue');
+    const hint = document.getElementById('botStopHint');
+    const lock = document.getElementById('botStopProLock');
+    const pro = isProUser();
+    if (block) block.classList.toggle('is-locked', !pro);
+    if (lock) lock.classList.toggle('hidden', pro);
+    if (modeEl) modeEl.disabled = !pro || botRunning;
+    if (valEl) {
+      valEl.disabled = !pro || botRunning || (modeEl?.value || 'none') === 'none';
+    }
+    if (!pro && modeEl) modeEl.value = 'none';
+    const mode = normalizeBotStopMode(modeEl?.value);
+    if (hint) {
+      if (!pro) {
+        hint.textContent = '자동 정지는 Pro에서 사용할 수 있습니다.';
+      } else if (mode === 'trades') {
+        hint.textContent = `봇 시작 후 청산 ${valEl?.value || 'N'}회가 끝나면 자동 정지합니다.`;
+      } else if (mode === 'hours') {
+        hint.textContent = `봇 시작 ${valEl?.value || 'N'}시간 후 자동 정지합니다.`;
+      } else if (mode === 'minutes') {
+        hint.textContent = `봇 시작 ${valEl?.value || 'N'}분 후 자동 정지합니다.`;
+      } else {
+        hint.textContent = '예: 10회 청산 후, 2시간 후, 30분 후 자동 정지 (Pro)';
+      }
+    }
+  }
+
+  async function checkBotStopSchedule() {
+    if (!botRunning || !isProUser()) return false;
+    readBotStopSettings();
+    const mode = state.botStopMode;
+    const value = state.botStopValue;
+    if (mode === 'none' || value < 1) return false;
+    if (mode === 'trades' && sessionClosedTrades >= value) {
+      addLog(`자동 정지 — ${value}회 거래(청산) 완료`, 'info');
+      await stopBot();
+      return true;
+    }
+    if ((mode === 'hours' || mode === 'minutes') && sessionBotStartedAt > 0) {
+      const limitMs = mode === 'hours' ? value * 3_600_000 : value * 60_000;
+      if (Date.now() - sessionBotStartedAt >= limitMs) {
+        addLog(`자동 정지 — ${value}${mode === 'hours' ? '시간' : '분'} 경과`, 'info');
+        await stopBot();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function onTradeClosed() {
+    if (!botRunning) return;
+    sessionClosedTrades += 1;
+    await checkBotStopSchedule();
   }
 
   function maxAllowedStrategySlots() {
@@ -400,6 +506,8 @@ const FuturesBotApp = (() => {
       pollSeconds: state.pollSeconds,
       symbol: state.symbol,
       interval: state.interval,
+      botStopMode: state.botStopMode,
+      botStopValue: state.botStopValue,
     });
   }
 
@@ -422,7 +530,24 @@ const FuturesBotApp = (() => {
     if (payload.rsiOversold != null) setFieldValue('rsiOversold', payload.rsiOversold);
     if (payload.rsiOverbought != null) setFieldValue('rsiOverbought', payload.rsiOverbought);
     if (payload.pollSeconds != null) setFieldValue('pollSeconds', payload.pollSeconds);
+    if (payload.botStopMode != null) {
+      const modeEl = document.getElementById('botStopMode');
+      if (modeEl) modeEl.value = normalizeBotStopMode(payload.botStopMode);
+    }
+    if (payload.botStopValue != null) {
+      const valEl = document.getElementById('botStopValue');
+      if (valEl) valEl.value = String(Math.max(1, parseInt(payload.botStopValue, 10) || 1));
+    }
+    if (payload.symbol) {
+      state.symbol = String(payload.symbol).toUpperCase();
+      const base = baseAsset();
+      if (Chart.available() && typeof Chart.selectCoin === 'function') {
+        Chart.selectCoin(base).catch?.(() => {});
+      }
+      updateTradingSymbolUi();
+    }
     readFormSettings();
+    updateBotStopScheduleUi();
   }
 
   function hydrateStrategyFromPayload(payload, { source = 'local' } = {}) {
@@ -622,6 +747,8 @@ const FuturesBotApp = (() => {
       entryRules: s.entryRules,
       exitRules: s.exitRules,
       strategySlots: s.strategySlots,
+      botStopMode: isProUser() ? state.botStopMode : 'none',
+      botStopValue: isProUser() ? state.botStopValue : 0,
     };
   }
 
@@ -2092,6 +2219,13 @@ const FuturesBotApp = (() => {
   function syncFromChart() {
     if (!Chart.available()) return;
     const cs = Chart.getState() || {};
+    if (cs.symbol) {
+      const next = String(cs.symbol).toUpperCase();
+      if (next !== state.symbol) {
+        state.symbol = next;
+        updateTradingSymbolUi();
+      }
+    }
     state.interval = cs.interval || state.interval;
     state.lastPrice = Chart.getPrice() || state.lastPrice;
     lastCandles = Chart.getCandles() || lastCandles;
@@ -2101,6 +2235,7 @@ const FuturesBotApp = (() => {
     state.leverage = parseInt($('#leverage').value, 10) || 5;
     state.riskPerTradePct = parseFloat($('#riskPerTrade').value) || 1;
     state.maxAccountLossPct = parseFloat($('#maxAccountLoss').value) || 5;
+    readBotStopSettings();
     state.allowShort = $('#allowShort') ? $('#allowShort').checked : true;
     state.emaFast = parseInt($('#emaFast')?.value, 10) || 12;
     state.emaSlow = parseInt($('#emaSlow')?.value, 10) || 26;
@@ -2295,9 +2430,13 @@ const FuturesBotApp = (() => {
           if (st && !st.running && botRunning) {
             serverBotActive = false;
             botRunning = false;
+            sessionBotStartedAt = 0;
             $('#startBotBtn').disabled = false;
             $('#stopBotBtn').disabled = true;
-            addLog('서버 봇이 종료되었습니다', 'info');
+            updateBotStopScheduleUi();
+            addLog(st.message || '서버 봇이 종료되었습니다', 'info');
+          } else if (botRunning) {
+            await checkBotStopSchedule();
           }
         }
         updateUI();
@@ -3141,7 +3280,7 @@ const FuturesBotApp = (() => {
         const pnl = pos.unrealizedPnl ?? 0;
         const cls = pnl >= 0 ? 'positive' : 'negative';
         const margin = (pos.quantity * pos.entryPrice) / (pos.leverage || state.leverage);
-        posEl.innerHTML = `<strong>${pos.side}</strong> ${pos.quantity.toFixed(6)} BTC @ $${pos.entryPrice.toFixed(2)}<br>${pos.leverage || state.leverage}x · 증거금 ~$${margin.toFixed(2)}${positionStopPrice != null ? `<br><span class="text-muted">손절 $${positionStopPrice.toFixed(2)}</span>` : ''}${positionTakeProfitPrice != null ? `<br><span class="text-muted">익절 $${positionTakeProfitPrice.toFixed(2)}</span>` : ''}`;
+        posEl.innerHTML = `<strong>${pos.side}</strong> ${pos.quantity.toFixed(6)} ${baseAsset()} @ $${pos.entryPrice.toFixed(2)}<br>${pos.leverage || state.leverage}x · 증거금 ~$${margin.toFixed(2)}${positionStopPrice != null ? `<br><span class="text-muted">손절 $${positionStopPrice.toFixed(2)}</span>` : ''}${positionTakeProfitPrice != null ? `<br><span class="text-muted">익절 $${positionTakeProfitPrice.toFixed(2)}</span>` : ''}`;
         $('#positionPnl').innerHTML = `<span class="${cls}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>`;
       }
       updatePositionStopLine();
@@ -3172,7 +3311,7 @@ const FuturesBotApp = (() => {
       const pnl = FuturesPaper.unrealizedPnl(price);
       const roe = FuturesPaper.roe(price, pos.leverage);
       const cls = pnl >= 0 ? 'positive' : 'negative';
-      posEl.innerHTML = `<strong>${pos.side}</strong> ${pos.quantity.toFixed(6)} BTC @ $${pos.entryPrice.toFixed(2)}<br>${pos.leverage}x · 증거금 $${pos.margin.toFixed(2)}${pos.stopPrice != null ? `<br><span class="text-muted">손절 $${pos.stopPrice.toFixed(2)}</span>` : ''}${pos.takeProfitPrice != null ? `<br><span class="text-muted">익절 $${pos.takeProfitPrice.toFixed(2)}</span>` : ''}`;
+      posEl.innerHTML = `<strong>${pos.side}</strong> ${pos.quantity.toFixed(6)} ${baseAsset()} @ $${pos.entryPrice.toFixed(2)}<br>${pos.leverage}x · 증거금 $${pos.margin.toFixed(2)}${pos.stopPrice != null ? `<br><span class="text-muted">손절 $${pos.stopPrice.toFixed(2)}</span>` : ''}${pos.takeProfitPrice != null ? `<br><span class="text-muted">익절 $${pos.takeProfitPrice.toFixed(2)}</span>` : ''}`;
       $('#positionPnl').innerHTML = `<span class="${cls}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${roe >= 0 ? '+' : ''}${roe.toFixed(2)}%)</span>`;
     }
 
@@ -3200,6 +3339,7 @@ const FuturesBotApp = (() => {
           await FuturesApiClient.closePosition({ manual: false });
           clearPositionStop();
           addLog(`${pos.side} 청산 @ $${price.toFixed(2)} — ${result.reason}`, 'info');
+          await onTradeClosed();
           await refreshTestnetStatus();
           updateUI();
         } catch (err) {
@@ -3235,7 +3375,7 @@ const FuturesBotApp = (() => {
           positionStopPrice = r.stopPrice ?? levels.stopPrice;
           positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
           savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
-          addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+          addLog(`${side} 진입 ${r.quantity?.toFixed(6) || ''} ${baseAsset()} @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
           if (r.stopPrice != null || r.takeProfitPrice != null) {
             addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
           }
@@ -3256,6 +3396,7 @@ const FuturesBotApp = (() => {
       if (r.ok) {
         clearPositionStop();
         addLog(r.message, r.pnl >= 0 ? 'win' : 'loss');
+        await onTradeClosed();
       }
       return;
     }
@@ -3348,6 +3489,7 @@ const FuturesBotApp = (() => {
   async function botTick() {
     try {
       readFormSettings();
+      if (await checkBotStopSchedule()) return;
       if (await checkAccountLossLimit()) return;
       syncFromChart();
       const candles = lastCandles;
@@ -3489,9 +3631,12 @@ const FuturesBotApp = (() => {
 
   async function startBot() {
     if (botRunning) return;
+    syncFromChart();
     readFormSettings();
     await applyBotIntervalOnStart();
     sessionStartEquity = await getEquity();
+    sessionBotStartedAt = Date.now();
+    sessionClosedTrades = 0;
 
     // Drop leftover browser-side pauses so a fresh start can enter on the
     // current signal instead of waiting out a previous manual-close gate.
@@ -3499,6 +3644,14 @@ const FuturesBotApp = (() => {
     lastAutoEntryKey = null;
     autoEntryRetryAt = 0;
     autoConfirmSlTpFromStrategy();
+
+    const stopNote = (isProUser() && state.botStopMode !== 'none' && state.botStopValue > 0)
+      ? (state.botStopMode === 'trades'
+        ? ` · 자동정지 ${state.botStopValue}회 거래`
+        : state.botStopMode === 'hours'
+          ? ` · 자동정지 ${state.botStopValue}시간`
+          : ` · 자동정지 ${state.botStopValue}분`)
+      : '';
 
     if (isTestnetMode()) {
       try {
@@ -3520,14 +3673,16 @@ const FuturesBotApp = (() => {
         botRunning = true;
         $('#startBotBtn').disabled = true;
         $('#stopBotBtn').disabled = false;
+        updateBotStopScheduleUi();
         startStatusPolling();
         addLog(
-          `서버 봇 시작 (${liveTradingLabel()}) — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입`,
+          `서버 봇 시작 (${liveTradingLabel()}) — ${state.symbol} ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입${stopNote}`,
           'info',
         );
         // Enter right away if the chart already shows a live signal.
         updateSignalDisplay();
       } catch (err) {
+        sessionBotStartedAt = 0;
         const hint = /Node\.js|node/i.test(err.message)
           ? ' → VPS SSH: sudo apt install -y nodejs && sudo systemctl restart crypto-web'
           : '';
@@ -3538,8 +3693,9 @@ const FuturesBotApp = (() => {
       botRunning = true;
       $('#startBotBtn').disabled = true;
       $('#stopBotBtn').disabled = false;
+      updateBotStopScheduleUi();
       addLog(
-        `봇 시작 — BTC ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x, 1회 리스크 ${state.riskPerTradePct}%`,
+        `봇 시작 — ${state.symbol} ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x, 1회 리스크 ${state.riskPerTradePct}%${stopNote}`,
         'info',
       );
       botTick();
@@ -3565,8 +3721,10 @@ const FuturesBotApp = (() => {
     }
 
     botRunning = false;
+    sessionBotStartedAt = 0;
     $('#startBotBtn').disabled = false;
     $('#stopBotBtn').disabled = true;
+    updateBotStopScheduleUi();
     addLog('봇 정지', 'info');
     updateUI();
   }
@@ -3622,7 +3780,7 @@ const FuturesBotApp = (() => {
       positionStopPrice = r.stopPrice ?? levels.stopPrice;
       positionTakeProfitPrice = r.takeProfitPrice ?? levels.takeProfitPrice;
       savePositionSlTpStorage(side, price, positionStopPrice, positionTakeProfitPrice);
-      addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} BTC @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
+      addLog(`${side} 수동 진입 ${r.quantity?.toFixed(6) || ''} ${baseAsset()} @ $${price.toFixed(2)}${formatLevelsNote(levels)}`, side === 'LONG' ? 'win' : 'loss');
       if (r.stopPrice != null || r.takeProfitPrice != null) {
         addLog('거래소에 SL/TP 주문 등록 완료 — 브라우저를 닫아도 체결됩니다.', 'info');
       }
@@ -3695,6 +3853,7 @@ const FuturesBotApp = (() => {
           });
           clearPositionStop();
           addLog(`${side} 수동 청산 @ $${price.toFixed(2)}`, 'info');
+          await onTradeClosed();
           await refreshTestnetStatus();
           updateUI();
         } catch (err) {
@@ -3713,6 +3872,7 @@ const FuturesBotApp = (() => {
       if (r.ok) {
         clearPositionStop();
         resetSlTpConfirm();
+        await onTradeClosed();
       }
       addLog(r.message, r.ok ? (r.pnl >= 0 ? 'win' : 'loss') : 'info');
       updateUI();
@@ -3910,6 +4070,48 @@ const FuturesBotApp = (() => {
       startBot();
     });
     $('#stopBotBtn').addEventListener('click', stopBot);
+
+    const botStopModeEl = document.getElementById('botStopMode');
+    const botStopValueEl = document.getElementById('botStopValue');
+    botStopModeEl?.addEventListener('change', () => {
+      updateBotStopScheduleUi();
+      readBotStopSettings();
+      saveFormSettingsStorage();
+      scheduleServerStrategySync();
+    });
+    botStopValueEl?.addEventListener('change', () => {
+      readBotStopSettings();
+      updateBotStopScheduleUi();
+      saveFormSettingsStorage();
+      scheduleServerStrategySync();
+    });
+
+    document.querySelectorAll('[data-symbol-quick]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (botRunning) {
+          addLog('봇 실행 중에는 심볼을 변경할 수 없습니다. 먼저 정지하세요.', 'loss');
+          return;
+        }
+        const q = btn.dataset.symbolQuick;
+        if (!q || !Chart.available()) return;
+        const ok = await Chart.selectCoin(q);
+        if (!ok) addLog(`${q} 심볼을 찾지 못했습니다.`, 'loss');
+        else {
+          syncFromChart();
+          updateTradingSymbolUi();
+          saveFormSettingsStorage();
+        }
+      });
+    });
+
+    window.addEventListener('orbinex:symbol-changed', () => {
+      syncFromChart();
+      updateTradingSymbolUi();
+      saveFormSettingsStorage();
+    });
+
+    updateBotStopScheduleUi();
+    updateTradingSymbolUi();
     $('#closeBtn').addEventListener('click', () => {
       if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('수동 청산')) return;
       manualClose();
@@ -4069,6 +4271,8 @@ const FuturesBotApp = (() => {
     getPlanFeatures,
     renderFreeQuotaPanel,
     refreshBillingQuota: refreshPlanFeatures,
+    isBotRunning: () => botRunning,
+    addLog,
   };
 })();
 

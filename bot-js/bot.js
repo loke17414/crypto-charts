@@ -49,6 +49,32 @@ let running = true;
 let position = null; // { side, entryPrice, quantity, stopPrice, takeProfitPrice, stopLossPct, takeProfitPct, entryTime }
 let sessionStartEquity = 0;
 let dryCash = cfg.dryCash;
+let sessionStartedAt = Date.now();
+let sessionClosedTrades = 0;
+
+function stopScheduleActive() {
+  return cfg.botStopMode && cfg.botStopMode !== 'none' && cfg.botStopValue > 0;
+}
+
+function checkStopSchedule(reasonHint) {
+  if (!stopScheduleActive()) return false;
+  const mode = cfg.botStopMode;
+  const value = cfg.botStopValue;
+  if (mode === 'trades' && sessionClosedTrades >= value) {
+    log(`Auto-stop — ${value} closed trade(s) completed${reasonHint ? ` (${reasonHint})` : ''}`, 'WARN');
+    running = false;
+    return true;
+  }
+  if (mode === 'hours' || mode === 'minutes') {
+    const limitMs = mode === 'hours' ? value * 3_600_000 : value * 60_000;
+    if (Date.now() - sessionStartedAt >= limitMs) {
+      log(`Auto-stop — ${value}${mode === 'hours' ? 'h' : 'm'} elapsed${reasonHint ? ` (${reasonHint})` : ''}`, 'WARN');
+      running = false;
+      return true;
+    }
+  }
+  return false;
+}
 
 const mode = cfg.dryRun ? 'DRY RUN' : (cfg.useTestnet ? 'TESTNET' : 'LIVE');
 
@@ -158,6 +184,11 @@ async function syncPositionFromExchange() {
         ? '거래소 SL/TP 체결 — 로컬 상태 초기화'
         : '외부/수동 청산 감지 — 로컬 상태 초기화');
     position = null;
+    // closePosition() already counted bot-initiated closes; exchange/manual closes count here.
+    if (!wasBotClose) {
+      sessionClosedTrades += 1;
+      checkStopSchedule(wasExchangeSlTp ? 'exchange SL/TP' : 'external close');
+    }
     // Always apply a local cooldown. If the UI already wrote the gate file,
     // pausedUntil() covers it; if the gate races behind the close, this
     // in-memory pause still blocks same-tick / next-tick re-entry.
@@ -229,6 +260,14 @@ function maybeReloadStrategy() {
   st.strategySlots = normalizeSlotsFromFile(s.strategySlots);
   cfg.riskPerTradePct = num(s.riskPerTradePct, cfg.riskPerTradePct);
   cfg.maxAccountLossPct = num(s.maxAccountLossPct, cfg.maxAccountLossPct);
+  if ('botStopMode' in s) {
+    const m = String(s.botStopMode || 'none').toLowerCase();
+    cfg.botStopMode = ['none', 'trades', 'hours', 'minutes'].includes(m) ? m : 'none';
+  }
+  if ('botStopValue' in s) {
+    const v = parseInt(s.botStopValue, 10);
+    cfg.botStopValue = Number.isFinite(v) ? Math.max(0, v) : 0;
+  }
 
   const slLabel = st.useStopLoss === false ? '없음' : `-${st.stopLossPct}%`;
   log(`strategy.json reloaded — SL ${slLabel} · TP +${st.takeProfitPct}% · allowShort ${st.allowShort}`);
@@ -440,6 +479,8 @@ async function closePosition(price, reason) {
     log(`[DRY] CLOSE ${side} ${quantity} @ $${price.toFixed(2)} | ROE ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% — ${reason}`);
     position = null;
     saveState();
+    sessionClosedTrades += 1;
+    checkStopSchedule('after close');
     return;
   }
 
@@ -451,6 +492,8 @@ async function closePosition(price, reason) {
   log(`CLOSE ${side} ${quantity} @ $${price.toFixed(2)} | ROE ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% — ${reason}`);
   position = null;
   saveState();
+  sessionClosedTrades += 1;
+  checkStopSchedule('after close');
 }
 
 // ---- Main tick ----------------------------------------------------------
@@ -459,6 +502,7 @@ async function tick() {
   tickInFlight = true;
   skipEntryThisTick = false;
   try {
+  if (checkStopSchedule()) return;
   maybeReloadStrategy();
   const raw = await client.getKlines(200);
   const candles = toCandles(raw);
@@ -578,7 +622,13 @@ function logHoldReason(reason) {
 
 // ---- Runner -------------------------------------------------------------
 async function start() {
+  sessionStartedAt = Date.now();
+  sessionClosedTrades = 0;
   log(`Starting Futures bot [${mode}] ${cfg.symbol} ${cfg.interval} | ${cfg.leverage}x ${cfg.marginType} | risk ${cfg.riskPerTradePct}%/trade | poll ${cfg.pollSeconds}s`);
+  if (stopScheduleActive()) {
+    const unit = cfg.botStopMode === 'trades' ? 'trades' : (cfg.botStopMode === 'hours' ? 'hours' : 'minutes');
+    log(`Auto-stop enabled: ${cfg.botStopValue} ${unit}`);
+  }
   if (cfg.dryRun) {
     log('DRY_RUN=true — 시뮬레이션만 합니다. UI에서 봇 시작 시 live_trading으로 실제 테스트넷 주문 가능', 'WARN');
   }

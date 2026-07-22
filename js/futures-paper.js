@@ -84,7 +84,7 @@ const FuturesPaper = (() => {
 
     return {
       ok: true,
-      message: `${side} 진입: ${qty.toFixed(6)} BTC @ $${price.toFixed(2)} (${leverage}x, 증거금 $${marginUsdt.toFixed(2)})`,
+      message: `${side} 진입: ${qty.toFixed(6)} @ $${price.toFixed(2)} (${leverage}x, 증거금 $${marginUsdt.toFixed(2)})`,
     };
   }
 
@@ -133,7 +133,7 @@ const FuturesPaper = (() => {
       const pnl = unrealizedPnl(price);
       const roePct = roe(price, leverage);
       lines.push(
-        `📊 ${pos.side} ${pos.quantity.toFixed(6)} BTC`,
+        `📊 ${pos.side} ${pos.quantity.toFixed(6)}`,
         `   진입 $${pos.entryPrice.toFixed(2)} | ${pos.leverage}x | 증거금 $${pos.margin.toFixed(2)}`,
         `   미실현 $${pnl.toFixed(2)} (ROE ${roePct >= 0 ? '+' : ''}${roePct.toFixed(2)}%)`,
       );

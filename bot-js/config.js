@@ -149,6 +149,11 @@ function loadConfig() {
     dryCash: num(process.env.DRY_CASH, 10000),
     strategyPath,
     hasStrategyFile: Boolean(strategyFile),
+    botStopMode: (() => {
+      const m = String(s.botStopMode || process.env.BOT_STOP_MODE || 'none').toLowerCase();
+      return ['none', 'trades', 'hours', 'minutes'].includes(m) ? m : 'none';
+    })(),
+    botStopValue: Math.max(0, int(s.botStopValue ?? process.env.BOT_STOP_VALUE, 0)),
     settings,
   };
 }
