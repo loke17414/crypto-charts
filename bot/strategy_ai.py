@@ -167,50 +167,12 @@ Condition types:
 9) swing_near — close within tolerancePct of the last confirmed swing level (support/resistance)
    { "type":"swing_near", "side":"long"|"short", "pivotBars":5, "lookback":60, "tolerancePct":0.5 }
    long = near swing low (전 저점 지지); short = near swing high (전 고점 저항)
-10) line_touch — candle RANGE (wick) touches an MA/EMA/line (NOT close-equals-MA)
-   { "type":"line_touch", "indicator":"ma"|"ema"|"sma", "params":{"period":20}, "mode":"wick"|"body", "offset":1 }
-   wick (default): bar.low <= line <= bar.high on that offset bar
-   body: min(open,close) <= line <= max(open,close)
-   CRITICAL: "가격이 MA 터치" = WICK touch via line_touch — NEVER compare close==ma and call it 터치.
-   "다음 캔들 상승/양봉 후 롱" = line_touch offset:1 AND candle_pattern bullish (or is_bullish) offset:0
-   "다음 캔들이 MA 밑으로 내려가면 진입 금지" = ALSO require confirm bar STAYS ABOVE the MA:
-     compare low[offset:0] >= ma(period)[offset:0]   (price wicked under MA → skip)
-     OR if user says 종가 기준: close[offset:0] >= ma[offset:0]
-   SL at 터치한 캔들 저점 when entry is on the next bar → exitRules candle_extreme low offset:1
-   TP 손익비 1:1 → takeProfit risk_reward ratio:1
-
-PRICE vs CANDLE (CRITICAL — common AI mistake):
-- "가격 터치" / "라인 터치" means the candle's HIGH-LOW range crossed the line (wick), NOT that close equals the MA.
-- "다음 캔들" / "다음 봉" means conditions on the CONFIRM bar (offset 0) with the touch on the PRIOR bar (offset 1).
-- Do NOT put touch + rise on the same offset:0 bar unless the user says same-candle entry.
-- Do NOT use band_reentry for MA/EMA/이평 터치 (band_reentry is only Bollinger/Envelope/Keltner/Donchian).
-- "MA 밑으로 내려가면 진입 마" is a FILTER on the confirm bar (offset 0), NOT a second line_touch and NOT on offset 1.
-
-MA/이평 터치 + 다음 봉 상승 롱 + (옵션) MA 하회 금지 EXAMPLE:
-{
-  "entryRules": {
-    "long": {
-      "enabled": true,
-      "logic": "all",
-      "conditions": [
-        { "type":"line_touch", "indicator":"ma", "params":{"period":20}, "mode":"wick", "offset":1 },
-        { "type":"candle_pattern", "pattern":"bullish", "offset":0 },
-        { "type":"compare",
-          "left":{"source":"price","field":"low","offset":0},
-          "op":">=",
-          "right":{"source":"indicator","indicator":"ma","params":{"period":20},"field":"value","offset":0} }
-      ]
-    },
-    "short": { "enabled": false, "logic": "all", "conditions": [] }
-  },
-  "exitRules": {
-    "long": {
-      "stopLoss": { "type":"candle_extreme", "field":"low", "offset":1 },
-      "takeProfit": { "type":"risk_reward", "ratio":1 }
-    }
-  },
-  "allowShort": false
-}
+10) line_touch — wick/body touches MA/EMA (NOT close==ma)
+   { "type":"line_touch", "indicator":"ma"|"ema", "params":{"period":20}, "mode":"wick"|"body", "offset":1 }
+   MA touch + next bullish long: line_touch offset:1 + candle_pattern bullish offset:0
+   Ban entry if confirm bar goes under MA: ALSO compare low[0] >= ma[0] (or close[0]>=ma if 종가)
+   SL at touch-bar low when entry is next bar → candle_extreme low offset:1; TP 1:1 → risk_reward ratio:1
+   NEVER band_reentry for plain MA/이평 터치.
 
 SWING HIGH/LOW (전 고점/전 저점) — CRITICAL (most common AI mistake):
 - WRONG: "이전 캔들이 더 낮으니 지금/직전 봉이 전고점" — NEVER do this.
@@ -345,9 +307,8 @@ MARKET DATA & BACKTEST (critical for accuracy):
 
 CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common AI mistake):
 - NEVER auto-apply structure.fvg or structure.divergence from market_context unless the user EXPLICITLY asks for FVG/갭/페어밸류 or divergence/다이버전스.
-- MA/SMA/EMA/이평/이동평균 + 터치/touch/닿음 → type:"line_touch" (wick). NEVER band_reentry. NEVER close==ma as "터치".
-- 다음 캔들/다음 봉 + 상승/양봉 + 롱 → line_touch offset:1 + candle_pattern bullish offset:0 (see EXAMPLE above).
-- 다음 캔들이 MA 밑/아래/하회하면 진입 금지 → confirm bar(offset 0) compare low>=ma (or close>=ma if 종가). Keep line_touch+양봉; ADD this filter, do not replace them.
+- MA/SMA/EMA/이평 + 터치 → line_touch wick (+ next bullish = offset:1 touch + offset:0 bullish). NEVER band_reentry for plain MA.
+- MA 밑으로 내려가면 진입 금지 → confirm low[0]>=ma[0] (ADD filter; keep touch+양봉).
 - 볼린저/Bollinger/BB/밴드/Envelope/Keltner/Donchian + 진입/재진입/이탈/터치/하단/상단
   → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg". NEVER for plain MA touch.
 - FVG/페어밸류/갭/gap/imbalance mentioned by user → type:"fvg" ONLY. NEVER band_reentry or swing for FVG requests.
@@ -830,13 +791,13 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 def _normalize_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for item in (history or [])[-6:]:
+    for item in (history or [])[-4:]:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
         content = str(item.get("content") or "").strip()
         if role in {"user", "assistant"} and content:
-            out.append({"role": role, "content": content[:800]})
+            out.append({"role": role, "content": content[:400]})
     return out
 
 
@@ -857,20 +818,18 @@ _STRATEGY_RULE_MARKERS = (
     "candle", "봉", "지표", "indicator", "슬롯", "전략", "strategy",
     "과매수", "과매도", "골든", "데드", "다이버", "삭제", "제거", "비활성",
     "kdj", "cci", "atr", "adx", "envelope", "keltner", "donchian", "해머", "장악",
-    "fvg", "갭", "페어밸류", "다이버",
+    "fvg", "갭", "페어밸류", "다이버", "터치", "이평", "이동평균", "line_touch",
 )
 
 # Narrow markers: only these justify expensive gpt-4o routing.
+# Keep this list SMALL — broad words like "진입/조건/터치" burn 4o + full system prompt.
 _COMPLEX_RULE_MARKERS = (
-    "진입", "조건", "entryrules", "entry rules", "entryrules",
     "크로스", "cross_above", "cross_below", "재진입", "band_reentry",
     "볼린저", "bollinger", "envelope", "keltner", "donchian",
     "다이버", "divergence", "fvg", "페어밸류", "스윙", "전고점", "전저점",
     "swing_break", "swing_near", "골든", "데드",
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
     "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
-    "터치", "이평", "이동평균", "line_touch", "ma20", "다음캔들", "다음 봉", "다음봉",
-    "하회", "밑으로", "진입하지", "진입 하지",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -989,9 +948,14 @@ def select_openai_model(
         return complex_model, "all_complex"
 
     text = (prompt or "").lower()
+    # MA touch / hold-above filters are compiled by local templates — keep on mini.
+    if _looks_like_ma_line_touch(prompt) or _looks_like_ma_hold_above_filter(prompt):
+        return default_model, "ma_touch_template_mini"
+
     wants_complex = any(m in text for m in _COMPLEX_RULE_MARKERS) or (
         any(m in text for m in _APPLY_MARKERS)
         and any(m in text for m in _STRATEGY_RULE_MARKERS)
+        and any(m in text for m in ("크로스", "재진입", "볼린저", "스윙", "전고점", "전저점", "fvg", "다이버", "macd", "슬롯"))
     )
 
     if _looks_like_question_only(prompt):
@@ -1251,27 +1215,6 @@ def _call_openai(
             _request_api_key.reset(token)
 
 
-def _slim_market_context(market_context: dict[str, Any] | None) -> dict[str, Any]:
-    """Drop heavy tape fields for simple question / risk-only turns."""
-    if not isinstance(market_context, dict):
-        return {}
-    keep = {
-        "symbol",
-        "interval",
-        "lastPrice",
-        "recentHigh",
-        "recentLow",
-        "strategyLog",
-        "structure",
-    }
-    slim = {k: market_context[k] for k in keep if k in market_context}
-    # Keep a short candle sample only
-    candles = market_context.get("recentCandles15")
-    if isinstance(candles, list):
-        slim["recentCandles15"] = candles[-5:]
-    return slim
-
-
 def _call_openai_with_key(
     prompt: str,
     current: StrategySettings,
@@ -1323,7 +1266,7 @@ def _call_openai_with_key(
     payload = {
         "model": chosen_model,
         "temperature": 0.2,
-        "max_tokens": 2500 if heavy else 900,
+        "max_tokens": 1600 if heavy else 700,
         "response_format": {"type": "json_object"},
         "messages": messages,
     }
@@ -1874,6 +1817,41 @@ def _ma_touch_next_candle_patch(prompt: str) -> dict[str, Any]:
         "entryRules": entry,
         "exitRules": exit_rules,
     }
+
+
+def _local_ma_strategy_patch(
+    prompt: str,
+    current_settings: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Compile common MA-touch strategies without calling OpenAI (saves tokens)."""
+    text = (prompt or "").strip()
+    if not text or _looks_like_question_only(text):
+        return None
+    touch = _looks_like_ma_line_touch(text)
+    hold = _looks_like_ma_hold_above_filter(text)
+    if not touch and not hold:
+        return None
+    applyish = (
+        any(m in text for m in _APPLY_MARKERS)
+        or any(m in text for m in ("진입", "조건", "추가", "손절", "익절", "롱", "숏", "long", "short"))
+    )
+    if not applyish:
+        return None
+
+    if touch:
+        return _ma_touch_next_candle_patch(text)
+
+    # Hold-above filter only (follow-up) — merge into current entryRules.
+    cur_rules = (current_settings or {}).get("entryRules")
+    if not isinstance(cur_rules, dict):
+        return None
+    has_conds = bool(
+        ((cur_rules.get("long") or {}).get("conditions") or [])
+        or ((cur_rules.get("short") or {}).get("conditions") or [])
+    )
+    if not has_conds:
+        return None
+    return {"entryRules": _ensure_ma_confirm_hold_filter(cur_rules, text)}
 
 
 def _has_bullish_entry(rules: Any) -> bool:
@@ -2431,6 +2409,30 @@ def interpret_strategy(
                 "route_reason": "recommended_preset_no_gpt",
                 "sources": [],
             }
+
+    # Fast path: MA touch / MA hold-above — local template, no OpenAI tokens.
+    ma_early = _local_ma_strategy_patch(prompt.strip(), raw_settings)
+    if ma_early:
+        append_turn(role="user", content=prompt.strip(), user_id=user_id)
+        merged = current.merged(ma_early)
+        summary = (
+            "MA 터치 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+            if _looks_like_ma_line_touch(prompt.strip())
+            else "확인 봉 MA 하회 금지 필터를 로컬 템플릿으로 추가했습니다 (OpenAI 호출 없음)."
+        )
+        append_turn(role="assistant", content=summary, user_id=user_id)
+        logger.info("MA template applied without OpenAI user=%s", user_id)
+        return {
+            "ok": True,
+            "settings": merged.model_dump(),
+            "patch": ma_early,
+            "changed_fields": list(ma_early.keys()),
+            "summary": summary,
+            "rules": merged.rules_text(),
+            "model": "local-ma-template",
+            "route_reason": "ma_touch_local_no_gpt",
+            "sources": [],
+        }
 
     merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
     market = build_market_context(
