@@ -82,8 +82,8 @@ const AppBilling = (() => {
           ? `Pro 월 ${monthWon}원 · 다음 결제일 ${new Date(snap.currentPeriodEnd).toLocaleDateString('ko-KR')}`
           : `Pro 월 ${monthWon}원 구독 중`;
       } else {
-        const botH = snap.bot?.hoursLimit ?? 48;
-        const gptN = snap.limits?.freeGptCallsPerWeek ?? snap.gpt?.callsLimit ?? 10;
+        const botH = snap.bot?.hoursLimit ?? 24;
+        const gptN = snap.limits?.freeGptCallsPerWeek ?? snap.gpt?.callsLimit ?? 5;
         const proGpt = snap.limits?.proGptCallsPerWeek ?? 50;
         const slots = snap.features?.maxStrategySlots ?? 1;
         noteEl.textContent =
