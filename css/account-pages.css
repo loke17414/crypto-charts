@@ -229,3 +229,17 @@
   color: var(--text-secondary);
   margin: 0 0.35rem;
 }
+
+.account-page__footer .footer__biz {
+  margin: 0.55rem auto 0;
+  max-width: 40rem;
+  line-height: 1.55;
+  font-size: 0.72rem;
+}
+
+.account-page__footer .footer__biz a {
+  margin: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

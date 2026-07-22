@@ -30,10 +30,11 @@ KEYS: list[tuple[str, str | None, bool, str]] = [
     ("DATABASE_URL", None, False, "Postgres URL; empty=SQLite"),
     ("TOSS_CLIENT_KEY", None, False, "optional later"),
     ("TOSS_SECRET_KEY", None, False, "optional later"),
-    ("BUSINESS_NAME", None, False, "optional later"),
-    ("BUSINESS_REPRESENTATIVE", None, False, "optional later"),
-    ("BUSINESS_REGISTRATION_NUMBER", None, False, "optional later"),
-    ("BUSINESS_ADDRESS", None, False, "optional later"),
+    ("BUSINESS_NAME", "오비넥스", True, "상호명"),
+    ("BUSINESS_REPRESENTATIVE", "이동건", True, "대표자"),
+    ("BUSINESS_REGISTRATION_NUMBER", "203-25-55373", True, "사업자등록번호"),
+    ("BUSINESS_ADDRESS", "경기 군포시 산본천로33 701동703호", True, "사업장주소"),
+    ("BUSINESS_PHONE", "010-3142-1916", True, "연락처"),
 ]
 
 

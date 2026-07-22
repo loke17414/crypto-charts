@@ -923,6 +923,19 @@ body.pos-sl-tp-dragging .chart-main {
 
 .footer p { font-size: 0.75rem; color: var(--text-muted); }
 
+.footer__biz {
+  margin-top: 0.45rem;
+  line-height: 1.55;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.footer__biz a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ── AI Assistant Panel ─────────────────────────────────────── */
 .ai-toggle-btn--active { color: var(--accent) !important; background: rgba(59, 130, 246, 0.15) !important; }
 

@@ -64,13 +64,20 @@
   </main>
 
   <footer class="account-page__footer">
-    <a href="terms.html">이용약관</a>
-    <a href="privacy.html">개인정보</a>
-    <a href="risk-disclosure.html">위험고지</a>
+    <div>
+      <a href="terms.html">이용약관</a>
+      <a href="privacy.html">개인정보</a>
+      <a href="risk-disclosure.html">위험고지</a>
+    </div>
+    <p class="footer__biz" data-business-footer>
+      상호명 오비넥스 · 사업자등록번호 203-25-55373 · 대표자 이동건<br>
+      사업장주소 경기 군포시 산본천로33 701동703호 · 연락처 <a href="tel:010-3142-1916">010-3142-1916</a>
+    </p>
   </footer>
 
   <script src="js/futures-api-client.js?v=20260721e"></script>
   <script src="js/auth.js?v=20260721g"></script>
+  <script src="js/site-info.js?v=20260723a"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       AppAuth.bootLoginPage();

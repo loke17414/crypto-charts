@@ -107,12 +107,18 @@ def support_email() -> str:
 
 
 def business_profile() -> dict[str, str]:
-    """Optional KR business identity shown on legal/footer pages."""
+    """KR business identity shown on legal/footer pages (전자상거래법 표시정보)."""
     return {
-        "name": os.getenv("BUSINESS_NAME", "").strip(),
-        "representative": os.getenv("BUSINESS_REPRESENTATIVE", "").strip(),
-        "registrationNumber": os.getenv("BUSINESS_REGISTRATION_NUMBER", "").strip(),
-        "address": os.getenv("BUSINESS_ADDRESS", "").strip(),
+        "name": os.getenv("BUSINESS_NAME", "오비넥스").strip() or "오비넥스",
+        "representative": os.getenv("BUSINESS_REPRESENTATIVE", "이동건").strip() or "이동건",
+        "registrationNumber": (
+            os.getenv("BUSINESS_REGISTRATION_NUMBER", "203-25-55373").strip() or "203-25-55373"
+        ),
+        "address": (
+            os.getenv("BUSINESS_ADDRESS", "경기 군포시 산본천로33 701동703호").strip()
+            or "경기 군포시 산본천로33 701동703호"
+        ),
+        "phone": os.getenv("BUSINESS_PHONE", "010-3142-1916").strip() or "010-3142-1916",
         "supportEmail": support_email(),
     }
 
