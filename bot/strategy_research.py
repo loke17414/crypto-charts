@@ -32,17 +32,26 @@ _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 # Korean/English markers that indicate the user wants strategy knowledge from
 # the internet (question / recommendation / explanation) rather than a pure
 # settings edit.
+# Avoid bare "추천" — that also matches "추천전략 <id> 적용" and bloated prompts.
 _RESEARCH_MARKERS = (
     "인터넷", "검색", "찾아", "스캔", "알려줘", "알려 줘", "설명해", "설명 해",
-    "추천", "어떤 전략", "무슨 전략", "전략이 뭐", "전략 뭐", "뭐가 좋", "what is",
+    "추천해", "추천 좀", "추천해줘", "추천 해줘", "추천해 줘",
+    "어떤 전략", "무슨 전략", "전략이 뭐", "전략 뭐", "뭐가 좋", "what is",
     "explain", "recommend", "best strategy", "어떻게 작동", "원리", "장단점",
     "비교해", "괜찮아?", "유명한", "인기 있는", "인기있는",
 )
 _QUESTION_HINTS = ("?", "뭐야", "무엇", "인가요", "인가", "일까", "할까")
+_RECOMMENDED_APPLY_RE = re.compile(r"추천전략\s+[a-z0-9\-]+", re.IGNORECASE)
+_APPLY_HINTS = ("적용", "apply", "설정해", "만들어", "추가해", "넣어", "바꿔")
 
 
 def looks_like_research_request(prompt: str) -> bool:
     text = (prompt or "").lower()
+    # Named preset apply ("추천전략 rsi-xxx 적용") is local — never trigger web research.
+    if _RECOMMENDED_APPLY_RE.search(prompt or "") and any(h in text for h in _APPLY_HINTS):
+        return False
+    if "추천전략" in text and any(h in text for h in _APPLY_HINTS):
+        return False
     if any(m in text for m in _RESEARCH_MARKERS):
         return True
     # A question about a strategy ("RSI 다이버전스 전략이 뭐야?")

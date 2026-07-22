@@ -65,7 +65,14 @@ from bot.server_bot import (
     stop_bot,
     _strategy_interval,
 )
-from bot.strategy_ai import ai_available, configure_openai_api_key, interpret_strategy, test_openai_api_key
+from bot.strategy_ai import (
+    ai_available,
+    configure_openai_api_key,
+    interpret_strategy,
+    is_no_gpt_route,
+    should_skip_gpt_quota,
+    test_openai_api_key,
+)
 from bot.strategy_ai_memory import clear_memory, load_turns
 from bot.strategy_schema import StrategyInterpretRequest, StrategyInterpretResponse, StrategySettings
 
@@ -301,6 +308,7 @@ class StrategyConfigureBody(BaseModel):
 
 class StrategyTestKeyBody(BaseModel):
     openai_api_key: str = Field(default="", max_length=512)
+    force: bool = False
 
 
 class StrategySyncBody(BaseModel):
@@ -548,17 +556,19 @@ def strategy_test_key(
     body: StrategyTestKeyBody | None = None,
     user: User | None = Depends(get_optional_user),
 ) -> dict[str, Any]:
+    force = bool(body.force) if body else False
     if auth_required():
         # End users do not supply keys — retest the platform key only.
         if user is None:
             raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-        result = test_openai_api_key(None, force=True)
+        # Prefer verify cache unless client explicitly forces a live recheck (saves chat tokens).
+        result = test_openai_api_key(None, force=force)
         if not result["verified"]:
             raise HTTPException(status_code=400, detail=result["message"])
         return {"ok": True, **result, "hosted": True}
     try:
         candidate = (body.openai_api_key if body else "").strip()
-        result = test_openai_api_key(candidate or None, force=True)
+        result = test_openai_api_key(candidate or None, force=force)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not result["verified"]:
@@ -605,10 +615,12 @@ def strategy_interpret(
 ) -> StrategyInterpretResponse:
     if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-    # Local recommended-preset apply does not use OpenAI — skip quota for that path.
-    from bot.strategy_ai import _recommended_preset_patch
-
-    skip_gpt_quota = bool(_recommended_preset_patch(body.prompt or "", body.market_context))
+    # Local preset / strategy templates do not call OpenAI — skip weekly AI quota.
+    skip_gpt_quota = should_skip_gpt_quota(
+        body.prompt or "",
+        body.current_settings,
+        body.market_context,
+    )
     if not skip_gpt_quota:
         assert_can_use_gpt(db, user)
     force_mini = False
@@ -645,7 +657,7 @@ def strategy_interpret(
         logger.exception("Strategy interpret failed")
         raise HTTPException(status_code=502, detail=f"전략 해석 실패: {exc}") from exc
 
-    if user is not None and result.get("route_reason") != "recommended_preset_no_gpt":
+    if user is not None and not is_no_gpt_route(result.get("route_reason")):
         record_gpt_call(db, user.id)
 
     settings = StrategySettings.model_validate(result["settings"])

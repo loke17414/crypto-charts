@@ -822,14 +822,13 @@ _STRATEGY_RULE_MARKERS = (
 )
 
 # Narrow markers: only these justify expensive gpt-4o routing.
-# Keep this list SMALL — broad words like "진입/조건/터치" burn 4o + full system prompt.
+# Band / swing / FVG / divergence / MA are handled by local templates — do NOT list them here.
 _COMPLEX_RULE_MARKERS = (
-    "크로스", "cross_above", "cross_below", "재진입", "band_reentry",
-    "볼린저", "bollinger", "envelope", "keltner", "donchian",
-    "다이버", "divergence", "fvg", "페어밸류", "스윙", "전고점", "전저점",
-    "swing_break", "swing_near", "골든", "데드",
+    "크로스", "cross_above", "cross_below",
+    "골든", "데드", "golden cross", "death cross",
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
     "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
+    "멀티", "multi", "동시", "and 조건", "그리고",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -948,21 +947,23 @@ def select_openai_model(
         return complex_model, "all_complex"
 
     text = (prompt or "").lower()
-    # MA touch / hold-above filters are compiled by local templates — keep on mini.
-    if _looks_like_ma_line_touch(prompt) or _looks_like_ma_hold_above_filter(prompt):
-        return default_model, "ma_touch_template_mini"
+    # Anything a local template can compile stays on mini (belt-and-suspenders).
+    if _local_strategy_template(prompt, current_settings) is not None:
+        return default_model, "local_template_mini"
 
     wants_complex = any(m in text for m in _COMPLEX_RULE_MARKERS) or (
         any(m in text for m in _APPLY_MARKERS)
         and any(m in text for m in _STRATEGY_RULE_MARKERS)
-        and any(m in text for m in ("크로스", "재진입", "볼린저", "스윙", "전고점", "전저점", "fvg", "다이버", "macd", "슬롯"))
+        and any(m in text for m in ("크로스", "macd", "슬롯", "골든", "데드", "해머", "장악", "스토캐"))
     )
 
     if _looks_like_question_only(prompt):
         return default_model, "question"
 
+    # Research Q&A stays on mini. Use 4o only when applying complex rules + research together.
     if web_research and looks_like_research_request(prompt):
-        if wants_complex:
+        applying = any(m in text for m in _APPLY_MARKERS)
+        if applying and wants_complex:
             return complex_model, "research_apply"
         return default_model, "research_question"
 
@@ -1831,11 +1832,7 @@ def _local_ma_strategy_patch(
     hold = _looks_like_ma_hold_above_filter(text)
     if not touch and not hold:
         return None
-    applyish = (
-        any(m in text for m in _APPLY_MARKERS)
-        or any(m in text for m in ("진입", "조건", "추가", "손절", "익절", "롱", "숏", "long", "short"))
-    )
-    if not applyish:
+    if not _prompt_applyish(text):
         return None
 
     if touch:
@@ -1852,6 +1849,107 @@ def _local_ma_strategy_patch(
     if not has_conds:
         return None
     return {"entryRules": _ensure_ma_confirm_hold_filter(cur_rules, text)}
+
+
+def _prompt_applyish(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    return any(m in text for m in _APPLY_MARKERS) or any(
+        m in text
+        for m in (
+            "진입", "조건", "추가", "손절", "익절", "롱", "숏", "long", "short",
+            "바꿔", "변경", "설정",
+        )
+    )
+
+
+def _local_strategy_template(
+    prompt: str,
+    current_settings: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str] | None:
+    """Return (patch, route_reason, summary) when a local template can handle the request."""
+    text = (prompt or "").strip()
+    if not text or _looks_like_question_only(text):
+        return None
+
+    ma = _local_ma_strategy_patch(text, current_settings)
+    if ma:
+        summary = (
+            "MA 터치 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+            if _looks_like_ma_line_touch(text)
+            else "확인 봉 MA 하회 금지 필터를 로컬 템플릿으로 추가했습니다 (OpenAI 호출 없음)."
+        )
+        return ma, "ma_touch_local_no_gpt", summary
+
+    if not _prompt_applyish(text):
+        return None
+
+    # Prefer more specific templates before generic bullish-candle.
+    if _prompt_wants_band_strategy(text):
+        ratio = _parse_risk_reward_ratio(text)
+        side = _prompt_side(text) or "long"
+        long_only = side == "long" or (
+            side is None
+            and any(k in _prompt_text(text) for k in ("롱", "long", "매수"))
+            and not any(k in _prompt_text(text) for k in ("숏", "short", "매도"))
+        )
+        patch = _band_reentry_patch(
+            side=side,
+            indicator=_prompt_band_indicator(text),
+            ratio=ratio,
+            long_only=True if long_only else None,
+        )
+        return patch, "band_reentry_local_no_gpt", "밴드 재진입 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    if _prompt_wants_swing(text):
+        patch = (
+            _swing_breakout_patch()
+            if _looks_like_swing_breakout(text)
+            else _swing_bounce_patch()
+        )
+        return patch, "swing_local_no_gpt", "스윙 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    if _prompt_wants_fvg(text):
+        return (
+            _fvg_entry_patch(text),
+            "fvg_local_no_gpt",
+            "FVG 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
+    if _prompt_wants_divergence(text):
+        return (
+            _divergence_entry_patch(text),
+            "divergence_local_no_gpt",
+            "다이버전스 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
+    if (
+        _looks_like_bullish_candle_long(text)
+        and not _looks_like_ma_line_touch(text)
+        and not _prompt_wants_band_strategy(text)
+        and not _prompt_wants_swing(text)
+        and not _prompt_wants_fvg(text)
+        and not _prompt_wants_divergence(text)
+    ):
+        patch = _bullish_candle_long_patch()
+        return patch, "bullish_candle_local_no_gpt", "양봉 롱 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    return None
+
+
+def should_skip_gpt_quota(
+    prompt: str,
+    current_settings: dict[str, Any] | None = None,
+    market_context: dict[str, Any] | None = None,
+) -> bool:
+    """True when interpret will not call OpenAI (preset / local templates)."""
+    if _recommended_preset_patch(prompt or "", market_context):
+        return True
+    return _local_strategy_template(prompt or "", current_settings) is not None
+
+
+def is_no_gpt_route(route_reason: str | None) -> bool:
+    reason = str(route_reason or "")
+    return reason.endswith("_no_gpt") or reason.startswith("local")
 
 
 def _has_bullish_entry(rules: Any) -> bool:
@@ -2410,41 +2508,45 @@ def interpret_strategy(
                 "sources": [],
             }
 
-    # Fast path: MA touch / MA hold-above — local template, no OpenAI tokens.
-    ma_early = _local_ma_strategy_patch(prompt.strip(), raw_settings)
-    if ma_early:
+    # Fast path: local strategy templates (MA / BB / swing / FVG / divergence / bullish) — no OpenAI.
+    local_early = _local_strategy_template(prompt.strip(), raw_settings)
+    if local_early:
+        patch_early, route_early, summary_early = local_early
         append_turn(role="user", content=prompt.strip(), user_id=user_id)
-        merged = current.merged(ma_early)
-        summary = (
-            "MA 터치 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
-            if _looks_like_ma_line_touch(prompt.strip())
-            else "확인 봉 MA 하회 금지 필터를 로컬 템플릿으로 추가했습니다 (OpenAI 호출 없음)."
-        )
-        append_turn(role="assistant", content=summary, user_id=user_id)
-        logger.info("MA template applied without OpenAI user=%s", user_id)
+        merged = current.merged(patch_early)
+        append_turn(role="assistant", content=summary_early, user_id=user_id)
+        logger.info("Local strategy template applied without OpenAI route=%s user=%s", route_early, user_id)
         return {
             "ok": True,
             "settings": merged.model_dump(),
-            "patch": ma_early,
-            "changed_fields": list(ma_early.keys()),
-            "summary": summary,
+            "patch": patch_early,
+            "changed_fields": list(patch_early.keys()),
+            "summary": summary_early,
             "rules": merged.rules_text(),
-            "model": "local-ma-template",
-            "route_reason": "ma_touch_local_no_gpt",
+            "model": "local-template",
+            "route_reason": route_early,
             "sources": [],
         }
 
     merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
-    market = build_market_context(
-        symbol=symbol,
-        interval=interval,
-        client_context=market_context,
-        use_testnet=True,
-    )
+    prompt_s = prompt.strip()
+    # Skip Binance kline fetch for risk-only / Q&A — client snapshot is enough (saves latency & payload).
+    if _looks_like_risk_only_edit(prompt_s) or _looks_like_question_only(prompt_s):
+        market = dict(market_context or {})
+        market.setdefault("symbol", symbol.upper())
+        market.setdefault("interval", interval)
+        market["source"] = "client-only"
+    else:
+        market = build_market_context(
+            symbol=symbol,
+            interval=interval,
+            client_context=market_context,
+            use_testnet=True,
+        )
     if not allow_recommended_strategies:
         market.pop("recommendedStrategies", None)
 
-    append_turn(role="user", content=prompt.strip(), user_id=user_id)
+    append_turn(role="user", content=prompt_s, user_id=user_id)
 
     if not allow_recommended_strategies and _RECOMMENDED_ID_RE.search(prompt or ""):
         raise ValueError(
@@ -2455,7 +2557,7 @@ def interpret_strategy(
     web_research: list[dict[str, Any]] = []
     if allow_web_research and looks_like_research_request(prompt):
         try:
-            web_research = research_strategies(prompt.strip())
+            web_research = research_strategies(prompt_s)
         except Exception:
             logger.exception("Web strategy research failed — continuing without it")
     elif looks_like_research_request(prompt) and not allow_web_research:
@@ -2608,5 +2710,4 @@ def interpret_strategy(
 
 
 _reload_env()
-if os.getenv("OPENAI_API_KEY", "").strip():
-    test_openai_api_key()
+# Do not call test_openai_api_key() at import — that burns models+chat tokens on every worker start.

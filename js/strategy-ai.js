@@ -247,8 +247,12 @@ const StrategyAI = (() => {
       );
       return;
     }
-    // Fallback: named-id prompt (server also short-circuits without AI when settings present)
-    handlePrompt(`추천전략 ${id} 적용해줘`);
+    // Do not fall back to interpret/GPT — that burns weekly quota and OpenAI tokens.
+    addMessage(
+      'assistant',
+      '⚠️ 추천 전략을 로컬에서 적용하지 못했습니다. 추천 목록을 새로고침한 뒤 다시 시도해 주세요.',
+      { persist: false },
+    );
   }
 
   function closeAiPopup() {
