@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -507,3 +508,162 @@ def email_require_verification() -> bool:
     if raw in ("0", "false", "no"):
         return False
     return smtp_configured()
+
+
+# Keys admins may edit from the console (no secrets).
+ADMIN_EDITABLE_SETTINGS: dict[str, dict[str, Any]] = {
+    "FREE_BOT_HOURS_PER_WEEK": {"type": "float", "label": "Free 주간 봇 시간", "min": 0, "max": 168},
+    "FREE_GPT_CALLS_PER_WEEK": {"type": "int", "label": "Free 주간 AI 호출", "min": 0, "max": 10000},
+    "PRO_GPT_CALLS_PER_WEEK": {"type": "int", "label": "Pro 주간 AI 호출", "min": 0, "max": 100000},
+    "FREE_MAX_STRATEGY_SLOTS": {"type": "int", "label": "Free 전략 슬롯", "min": 1, "max": 20},
+    "PRO_MAX_STRATEGY_SLOTS": {"type": "int", "label": "Pro 전략 슬롯", "min": 1, "max": 20},
+    "FREE_WEB_RESEARCH": {"type": "bool", "label": "Free 웹 리서치"},
+    "FREE_RECOMMENDED_STRATEGIES": {"type": "bool", "label": "Free 추천 전략"},
+    "MAX_CONCURRENT_BOTS": {"type": "int", "label": "동시 봇 한도", "min": 1, "max": 500},
+    "TOSS_PRO_AMOUNT_KRW": {"type": "int", "label": "Pro 월 요금(원)", "min": 100, "max": 10_000_000},
+    "TOSS_PRO_ANNUAL_AMOUNT_KRW": {"type": "int", "label": "Pro 연 요금(원)", "min": 100, "max": 100_000_000},
+    "GPT_PACK_AMOUNT_KRW": {"type": "int", "label": "AI 팩 요금(원)", "min": 100, "max": 10_000_000},
+    "GPT_PACK_CALLS": {"type": "int", "label": "AI 팩 호출 수", "min": 1, "max": 100000},
+    "BILLING_ENFORCE": {"type": "bool", "label": "쿼터 강제"},
+    "LIVE_TRADING_ENABLED": {"type": "bool", "label": "실거래 허용"},
+    "EMAIL_REQUIRE_VERIFICATION": {"type": "bool", "label": "이메일 인증 필수"},
+    "SUPPORT_EMAIL": {"type": "str", "label": "고객센터 이메일", "max": 200},
+    "BUSINESS_NAME": {"type": "str", "label": "상호명", "max": 120},
+    "BUSINESS_REPRESENTATIVE": {"type": "str", "label": "대표자", "max": 80},
+    "BUSINESS_REGISTRATION_NUMBER": {"type": "str", "label": "사업자등록번호", "max": 40},
+    "BUSINESS_ADDRESS": {"type": "str", "label": "사업장주소", "max": 200},
+    "BUSINESS_PHONE": {"type": "str", "label": "연락처", "max": 40},
+    "OPENAI_MODEL": {"type": "str", "label": "OpenAI 모델", "max": 80},
+    "OPENAI_ENABLED": {"type": "bool", "label": "OpenAI 사용"},
+    "OPENAI_MAX_CHAT_PER_HOUR": {"type": "int", "label": "시간당 채팅 상한", "min": 1, "max": 10000},
+}
+
+
+def upsert_env_values(updates: dict[str, str]) -> list[str]:
+    """Write key=value pairs into .env and reload into process env. Returns changed keys."""
+    if not updates:
+        return []
+    lines: list[str] = []
+    if ENV_PATH.exists():
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    changed: list[str] = []
+    remaining = dict(updates)
+    out: list[str] = []
+    for line in lines:
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in line:
+            out.append(line)
+            continue
+        key, _, _old = line.partition("=")
+        key = key.strip()
+        if key in remaining:
+            val = remaining.pop(key)
+            out.append(f"{key}={val}")
+            os.environ[key] = val
+            changed.append(key)
+        else:
+            out.append(line)
+    for key, val in remaining.items():
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"{key}={val}")
+        os.environ[key] = val
+        changed.append(key)
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ENV_PATH.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    load_dotenv(ENV_PATH, override=True)
+    return changed
+
+
+def current_editable_settings() -> list[dict[str, Any]]:
+    """Current values for admin-editable knobs."""
+    rows: list[dict[str, Any]] = []
+    for key, meta in ADMIN_EDITABLE_SETTINGS.items():
+        raw = os.getenv(key, "").strip().strip('"').strip("'")
+        typ = meta["type"]
+        if typ == "bool":
+            if raw == "":
+                # Fallbacks matching helpers
+                if key == "BILLING_ENFORCE":
+                    value: Any = billing_enforce()
+                elif key == "LIVE_TRADING_ENABLED":
+                    value = live_trading_enabled()
+                elif key == "EMAIL_REQUIRE_VERIFICATION":
+                    value = email_require_verification()
+                elif key == "OPENAI_ENABLED":
+                    value = True
+                elif key == "FREE_WEB_RESEARCH":
+                    value = free_web_research_allowed()
+                elif key == "FREE_RECOMMENDED_STRATEGIES":
+                    value = free_recommended_strategies_allowed()
+                else:
+                    value = False
+            else:
+                value = raw.lower() in ("1", "true", "yes")
+        elif typ == "int":
+            try:
+                value = int(float(raw)) if raw else None
+            except ValueError:
+                value = None
+        elif typ == "float":
+            try:
+                value = float(raw) if raw else None
+            except ValueError:
+                value = None
+        else:
+            value = raw or None
+        # Prefer live helper values when env empty for numeric limits
+        if value is None and key == "FREE_BOT_HOURS_PER_WEEK":
+            value = round(free_bot_seconds_per_week() / 3600, 2)
+        elif value is None and key == "FREE_GPT_CALLS_PER_WEEK":
+            value = free_gpt_calls_per_week()
+        elif value is None and key == "PRO_GPT_CALLS_PER_WEEK":
+            value = pro_gpt_calls_per_week()
+        elif value is None and key == "FREE_MAX_STRATEGY_SLOTS":
+            value = free_max_strategy_slots()
+        elif value is None and key == "PRO_MAX_STRATEGY_SLOTS":
+            value = pro_max_strategy_slots()
+        elif value is None and key == "MAX_CONCURRENT_BOTS":
+            value = max_concurrent_bots()
+        elif value is None and key == "TOSS_PRO_AMOUNT_KRW":
+            value = toss_pro_amount_krw()
+        elif value is None and key == "TOSS_PRO_ANNUAL_AMOUNT_KRW":
+            value = toss_pro_annual_amount_krw()
+        elif value is None and key == "GPT_PACK_AMOUNT_KRW":
+            value = gpt_pack_amount_krw()
+        elif value is None and key == "GPT_PACK_CALLS":
+            value = gpt_pack_calls()
+        elif value is None and key == "OPENAI_MODEL":
+            value = os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
+        elif value is None and key == "OPENAI_MAX_CHAT_PER_HOUR":
+            try:
+                value = int(os.getenv("OPENAI_MAX_CHAT_PER_HOUR", "40") or 40)
+            except ValueError:
+                value = 40
+        elif value is None and key.startswith("BUSINESS_"):
+            profile = business_profile()
+            mapping = {
+                "BUSINESS_NAME": "name",
+                "BUSINESS_REPRESENTATIVE": "representative",
+                "BUSINESS_REGISTRATION_NUMBER": "registrationNumber",
+                "BUSINESS_ADDRESS": "address",
+                "BUSINESS_PHONE": "phone",
+            }
+            value = profile.get(mapping.get(key, ""), "")
+        elif value is None and key == "SUPPORT_EMAIL":
+            value = support_email()
+        elif value is None and key == "FREE_WEB_RESEARCH":
+            value = free_web_research_allowed()
+        elif value is None and key == "FREE_RECOMMENDED_STRATEGIES":
+            value = free_recommended_strategies_allowed()
+        rows.append(
+            {
+                "key": key,
+                "label": meta.get("label") or key,
+                "type": typ,
+                "value": value,
+                "min": meta.get("min"),
+                "max": meta.get("max"),
+            }
+        )
+    return rows

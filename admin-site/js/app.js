@@ -234,13 +234,49 @@
           <pre class="pre-block">${esc(strat.exists ? JSON.stringify(strat.strategy || strat, null, 2) : '저장된 전략 없음')}</pre>
         </div>
         <div>
-          <div class="muted" style="margin-bottom:6px">최근 로그</div>
+          <div class="muted" style="margin-bottom:6px">최근 봇 로그</div>
           <pre class="pre-block">${esc((logs || []).join('\n') || '(로그 없음)')}</pre>
         </div>
+        <div>
+          <div class="muted" style="margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+            <span>사용자 활동 기록</span>
+            <button type="button" class="btn btn-sm" data-dact="reload-activity">새로고침</button>
+          </div>
+          <div class="activity-list" id="drawerActivity">불러오는 중…</div>
+        </div>
       `;
+      loadDrawerActivity(id).catch((e) => {
+        const el = document.getElementById('drawerActivity');
+        if (el) el.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+      });
     } catch (err) {
       body.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
     }
+  }
+
+  async function loadDrawerActivity(id) {
+    const el = document.getElementById('drawerActivity');
+    if (!el) return;
+    const data = await AdminApi.userActivity(id, 80);
+    const rows = data.activity || [];
+    if (!rows.length) {
+      el.innerHTML = '<p class="muted" style="padding:10px">아직 활동 기록이 없습니다.</p>';
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>시각</th><th>작업</th><th>상세</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr>
+              <td class="mono">${esc((r.createdAt || '').replace('T', ' ').slice(0, 19))}</td>
+              <td>${esc(r.action)}</td>
+              <td class="mono">${esc(r.detail || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
   }
 
   async function drawerAction(act) {
@@ -259,6 +295,10 @@
       else if (act === 'cancel-now') {
         if (!confirm('결제키까지 즉시 해지할까요?')) return;
         ({ message: msg } = await AdminApi.cancelSubscription(id, true));
+      } else if (act === 'reload-activity') {
+        await loadDrawerActivity(id);
+        toast('활동 기록 갱신');
+        return;
       } else if (act === 'payments') {
         const data = await AdminApi.listPayments(id);
         const rows = data.payments || [];
@@ -403,13 +443,68 @@
     `).join('');
   }
 
+  async function loadActivity() {
+    const userId = document.getElementById('activityUserId')?.value.trim() || '';
+    const action = document.getElementById('activityAction')?.value.trim() || '';
+    const data = await AdminApi.activity({ limit: 150, userId, action });
+    const rows = data.activity || [];
+    document.getElementById('activityBody').innerHTML = rows.length
+      ? rows.map((r) => `
+        <tr>
+          <td class="mono">${esc((r.createdAt || '').replace('T', ' ').slice(0, 19))}</td>
+          <td>${esc(r.email || r.userId || '—')} <span class="muted">#${esc(r.userId)}</span></td>
+          <td>${esc(r.action)}</td>
+          <td class="mono">${esc(r.detail || '')}</td>
+          <td class="mono">${esc(r.ip || '—')}</td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="5" class="muted">활동 기록이 없습니다. 로그인·봇 시작 후 쌓입니다.</td></tr>';
+  }
+
   async function loadSettings() {
     const data = await AdminApi.settings();
+    const editable = data.editable || [];
+    document.getElementById('settingsEditable').innerHTML = editable.map((f) => {
+      const key = f.key;
+      const val = f.value;
+      if (f.type === 'bool') {
+        return `
+          <div class="setting-field">
+            <label>${esc(f.label)}</label>
+            <div class="key">${esc(key)}</div>
+            <label class="bool-row">
+              <input type="checkbox" data-setkey="${esc(key)}" data-settype="bool" ${val ? 'checked' : ''} />
+              <span>${val ? 'ON' : 'OFF'}</span>
+            </label>
+          </div>`;
+      }
+      const inputType = f.type === 'str' ? 'text' : 'number';
+      const step = f.type === 'float' ? 'any' : (f.type === 'int' ? '1' : undefined);
+      return `
+        <div class="setting-field">
+          <label>${esc(f.label)}</label>
+          <div class="key">${esc(key)}</div>
+          <input type="${inputType}" data-setkey="${esc(key)}" data-settype="${esc(f.type)}"
+            value="${esc(val ?? '')}"
+            ${f.min != null ? `min="${esc(f.min)}"` : ''}
+            ${f.max != null ? `max="${esc(f.max)}"` : ''}
+            ${step ? `step="${step}"` : ''} />
+        </div>`;
+    }).join('');
+
+    document.querySelectorAll('#settingsEditable input[data-settype="bool"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const span = el.parentElement?.querySelector('span');
+        if (span) span.textContent = el.checked ? 'ON' : 'OFF';
+      });
+    });
+
     const flat = {
-      ...(data.limits || {}),
-      ...(data.flags || {}),
-      ...(data.botDiagnostics || {}),
       note: data.note || '',
+      ...(data.flags || {}),
+      ...(data.secrets || {}),
+      ...(data.business || {}),
+      ...(data.botDiagnostics || {}),
     };
     document.getElementById('settingsGrid').innerHTML = Object.entries(flat).map(([k, v]) => `
       <div class="setting-row">
@@ -417,6 +512,22 @@
         <div class="v">${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</div>
       </div>
     `).join('');
+  }
+
+  async function saveSettings() {
+    const settings = {};
+    document.querySelectorAll('#settingsEditable [data-setkey]').forEach((el) => {
+      const key = el.dataset.setkey;
+      const typ = el.dataset.settype;
+      if (typ === 'bool') settings[key] = !!el.checked;
+      else if (typ === 'int') settings[key] = Number(el.value);
+      else if (typ === 'float') settings[key] = Number(el.value);
+      else settings[key] = el.value;
+    });
+    if (!confirm('선택한 설정을 서버 .env에 저장할까요?')) return;
+    const res = await AdminApi.updateSettings(settings);
+    toast(res.message || '저장됨');
+    await loadSettings();
   }
 
   async function confirmStopAll() {
@@ -446,6 +557,7 @@
         switchPanel(name);
         if (name === 'users') loadUsers().catch((e) => toast(e.message, 'err'));
         if (name === 'bots') loadBots().catch((e) => toast(e.message, 'err'));
+        if (name === 'activity') loadActivity().catch((e) => toast(e.message, 'err'));
         if (name === 'audit') loadAudit().catch((e) => toast(e.message, 'err'));
         if (name === 'settings') loadSettings().catch((e) => toast(e.message, 'err'));
         if (name === 'overview') loadOverview().catch((e) => toast(e.message, 'err'));
@@ -463,8 +575,14 @@
     document.getElementById('refreshAudit').addEventListener('click', () => {
       loadAudit().then(() => toast('갱신됨')).catch((e) => toast(e.message, 'err'));
     });
+    document.getElementById('refreshActivity')?.addEventListener('click', () => {
+      loadActivity().then(() => toast('갱신됨')).catch((e) => toast(e.message, 'err'));
+    });
     document.getElementById('refreshSettings').addEventListener('click', () => {
       loadSettings().then(() => toast('갱신됨')).catch((e) => toast(e.message, 'err'));
+    });
+    document.getElementById('saveSettings')?.addEventListener('click', () => {
+      saveSettings().catch((e) => toast(e.message || '저장 실패', 'err'));
     });
     document.getElementById('searchUsers').addEventListener('click', () => {
       loadUsers().catch((e) => toast(e.message, 'err'));

@@ -47,6 +47,17 @@ const AdminApi = (() => {
     adminMe: () => request('/api/admin/me'),
     overview: () => request('/api/admin/overview'),
     settings: () => request('/api/admin/settings'),
+    updateSettings: (settings) => request('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ settings }),
+    }),
+    activity: ({ limit = 120, userId = '', action = '' } = {}) => {
+      const p = new URLSearchParams({ limit: String(limit) });
+      if (userId) p.set('userId', String(userId));
+      if (action) p.set('action', String(action));
+      return request(`/api/admin/activity?${p}`);
+    },
+    userActivity: (id, limit = 120) => request(`/api/admin/users/${id}/activity?limit=${limit}`),
     audit: (limit = 80) => request(`/api/admin/audit?limit=${limit}`),
     users: ({ q = '', plan = 'all', active = 'all', verified = 'all', bot = 'all', limit = 200 } = {}) => {
       const p = new URLSearchParams({

@@ -132,13 +132,23 @@ def billing_confirm(
             detail=f"결제 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-    return confirm_billing_auth(
+    from bot.activity_log import log_user_activity
+
+    result = confirm_billing_auth(
         db,
         user,
         body.authKey,
         body.customerKey,
         interval=body.product or "month",
     )
+    log_user_activity(
+        db,
+        user_id=user.id,
+        action="subscribe",
+        detail=f"pro {body.product or 'month'}",
+        ip=ip,
+    )
+    return result
 
 
 @router.post("/gpt-pack")
@@ -156,7 +166,17 @@ def billing_gpt_pack(
             detail=f"결제 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-    return purchase_gpt_pack(db, user)
+    from bot.activity_log import log_user_activity
+
+    result = purchase_gpt_pack(db, user)
+    log_user_activity(
+        db,
+        user_id=user.id,
+        action="gpt_pack",
+        detail=str(result.get("addedCalls") or ""),
+        ip=ip,
+    )
+    return result
 
 
 @router.post("/cancel")
@@ -165,7 +185,16 @@ def billing_cancel(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return cancel_subscription(db, user, immediate=body.immediate)
+    from bot.activity_log import log_user_activity
+
+    result = cancel_subscription(db, user, immediate=body.immediate)
+    log_user_activity(
+        db,
+        user_id=user.id,
+        action="cancel_subscription",
+        detail="immediate" if body.immediate else "period_end",
+    )
+    return result
 
 
 @router.post("/resume")
@@ -173,7 +202,11 @@ def billing_resume(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return resume_subscription(db, user)
+    from bot.activity_log import log_user_activity
+
+    result = resume_subscription(db, user)
+    log_user_activity(db, user_id=user.id, action="resume_subscription", detail="")
+    return result
 
 
 @router.get("/history")

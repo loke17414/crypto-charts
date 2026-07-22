@@ -735,6 +735,14 @@ def connect(
         _set_session(user, session)
         env_label = "테스트넷" if use_testnet else "실거래"
         message = f"Binance {env_label} 연결됨 — 키가 계정에 암호화 저장되었습니다."
+        from bot.activity_log import log_user_activity
+
+        log_user_activity(
+            db,
+            user_id=user.id,
+            action="binance_connect",
+            detail="testnet" if use_testnet else "mainnet",
+        )
     else:
         if auth_required():
             raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
@@ -1176,6 +1184,15 @@ def bot_start(
             )
             if result.get("running"):
                 mark_bot_started(db, user.id)
+                from bot.activity_log import log_user_activity
+
+                mode = "testnet" if session.config.use_testnet else "mainnet"
+                log_user_activity(
+                    db,
+                    user_id=user.id,
+                    action="bot_start",
+                    detail=f"live={live} mode={mode}",
+                )
             return result
         return start_bot(user_id=None, live_trading=live)
     except RuntimeError as exc:
@@ -1189,6 +1206,9 @@ def bot_stop(
 ) -> dict[str, Any]:
     if user is not None:
         mark_bot_stopped(db, user.id)
+        from bot.activity_log import log_user_activity
+
+        log_user_activity(db, user_id=user.id, action="bot_stop", detail="user")
     return stop_bot(user.id if user else None)
 
 

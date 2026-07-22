@@ -129,6 +129,15 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
         )
     try:
         user, meta = create_user(db, body.email, body.password, accept_terms=body.accept_terms)
+        from bot.activity_log import log_user_activity
+
+        log_user_activity(
+            db,
+            user_id=user.id,
+            action="register",
+            detail="signup",
+            ip=ip,
+        )
     except ValueError as exc:
         msg = str(exc)
         # SMTP / mail delivery problems → 503 so the client shows a clear retry message
@@ -195,6 +204,9 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> d
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     token, expires_in = create_access_token(user_id=user.id, email=user.email)
+    from bot.activity_log import log_user_activity
+
+    log_user_activity(db, user_id=user.id, action="login", detail="password", ip=ip)
     return {
         "ok": True,
         "access_token": token,
@@ -211,6 +223,9 @@ def verify_email(body: TokenBody, db: Session = Depends(get_db)) -> dict[str, An
         user = verify_email_with_token(db, body.token)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from bot.activity_log import log_user_activity
+
+    log_user_activity(db, user_id=user.id, action="email_verified", detail="token")
     token, expires_in = create_access_token(user_id=user.id, email=user.email)
     return {
         "ok": True,

@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow" />
   <meta http-equiv="Cache-Control" content="no-store" />
   <title>Orbinex Console</title>
-  <link rel="stylesheet" href="./css/console.css?v=20260722d" />
+  <link rel="stylesheet" href="./css/console.css?v=20260723a" />
 </head>
 <body>
   <div class="shell">
@@ -19,7 +19,8 @@
         <button type="button" data-panel="overview" class="active">대시보드</button>
         <button type="button" data-panel="users">사용자</button>
         <button type="button" data-panel="bots">봇 플릿</button>
-        <button type="button" data-panel="audit">감사 로그</button>
+        <button type="button" data-panel="activity">사용자 활동</button>
+        <button type="button" data-panel="audit">관리자 감사</button>
         <button type="button" data-panel="settings">설정</button>
       </nav>
       <div class="sidebar-foot">
@@ -127,10 +128,38 @@
         </div>
       </section>
 
+      <section class="panel" id="panel-activity">
+        <div class="page-head">
+          <div>
+            <h1>사용자 활동</h1>
+            <p>로그인·봇·결제·AI 등 사용자 행동 기록</p>
+          </div>
+          <div class="toolbar" style="margin:0">
+            <input id="activityUserId" type="search" placeholder="User ID (선택)" style="width:140px" />
+            <input id="activityAction" type="search" placeholder="action 필터" style="width:140px" />
+            <button type="button" class="btn" id="refreshActivity">새로고침</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>시각</th>
+                <th>사용자</th>
+                <th>작업</th>
+                <th>상세</th>
+                <th>IP</th>
+              </tr>
+            </thead>
+            <tbody id="activityBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel" id="panel-audit">
         <div class="page-head">
           <div>
-            <h1>감사 로그</h1>
+            <h1>관리자 감사</h1>
             <p>관리자 작업 기록 (DB 영구 저장)</p>
           </div>
           <button type="button" class="btn" id="refreshAudit">새로고침</button>
@@ -154,11 +183,16 @@
       <section class="panel" id="panel-settings">
         <div class="page-head">
           <div>
-            <h1>설정 (읽기 전용)</h1>
-            <p>서버에 적용된 플랫폼 한도·플래그·봇 진단</p>
+            <h1>플랫폼 설정</h1>
+            <p>한도·요금·사업자 정보 수정 · 시크릿은 상태만 표시</p>
           </div>
-          <button type="button" class="btn" id="refreshSettings">새로고침</button>
+          <div class="toolbar" style="margin:0">
+            <button type="button" class="btn btn-primary" id="saveSettings">설정 저장</button>
+            <button type="button" class="btn" id="refreshSettings">새로고침</button>
+          </div>
         </div>
+        <div id="settingsEditable" class="settings-edit"></div>
+        <h3 class="section-title">상태 / 시크릿 (읽기 전용)</h3>
         <div class="settings-grid" id="settingsGrid"></div>
       </section>
     </main>
@@ -178,8 +212,8 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="./js/config.js?v=20260722d"></script>
-  <script src="./js/api.js?v=20260722d"></script>
-  <script src="./js/app.js?v=20260722d"></script>
+  <script src="./js/config.js?v=20260723a"></script>
+  <script src="./js/api.js?v=20260723a"></script>
+  <script src="./js/app.js?v=20260723a"></script>
 </body>
 </html>

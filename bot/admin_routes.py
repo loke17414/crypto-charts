@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from bot.activity_log import list_recent_activity, list_user_activity
 from bot.auth_routes import get_current_user
 from bot.auth_service import request_password_reset, resend_verification
 from bot.billing_service import (
@@ -28,9 +29,14 @@ from bot.db import get_db
 from bot.email_service import smtp_configured
 from bot.models import AdminAuditLog, ExchangeCredential, Subscription, User
 from bot.platform_config import (
+    ADMIN_EDITABLE_SETTINGS,
     admin_emails,
+    app_origin,
+    auth_required,
     billing_configured,
     billing_enforce,
+    business_profile,
+    current_editable_settings,
     free_bot_seconds_per_week,
     free_gpt_calls_per_week,
     free_max_strategy_slots,
@@ -39,12 +45,16 @@ from bot.platform_config import (
     gpt_pack_amount_krw,
     gpt_pack_calls,
     is_admin_email,
+    live_trading_enabled,
     max_concurrent_bots,
     pro_gpt_calls_per_week,
     pro_max_strategy_slots,
     resend_api_key,
+    support_email,
     toss_pro_amount_krw,
     toss_pro_annual_amount_krw,
+    toss_webhook_secret,
+    upsert_env_values,
 )
 from bot.server_bot import (
     bot_diagnostics,
@@ -101,6 +111,10 @@ class RefundPaymentBody(BaseModel):
 
 class PauseEntryBody(BaseModel):
     minutes: int = Field(default=15, ge=1, le=1440)
+
+
+class UpdateSettingsBody(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 def _utcnow() -> datetime:
@@ -720,9 +734,12 @@ def admin_stop_all_bots(
 
 @router.get("/settings")
 def admin_settings(admin: User = Depends(require_admin)) -> dict[str, Any]:
+    _ = admin
+    profile = business_profile()
     return {
         "ok": True,
-        "note": "한도·키는 서버 .env에서 변경 후 crypto-web 재시작이 필요합니다.",
+        "note": "아래 항목은 관리자 콘솔에서 저장하면 .env에 바로 반영됩니다. 시크릿 키는 표시·수정하지 않습니다.",
+        "editable": current_editable_settings(),
         "limits": {
             "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
             "freeGptCallsPerWeek": free_gpt_calls_per_week(),
@@ -738,12 +755,180 @@ def admin_settings(admin: User = Depends(require_admin)) -> dict[str, Any]:
             "gptPackCalls": gpt_pack_calls(),
         },
         "flags": {
+            "authRequired": auth_required(),
             "billingEnforce": billing_enforce(),
+            "liveTradingEnabled": live_trading_enabled(),
             "mailConfigured": smtp_configured(),
             "resendConfigured": bool(resend_api_key()),
             "paymentsConfigured": billing_configured(),
+            "tossWebhookSecretSet": bool(toss_webhook_secret()),
             "openaiConfigured": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+            "openaiModel": os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
             "adminEmailsCount": len(admin_emails()),
+            "appOrigin": app_origin(),
+            "supportEmail": support_email(),
+        },
+        "business": profile,
+        "secrets": {
+            "jwtSecretSet": bool(os.getenv("JWT_SECRET", "").strip()),
+            "masterKeySet": bool(os.getenv("MASTER_ENCRYPTION_KEY", "").strip()),
+            "tossClientKeySet": bool(os.getenv("TOSS_CLIENT_KEY", "").strip()),
+            "tossSecretKeySet": bool(os.getenv("TOSS_SECRET_KEY", "").strip()),
+            "tossWebhookSecretSet": bool(toss_webhook_secret()),
+            "openaiKeySet": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+            "resendKeySet": bool(resend_api_key()),
+            "databaseUrlSet": bool(os.getenv("DATABASE_URL", "").strip()),
         },
         "botDiagnostics": bot_diagnostics(),
+    }
+
+
+@router.patch("/settings")
+def admin_update_settings(
+    body: UpdateSettingsBody,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    incoming = body.settings or {}
+    if not isinstance(incoming, dict) or not incoming:
+        raise HTTPException(status_code=400, detail="변경할 설정이 없습니다.")
+
+    updates: dict[str, str] = {}
+    for key, raw_val in incoming.items():
+        key_s = str(key).strip()
+        meta = ADMIN_EDITABLE_SETTINGS.get(key_s)
+        if not meta:
+            raise HTTPException(status_code=400, detail=f"수정할 수 없는 설정입니다: {key_s}")
+        typ = meta["type"]
+        if typ == "bool":
+            if isinstance(raw_val, bool):
+                updates[key_s] = "true" if raw_val else "false"
+            else:
+                updates[key_s] = (
+                    "true"
+                    if str(raw_val).strip().lower() in {"1", "true", "yes", "on"}
+                    else "false"
+                )
+        elif typ == "int":
+            try:
+                num = int(float(raw_val))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key_s} 정수 값이 필요합니다.") from exc
+            lo, hi = meta.get("min"), meta.get("max")
+            if lo is not None and num < int(lo):
+                raise HTTPException(status_code=400, detail=f"{key_s} 최소 {lo}")
+            if hi is not None and num > int(hi):
+                raise HTTPException(status_code=400, detail=f"{key_s} 최대 {hi}")
+            updates[key_s] = str(num)
+        elif typ == "float":
+            try:
+                num_f = float(raw_val)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key_s} 숫자 값이 필요합니다.") from exc
+            lo, hi = meta.get("min"), meta.get("max")
+            if lo is not None and num_f < float(lo):
+                raise HTTPException(status_code=400, detail=f"{key_s} 최소 {lo}")
+            if hi is not None and num_f > float(hi):
+                raise HTTPException(status_code=400, detail=f"{key_s} 최대 {hi}")
+            updates[key_s] = str(num_f)
+        else:
+            text = str(raw_val if raw_val is not None else "").strip()
+            max_len = int(meta.get("max") or 200)
+            if len(text) > max_len:
+                raise HTTPException(status_code=400, detail=f"{key_s}는 {max_len}자 이하여야 합니다.")
+            if key_s == "SUPPORT_EMAIL" and text and "@" not in text:
+                raise HTTPException(status_code=400, detail="SUPPORT_EMAIL 형식이 올바르지 않습니다.")
+            updates[key_s] = text
+
+    try:
+        changed = upsert_env_values(updates)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f".env 저장 실패: {exc}") from exc
+
+    _audit(db, admin, "update-settings", detail=",".join(changed)[:200])
+    return {
+        "ok": True,
+        "changed": changed,
+        "message": f"{len(changed)}개 설정을 저장했습니다.",
+        "editable": current_editable_settings(),
+        "flags": {
+            "billingEnforce": billing_enforce(),
+            "liveTradingEnabled": live_trading_enabled(),
+            "paymentsConfigured": billing_configured(),
+        },
+    }
+
+
+@router.get("/activity")
+def admin_activity(
+    limit: int = Query(default=100, ge=1, le=500),
+    userId: int | None = Query(default=None),
+    action: str | None = Query(default=None),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _ = admin
+    rows = list_recent_activity(db, limit=limit, user_id=userId, action=action)
+    # Attach emails for table display
+    ids = {int(r["userId"]) for r in rows if r.get("userId") is not None}
+    email_map: dict[int, str] = {}
+    if ids:
+        for u in db.query(User).filter(User.id.in_(ids)).all():
+            email_map[int(u.id)] = u.email
+    for r in rows:
+        r["email"] = email_map.get(int(r["userId"])) if r.get("userId") is not None else None
+    return {"ok": True, "count": len(rows), "activity": rows}
+
+
+@router.get("/users/{user_id}/activity")
+def admin_user_activity(
+    user_id: int,
+    limit: int = Query(default=100, ge=1, le=500),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _ = admin
+    user = _get_user_or_404(db, user_id)
+    activity = list_user_activity(db, user.id, limit=limit)
+    # Also surface admin actions targeting this user
+    audits = (
+        db.query(AdminAuditLog)
+        .filter(AdminAuditLog.target_user_id == user.id)
+        .order_by(AdminAuditLog.id.desc())
+        .limit(min(80, limit))
+        .all()
+    )
+    admin_rows = [
+        {
+            "id": f"admin-{a.id}",
+            "userId": user.id,
+            "action": f"admin:{a.action}",
+            "detail": (a.detail or "") + (f" · by {a.admin_email}" if a.admin_email else ""),
+            "ip": None,
+            "createdAt": a.created_at.isoformat() if a.created_at else None,
+            "source": "admin_audit",
+        }
+        for a in audits
+    ]
+    payments = list_payment_history(db, user.id, limit=min(40, limit))
+    pay_rows = [
+        {
+            "id": f"pay-{p['id']}",
+            "userId": user.id,
+            "action": f"payment:{p.get('kind') or 'charge'}",
+            "detail": f"{p.get('amount')}{p.get('currency') or 'KRW'} · {p.get('status')} · {p.get('paymentKey') or p.get('orderId')}",
+            "ip": None,
+            "createdAt": p.get("createdAt"),
+            "source": "payment",
+        }
+        for p in payments
+    ]
+    merged = activity + admin_rows + pay_rows
+    merged.sort(key=lambda r: r.get("createdAt") or "", reverse=True)
+    return {
+        "ok": True,
+        "userId": user.id,
+        "email": user.email,
+        "count": len(merged[:limit]),
+        "activity": merged[:limit],
     }

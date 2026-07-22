@@ -320,7 +320,7 @@ def assert_can_use_gpt(db: Session, user: User | None) -> None:
     )
 
 
-def record_gpt_call(db: Session, user_id: int) -> None:
+def record_gpt_call(db: Session, user_id: int, *, reason: str = "") -> None:
     if not billing_enforce():
         return
     sub = ensure_subscription(db, user_id)
@@ -334,6 +334,17 @@ def record_gpt_call(db: Session, user_id: int) -> None:
         bonus = max(0, int(getattr(usage, "gpt_bonus_calls", 0) or 0))
         usage.gpt_bonus_calls = max(0, bonus - 1)
     db.commit()
+    try:
+        from bot.activity_log import log_user_activity
+
+        log_user_activity(
+            db,
+            user_id=user_id,
+            action="ai_call",
+            detail=(reason or ("pro" if pro else "free"))[:200],
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def should_force_stop_bot(db: Session, user_id: int) -> bool:
@@ -362,6 +373,17 @@ def enforce_running_bot_quotas() -> int:
                     mark_bot_stopped(db, uid)
                     stop_bot(uid)
                     stopped += 1
+                    try:
+                        from bot.activity_log import log_user_activity
+
+                        log_user_activity(
+                            db,
+                            user_id=uid,
+                            action="bot_stop",
+                            detail="quota_watchdog",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     logger.info("Quota watchdog stopped bot user=%s", uid)
             except Exception:  # noqa: BLE001
                 logger.exception("Quota watchdog failed user=%s", uid)
