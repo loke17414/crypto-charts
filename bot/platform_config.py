@@ -276,11 +276,11 @@ def free_gpt_calls_per_week() -> int:
 
 
 def pro_gpt_calls_per_week() -> int:
-    """Pro plan GPT calls per week. Default 100 (hybrid). 0 = unlimited (not recommended)."""
+    """Pro plan GPT calls per week. Default 50 (hybrid). 0 = unlimited (not recommended)."""
     try:
-        return max(0, int(os.getenv("PRO_GPT_CALLS_PER_WEEK", "100").strip()))
+        return max(0, int(os.getenv("PRO_GPT_CALLS_PER_WEEK", "50").strip()))
     except ValueError:
-        return 100
+        return 50
 
 
 def free_max_strategy_slots() -> int:

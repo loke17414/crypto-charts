@@ -84,7 +84,7 @@ const AppBilling = (() => {
       } else {
         const botH = snap.bot?.hoursLimit ?? 48;
         const gptN = snap.limits?.freeGptCallsPerWeek ?? snap.gpt?.callsLimit ?? 10;
-        const proGpt = snap.limits?.proGptCallsPerWeek ?? 100;
+        const proGpt = snap.limits?.proGptCallsPerWeek ?? 50;
         const slots = snap.features?.maxStrategySlots ?? 1;
         noteEl.textContent =
           `무료: 주 ${botH}시간 봇 · AI ${gptN}회(mini) · 슬롯 ${slots}개. ` +

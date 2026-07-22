@@ -618,7 +618,7 @@ const StrategyAI = (() => {
       if (isQuota) {
         const cta = /Pro 주간|추가 팩/i.test(msg)
           ? `${msg}\n\n→ 요금제에서 AI 추가 팩을 구매하거나 다음 주 월요일에 리셋됩니다.\n(billing.html)`
-          : `${msg}\n\n→ Pro로 업그레이드하면 주 100회 AI · 봇 무제한을 사용할 수 있습니다.\n요금제: billing.html`;
+          : `${msg}\n\n→ Pro로 업그레이드하면 주 50회 AI · 봇 무제한을 사용할 수 있습니다.\n요금제: billing.html`;
         addMessage('assistant', formatAiError(cta), { persist: true });
         if (typeof FuturesBotApp?.refreshBillingQuota === 'function') {
           FuturesBotApp.refreshBillingQuota().catch(() => {});
