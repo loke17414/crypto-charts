@@ -246,6 +246,19 @@ def admin_overview(
     }
 
 
+@router.get("/openai-calls")
+def admin_openai_calls(
+    limit: int = Query(default=50, ge=1, le=200),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Recent OpenAI chat completions from this server (idle leak detector)."""
+    from bot.strategy_ai import recent_openai_chat_calls
+
+    _ = admin
+    calls = recent_openai_chat_calls(limit)
+    return {"ok": True, "count": len(calls), "calls": calls}
+
+
 @router.get("/audit")
 def admin_audit(
     limit: int = Query(default=80, ge=1, le=300),

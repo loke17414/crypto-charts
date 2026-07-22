@@ -34,6 +34,7 @@ OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _runtime_api_key: str | None = None
 # Per-request key for multi-user isolation (overrides process/.env for that call).
 _request_api_key: ContextVar[str | None] = ContextVar("request_api_key", default=None)
+_chat_call_times: list[float] = []
 _last_test_result: dict[str, Any] = {
     "verified": False,
     "checkedAt": None,
@@ -41,6 +42,87 @@ _last_test_result: dict[str, Any] = {
     "errorCode": None,
     "keyFingerprint": None,
 }
+
+
+def _openai_enabled() -> bool:
+    raw = os.getenv("OPENAI_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _openai_live_verify_allowed() -> bool:
+    """Live /v1/models probes. Default OFF — idle health/status must never hit OpenAI."""
+    return os.getenv("OPENAI_LIVE_VERIFY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _max_chat_calls_per_hour() -> int:
+    try:
+        return max(0, int(os.getenv("OPENAI_MAX_CHAT_PER_HOUR", "40").strip()))
+    except ValueError:
+        return 40
+
+
+def _openai_call_log_path() -> Path:
+    path = ROOT / "logs" / "openai-chat.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _record_chat_call(*, reason: str, model: str, approx_tokens: int, user_id: int | None) -> None:
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "model": model,
+        "approxInputTokens": approx_tokens,
+        "userId": user_id,
+    }
+    try:
+        with _openai_call_log_path().open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.exception("Failed to write OpenAI call audit log")
+    logger.warning(
+        "OPENAI_CHAT_CALL reason=%s model=%s approx_input_tokens~%s user=%s",
+        reason,
+        model,
+        approx_tokens,
+        user_id,
+    )
+
+
+def _assert_chat_budget() -> None:
+    limit = _max_chat_calls_per_hour()
+    if limit <= 0:
+        raise ValueError("OpenAI chat가 비활성화되어 있습니다 (OPENAI_MAX_CHAT_PER_HOUR=0).")
+    now = time.time()
+    cutoff = now - 3600
+    while _chat_call_times and _chat_call_times[0] < cutoff:
+        _chat_call_times.pop(0)
+    if len(_chat_call_times) >= limit:
+        raise ValueError(
+            f"OpenAI 호출이 시간당 한도({limit}회)를 초과했습니다. "
+            "유휴 상태에서도 늘면 키 유출·스크래핑·다른 앱 공유 키를 확인하세요."
+        )
+    _chat_call_times.append(now)
+
+
+def recent_openai_chat_calls(limit: int = 50) -> list[dict[str, Any]]:
+    path = _openai_call_log_path()
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-max(1, limit) :]:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
 
 # Avoid burning OpenAI credits on repeated connection tests (page load / every chat).
 def _verify_cache_seconds() -> int:
@@ -589,6 +671,28 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
 
     validate_api_key_format(key)
 
+    # Default: trust key presence — NEVER call OpenAI from status/test endpoints.
+    # Idle scrapers, health polls, and systemd restarts must not burn usage.
+    if not _openai_live_verify_allowed() and not force:
+        _set_test_result(
+            verified=True,
+            message="OpenAI 키가 설정되어 있습니다 (라이브 검증 생략).",
+            error_code=None,
+            api_key=key,
+        )
+        return {
+            "ok": True,
+            "verified": True,
+            "authenticated": True,
+            "chatReady": True,
+            "message": "OpenAI 키가 설정되어 있습니다 (라이브 검증 생략 · OPENAI_LIVE_VERIFY=true 시 실검).",
+            "errorCode": None,
+            "keyPreview": mask_api_key(key),
+            "model": model,
+            "checkedAt": _last_test_result["checkedAt"],
+            "skippedLiveCheck": True,
+        }
+
     if not force:
         cached = _cached_verify_ok(key)
         if cached:
@@ -672,6 +776,17 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
 
 
 def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
+    if not _openai_enabled():
+        return {
+            "chatReady": False,
+            "message": "OpenAI가 비활성화되어 있습니다 (OPENAI_ENABLED=false).",
+            "errorCode": "disabled",
+        }
+    try:
+        _assert_chat_budget()
+    except ValueError as exc:
+        return {"chatReady": False, "message": str(exc), "errorCode": "budget"}
+    _record_chat_call(reason="verify_chat", model=model, approx_tokens=8, user_id=None)
     payload = {
         "model": model,
         "temperature": 0,
@@ -774,7 +889,16 @@ def ai_available(
 
 def configure_openai_api_key(api_key: str, *, persist_env: bool = True) -> dict[str, Any]:
     validate_api_key_format(api_key)
-    test_result = test_openai_api_key(api_key, force=True)
+    # Configuring a new key may force a models-list check, but never a chat probe unless explicitly enabled.
+    prev_live = os.environ.get("OPENAI_LIVE_VERIFY")
+    os.environ["OPENAI_LIVE_VERIFY"] = "true"
+    try:
+        test_result = test_openai_api_key(api_key, force=True)
+    finally:
+        if prev_live is None:
+            os.environ.pop("OPENAI_LIVE_VERIFY", None)
+        else:
+            os.environ["OPENAI_LIVE_VERIFY"] = prev_live
     if not test_result["verified"]:
         raise ValueError(test_result["message"])
 
@@ -1289,10 +1413,20 @@ def _call_openai_with_key(
     }
 
     approx_chars = sum(len(m.get("content") or "") for m in messages)
+    approx_tokens = max(1, approx_chars // 4)
+    if not _openai_enabled():
+        raise ValueError("OpenAI가 비활성화되어 있습니다 (OPENAI_ENABLED=false).")
+    _assert_chat_budget()
+    _record_chat_call(
+        reason=str(route_reason or "interpret"),
+        model=chosen_model,
+        approx_tokens=approx_tokens,
+        user_id=None,
+    )
     logger.info(
         "OpenAI chat request model=%s approx_input_tokens~%s messages=%s route=%s system=%s",
         chosen_model,
-        max(1, approx_chars // 4),
+        approx_tokens,
         len(messages),
         route_reason or "-",
         "full" if heavy else "compact",
@@ -1321,11 +1455,25 @@ def _call_openai_with_key(
             (res.text or "")[:400],
         )
         _set_test_result(verified=False, message=message, error_code=code)
-        # One automatic retry for transient rate limits only
-        if code == "rate_limit_exceeded" or (
-            res.status_code == 429 and code not in {"insufficient_quota", "billing_not_active", "billing_hard_limit_reached"}
+        # Retries double spend — off by default.
+        allow_retry = os.getenv("OPENAI_RETRY_RATE_LIMIT", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        if allow_retry and (
+            code == "rate_limit_exceeded"
+            or (
+                res.status_code == 429
+                and code not in {"insufficient_quota", "billing_not_active", "billing_hard_limit_reached"}
+            )
         ):
             time.sleep(2.5)
+            _assert_chat_budget()
+            _record_chat_call(
+                reason=f"{route_reason or 'interpret'}:retry429",
+                model=chosen_model,
+                approx_tokens=approx_tokens,
+                user_id=None,
+            )
             try:
                 res2 = requests.post(
                     OPENAI_CHAT_URL,

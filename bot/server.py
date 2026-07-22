@@ -539,8 +539,9 @@ def strategy_ai_status(
 ) -> dict[str, Any]:
     if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-    # Platform-hosted GPT: one OPENAI_API_KEY for all customers.
-    status = ai_available(verify=verify, include_env_path=not auth_required())
+    # NEVER live-probe OpenAI from status polls (verify query ignored). Idle traffic must not burn usage.
+    _ = verify
+    status = ai_available(verify=False, include_env_path=not auth_required())
     status["hosted"] = True
     if auth_required():
         status["keyPreview"] = None
@@ -556,18 +557,18 @@ def strategy_test_key(
     body: StrategyTestKeyBody | None = None,
     user: User | None = Depends(get_optional_user),
 ) -> dict[str, Any]:
-    force = bool(body.force) if body else False
     if auth_required():
-        # End users do not supply keys — retest the platform key only.
+        # End users do not supply keys — never hit OpenAI from this endpoint.
         if user is None:
             raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-        # Prefer verify cache unless client explicitly forces a live recheck (saves chat tokens).
-        result = test_openai_api_key(None, force=force)
+        result = test_openai_api_key(None, force=False)
         if not result["verified"]:
             raise HTTPException(status_code=400, detail=result["message"])
-        return {"ok": True, **result, "hosted": True}
+        return {"ok": True, **result, "hosted": True, "skippedLiveCheck": True}
     try:
         candidate = (body.openai_api_key if body else "").strip()
+        # force only when client explicitly asks AND live verify is enabled in env
+        force = bool(body.force) if body else False
         result = test_openai_api_key(candidate or None, force=force)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
