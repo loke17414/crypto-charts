@@ -13,15 +13,23 @@ mkdir -p "$OUT"
 
 cd "$ROOT"
 
-# Load DATABASE_URL if present
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT/.env" || true
-  set +a
-fi
+# Read DATABASE_URL without sourcing .env (values may contain spaces/Korean and break `source`).
+env_get() {
+  local key="$1"
+  [[ -f "$ROOT/.env" ]] || return 0
+  local line
+  line="$(grep -E "^${key}=" "$ROOT/.env" | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 0
+  line="${line#*=}"
+  line="${line%$'\r'}"
+  line="${line#\"}"
+  line="${line%\"}"
+  line="${line#\'}"
+  line="${line%\'}"
+  printf '%s' "$line"
+}
 
-DB_URL="${DATABASE_URL:-}"
+DB_URL="$(env_get DATABASE_URL)"
 if [[ -z "$DB_URL" ]]; then
   DB_URL="sqlite:///$ROOT/data/cryptocharts.db"
 fi
