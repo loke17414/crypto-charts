@@ -1,4 +1,4 @@
-/* GPT-powered natural language strategy editor (trading page) */
+/* AI-powered natural language strategy editor (trading page) */
 
 const StrategyAI = (() => {
   const HISTORY_KEY = 'crypto-charts-strategy-ai-history';
@@ -120,7 +120,7 @@ const StrategyAI = (() => {
       const actions = allowed
         ? `<div class="strategy-recommend__actions">
             <button type="button" class="btn btn--simple-primary btn--sm" data-rec-apply="${item.id}">적용</button>
-            <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">GPT</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-rec-gpt="${item.id}">AI</button>
           </div>`
         : `<div class="strategy-recommend__actions">
             <button type="button" class="btn btn--simple-primary btn--sm" data-rec-upgrade="1" title="Pro에서 적용">Pro 적용</button>
@@ -224,7 +224,7 @@ const StrategyAI = (() => {
     if (result?.applied !== false) {
       addMessage(
         'assistant',
-        `✅ 추천 전략 «${pack.name}» 적용 완료 — 승률 ${pack.winRate}% · ${pack.trades}거래 (현재 차트 백테스트). GPT 대화에서도 이 전략을 기준으로 수정할 수 있습니다.`,
+        `✅ 추천 전략 «${pack.name}» 적용 완료 — 승률 ${pack.winRate}% · ${pack.trades}거래 (현재 차트 백테스트). AI 대화에서도 이 전략을 기준으로 수정할 수 있습니다.`,
       );
     } else {
       addMessage('assistant', formatAiError(result?.reason || '추천 전략 적용에 실패했습니다.'), { persist: false });
@@ -242,12 +242,12 @@ const StrategyAI = (() => {
       const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id);
       addMessage(
         'assistant',
-        `✅ 추천 전략 «${pack?.name || id}» 적용 완료 (GPT 미사용 · 차트 측정 설정). 승률 ${pack?.winRate ?? '—'}% · ${pack?.trades ?? 0}거래.`,
+        `✅ 추천 전략 «${pack?.name || id}» 적용 완료 (AI 미사용 · 차트 측정 설정). 승률 ${pack?.winRate ?? '—'}% · ${pack?.trades ?? 0}거래.`,
         { persist: true },
       );
       return;
     }
-    // Fallback: named-id prompt (server also short-circuits without GPT when settings present)
+    // Fallback: named-id prompt (server also short-circuits without AI when settings present)
     handlePrompt(`추천전략 ${id} 적용해줘`);
   }
 
@@ -343,7 +343,7 @@ const StrategyAI = (() => {
     if (persist) rememberTurn(role, text, meta);
   }
 
-  function setThinking(on, text = 'GPT가 전략을 분석하는 중...') {
+  function setThinking(on, text = 'AI가 전략을 분석하는 중...') {
     const btn = $('#strategyAiSendBtn');
     const input = $('#strategyAiInput');
     if (btn) btn.disabled = on;
@@ -376,15 +376,15 @@ const StrategyAI = (() => {
     const testBtn = $('#strategyAiTestBtn');
     const hosted = status?.hosted === true || status?.keySource === 'platform';
 
-    // Platform-hosted GPT: end users never enter an OpenAI key.
+    // Platform-hosted AI: end users never enter an OpenAI key.
     if (hosted) {
       if (group) group.classList.add('hidden');
       if (saveBtn) saveBtn.classList.add('hidden');
       if (testBtn) testBtn.classList.add('hidden');
       if (hint) {
         hint.textContent = status?.configured
-          ? 'Orbinex 플랫폼 GPT를 사용합니다. 별도 API 키 입력이 필요 없습니다.'
-          : '플랫폼 GPT 키가 아직 설정되지 않았습니다. 운영자에게 문의하세요.';
+          ? 'Orbinex 플랫폼 AI를 사용합니다. 별도 API 키 입력이 필요 없습니다.'
+          : '플랫폼 AI 키가 아직 설정되지 않았습니다. 운영자에게 문의하세요.';
       }
       return;
     }
@@ -435,10 +435,10 @@ const StrategyAI = (() => {
     const hosted = status?.hosted === true || status?.keySource === 'platform';
     const rows = [
       ['API 서버', '온라인'],
-      ['GPT 제공', hosted ? '플랫폼 호스팅' : '직접 키 입력'],
+      ['AI 제공', hosted ? '플랫폼 호스팅' : '직접 키 입력'],
       ['키 설정', status?.configured ? '완료' : '미설정'],
       ['키 인증', status?.authenticated ? '성공' : '실패/미검사'],
-      ['GPT 호출', status?.chatReady || status?.verified ? '가능' : '불가'],
+      ['AI 호출', status?.chatReady || status?.verified ? '가능' : '불가'],
       ...(hosted ? [] : [['키 미리보기', status?.keyPreview || '—']]),
       ['모델 (기본)', status?.model || 'gpt-4o-mini'],
       ['모델 (복잡)', status?.modelComplex || 'gpt-4o'],
@@ -471,19 +471,19 @@ const StrategyAI = (() => {
     renderDetails(status, serverOnline);
 
     if (!serverOnline) {
-      el.textContent = 'GPT: API 서버 오프라인';
+      el.textContent = 'AI: API 서버 오프라인';
       el.className = 'strategy-ai-status strategy-ai-status--offline';
       return;
     }
 
     if (!status?.configured) {
-      el.textContent = 'GPT: API Key 미설정';
+      el.textContent = 'AI: API Key 미설정';
       el.className = 'strategy-ai-status strategy-ai-status--offline';
       return;
     }
 
     if (!status?.verified) {
-      el.textContent = status?.authenticated ? 'GPT: 키 유효 · 호출 불가' : 'GPT: API Key 인증 실패';
+      el.textContent = status?.authenticated ? 'AI: 키 유효 · 호출 불가' : 'AI: API Key 인증 실패';
       el.className = 'strategy-ai-status strategy-ai-status--offline';
       return;
     }
@@ -492,7 +492,7 @@ const StrategyAI = (() => {
     const modelLine = routing === 'hybrid'
       ? `${status.model} + ${status.modelComplex || 'gpt-4o'}`
       : (status.model || 'gpt-4o-mini');
-    el.textContent = `GPT: 사용 가능 (${modelLine})`;
+    el.textContent = `AI: 사용 가능 (${modelLine})`;
     el.className = 'strategy-ai-status strategy-ai-status--ready';
   }
 
@@ -516,7 +516,7 @@ const StrategyAI = (() => {
   async function handlePrompt(text) {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
-    if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('전략 GPT')) return;
+    if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('전략 AI')) return;
 
     const priorHistory = conversationHistory.slice(-8);
     const wantsStrategyApply = looksLikeStrategyApply(trimmed);
@@ -525,7 +525,7 @@ const StrategyAI = (() => {
       true,
       wantsStrategyApply
         ? '차트·백테스트 분석 후 전략 적용 중...'
-        : 'GPT와 대화 중...',
+        : 'AI와 대화 중...',
     );
 
     try {
@@ -537,7 +537,7 @@ const StrategyAI = (() => {
 
       const status = await refreshStatus({ verify: false });
       if (!status?.configured && !status?.verified) {
-        addMessage('assistant', status?.message || '플랫폼 GPT가 아직 준비되지 않았습니다.', { persist: true });
+        addMessage('assistant', status?.message || '플랫폼 AI가 아직 준비되지 않았습니다.', { persist: true });
         return;
       }
       // Hosted platform key: do NOT live-verify on every message (burns OpenAI credits).
@@ -546,7 +546,7 @@ const StrategyAI = (() => {
         return;
       }
       if (status && status.chatReady === false && status.verified === false && status.errorCode) {
-        addMessage('assistant', status?.message || 'GPT를 사용할 수 없습니다.', { persist: true });
+        addMessage('assistant', status?.message || 'AI를 사용할 수 없습니다.', { persist: true });
         return;
       }
 
@@ -614,11 +614,11 @@ const StrategyAI = (() => {
     } catch (err) {
       console.error(err);
       const msg = String(err.message || '');
-      const isQuota = /GPT 한도|402|추가 팩|Pro로 업그레이드|주간 GPT/i.test(msg);
+      const isQuota = /AI 한도|GPT 한도|402|추가 팩|Pro로 업그레이드|주간 AI|주간 GPT/i.test(msg);
       if (isQuota) {
         const cta = /Pro 주간|추가 팩/i.test(msg)
-          ? `${msg}\n\n→ 요금제에서 GPT 추가 팩을 구매하거나 다음 주 월요일에 리셋됩니다.\n(billing.html)`
-          : `${msg}\n\n→ Pro로 업그레이드하면 주 100회 GPT · 봇 무제한을 사용할 수 있습니다.\n요금제: billing.html`;
+          ? `${msg}\n\n→ 요금제에서 AI 추가 팩을 구매하거나 다음 주 월요일에 리셋됩니다.\n(billing.html)`
+          : `${msg}\n\n→ Pro로 업그레이드하면 주 100회 AI · 봇 무제한을 사용할 수 있습니다.\n요금제: billing.html`;
         addMessage('assistant', formatAiError(cta), { persist: true });
         if (typeof FuturesBotApp?.refreshBillingQuota === 'function') {
           FuturesBotApp.refreshBillingQuota().catch(() => {});
@@ -742,13 +742,13 @@ const StrategyAI = (() => {
       if (status?.configured) {
         addMessage(
           'assistant',
-          '플랫폼 GPT 준비됨. 전략을 입력해 주세요.',
+          '플랫폼 AI 준비됨. 전략을 입력해 주세요.',
           { persist: false },
         );
       } else {
         addMessage(
           'assistant',
-          '플랫폼 GPT가 아직 없습니다. 운영자에게 문의하세요.',
+          '플랫폼 AI가 아직 없습니다. 운영자에게 문의하세요.',
           { persist: false },
         );
       }
@@ -843,19 +843,19 @@ const StrategyAI = (() => {
     } else if (status?.configured && (status?.verified || status?.hosted || status?.chatReady !== false)) {
       addMessage(
         'assistant',
-        'Orbinex 플랫폼 GPT를 사용할 수 있습니다. 차트·백테스트 데이터를 분석해 전략을 적용합니다. API 키는 입력할 필요 없습니다.',
+        'Orbinex 플랫폼 AI를 사용할 수 있습니다. 차트·백테스트 데이터를 분석해 전략을 적용합니다. API 키는 입력할 필요 없습니다.',
         { persist: false },
       );
     } else if (status?.configured) {
       addMessage(
         'assistant',
-        '플랫폼 GPT 키가 설정돼 있지만 인증에 실패했습니다. 운영자에게 문의하세요.',
+        '플랫폼 AI 키가 설정돼 있지만 인증에 실패했습니다. 운영자에게 문의하세요.',
         { persist: false },
       );
     } else {
       addMessage(
         'assistant',
-        '플랫폼 GPT가 아직 준비되지 않았습니다. 운영자가 서버에 OPENAI_API_KEY를 설정하면 바로 사용할 수 있습니다.',
+        '플랫폼 AI가 아직 준비되지 않았습니다. 운영자가 서버에 OPENAI_API_KEY를 설정하면 바로 사용할 수 있습니다.',
         { persist: false },
       );
     }

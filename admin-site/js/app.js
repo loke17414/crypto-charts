@@ -103,8 +103,8 @@
   function usageText(u) {
     const remBot = u.botHoursRemaining;
     const remGpt = u.gptRemaining;
-    if (u.plan === 'pro') return `사용 봇 ${u.botHoursUsed ?? 0}h · GPT ${u.gptCallsUsed ?? 0}`;
-    return `남음 봇 ${remBot ?? '—'}h · GPT ${remGpt ?? '—'}`;
+    if (u.plan === 'pro') return `사용 봇 ${u.botHoursUsed ?? 0}h · AI ${u.gptCallsUsed ?? 0}`;
+    return `남음 봇 ${remBot ?? '—'}h · AI ${remGpt ?? '—'}`;
   }
 
   async function loadUsers() {
@@ -261,7 +261,7 @@
       else if (act === 'set-quota') {
         const botH = prompt('봇 사용 시간(시간)을 입력하세요', '0');
         if (botH == null) return;
-        const gpt = prompt('GPT 사용 횟수를 입력하세요', '0');
+        const gpt = prompt('AI 사용 횟수를 입력하세요', '0');
         if (gpt == null) return;
         ({ message: msg } = await AdminApi.setQuota(id, {
           botHoursUsed: Number(botH),

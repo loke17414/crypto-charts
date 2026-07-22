@@ -433,7 +433,7 @@ def health(
         ai["envPath"] = None
         if ai.get("configured"):
             ai["keySource"] = "platform"
-            ai["message"] = "플랫폼 GPT를 사용할 수 있습니다."
+            ai["message"] = "플랫폼 AI를 사용할 수 있습니다."
         if session is not None:
             session_testnet = bool(session.config.use_testnet)
         elif creds_saved:
@@ -539,7 +539,7 @@ def strategy_ai_status(
         status["envPath"] = None
         if status.get("configured"):
             status["keySource"] = "platform"
-            status["message"] = status.get("message") or "플랫폼 GPT를 사용할 수 있습니다."
+            status["message"] = status.get("message") or "플랫폼 AI를 사용할 수 있습니다."
     return {"ok": True, **status}
 
 
@@ -576,7 +576,7 @@ def strategy_configure(
         raise HTTPException(
             status_code=403,
             detail=(
-                "GPT는 플랫폼에서 제공합니다. "
+                "AI는 플랫폼에서 제공합니다. "
                 "사용자는 키를 입력할 필요가 없습니다. "
                 "운영자는 서버 .env의 OPENAI_API_KEY를 설정하세요."
             ),

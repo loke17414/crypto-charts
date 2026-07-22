@@ -65,7 +65,7 @@ const GuestGate = (() => {
     const page = currentPage();
     const isTrading = page === 'trading.html';
     const message = isTrading
-      ? '비로그인 상태에서는 차트만 볼 수 있습니다.\n자동매매·봇·GPT·API 연결은 로그인 후 이용할 수 있습니다.'
+      ? '비로그인 상태에서는 차트만 볼 수 있습니다.\n자동매매·봇·AI·API 연결은 로그인 후 이용할 수 있습니다.'
       : '비로그인 상태에서는 차트만 볼 수 있습니다.\nAI·모의매매 등 다른 기능은 로그인 후 이용할 수 있습니다.';
 
     if (typeof UiModal === 'undefined') return;

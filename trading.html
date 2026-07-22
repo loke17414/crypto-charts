@@ -52,7 +52,7 @@
                   <span>명목 <strong id="notionalInfo">—</strong></span>
                   <span id="liveIndicator" class="live-indicator hidden"><span class="live-indicator__dot"></span>LIVE</span>
                 </div>
-                <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">GPT: 확인 중...</div>
+                <div id="strategyAiStatus" class="strategy-ai-status strategy-ai-status--checking">AI: 확인 중...</div>
                 <button type="button" id="strategyAiToggleBtn" class="chart-top-bar__btn" title="AI 전략 대화">AI</button>
                 <button type="button" id="backtestToggleBtn" class="chart-top-bar__btn" title="백테스트">백테스트</button>
               </div>
@@ -159,7 +159,7 @@
                   <p id="strategyRecommendNote" class="strategy-recommend__note api-hint">현재 차트 기준으로 측정합니다.</p>
                   <div id="strategyRecommendProLock" class="strategy-recommend__lock hidden">
                     <p class="strategy-recommend__lock-title">미리보기만 가능 · 적용은 Pro</p>
-                    <p class="api-hint">아래 추천 전략은 볼 수 있지만, 적용·GPT 반영은 Pro 업그레이드 후 사용할 수 있습니다.</p>
+                    <p class="api-hint">아래 추천 전략은 볼 수 있지만, 적용·AI 반영은 Pro 업그레이드 후 사용할 수 있습니다.</p>
                     <a href="billing.html" class="btn btn--simple-primary btn--sm" style="text-align:center;text-decoration:none;display:inline-block;margin-top:0.4rem;">Pro 업그레이드</a>
                   </div>
                   <div id="strategyRecommendList" class="strategy-recommend__list"></div>
@@ -169,10 +169,10 @@
                   <select id="strategyAiTargetSlot"><option value="__new__">+ 새 조건</option></select>
                 </div>
                 <details class="chart-ai-panel__settings">
-                  <summary>GPT 상태</summary>
+                  <summary>AI 상태</summary>
                   <div id="strategyAiDetails" class="strategy-ai-details"></div>
                   <p id="strategyAiNote" class="strategy-ai-note strategy-ai-note--muted"></p>
-                  <p id="openaiApiKeyHint" class="strategy-ai-note strategy-ai-note--muted">플랫폼 GPT — 사용자 키 입력 불필요</p>
+                  <p id="openaiApiKeyHint" class="strategy-ai-note strategy-ai-note--muted">플랫폼 AI — 사용자 키 입력 불필요</p>
                   <div id="openaiApiKeyGroup" class="form-group chart-ai-panel__key hidden">
                     <label for="openaiApiKey">OpenAI Key (운영자/로컬 전용)</label>
                     <input type="password" id="openaiApiKey" autocomplete="off">
@@ -257,7 +257,7 @@
                   <strong id="freeQuotaBotRemain">—</strong>
                 </div>
                 <div class="free-quota-panel__row">
-                  <span class="text-muted">GPT</span>
+                  <span class="text-muted">AI</span>
                   <strong id="freeQuotaGpt">—</strong>
                 </div>
                 <div class="free-quota-panel__row">
@@ -350,7 +350,7 @@
             <button type="button" class="panel-guide-btn" data-panel-guide="strategyLog" title="가이드" aria-label="전략 로그 가이드">?</button>
           </summary>
           <div class="control-section__body">
-            <p class="api-hint strategy-log__hint">캔들패턴 · BoS/CHOCH · 지표 요약 (GPT에도 동일 전달)</p>
+            <p class="api-hint strategy-log__hint">캔들패턴 · BoS/CHOCH · 지표 요약 (AI에도 동일 전달)</p>
             <div id="strategyLog" class="trade-log strategy-log" aria-live="polite"></div>
           </div>
         </details>
@@ -447,8 +447,8 @@
   <script src="js/swing-levels.js"></script>
   <script src="js/floating-panels.js?v=20260718m"></script>
   <script src="js/strategy-presets.js?v=20260720c"></script>
-  <script src="js/futures-bot-app.js?v=20260722n"></script>
-  <script src="js/strategy-ai.js?v=20260722n"></script>
+  <script src="js/futures-bot-app.js?v=20260722o"></script>
+  <script src="js/strategy-ai.js?v=20260722o"></script>
   <script src="js/panel-guides.js?v=20260722a"></script>
 </body>
 </html>

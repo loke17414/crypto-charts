@@ -99,7 +99,7 @@ const AppAdmin = (() => {
       const plan = u.plan === 'pro'
         ? (u.manualPro ? 'Pro (수동)' : 'Pro')
         : 'Free';
-      const usage = `봇 ${u.botHoursUsed}h · GPT ${u.gptCallsUsed}`;
+      const usage = `봇 ${u.botHoursUsed}h · AI ${u.gptCallsUsed}`;
       const bot = u.botRunning ? '실행 중' : '정지';
       return `
         <tr data-user-id="${u.id}">

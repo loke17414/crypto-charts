@@ -215,7 +215,7 @@ const FuturesBotApp = (() => {
     if (slotsEl) slotsEl.textContent = `${usedSlots}/${maxSlots}개`;
     if (noteEl) {
       noteEl.textContent = isPro
-        ? '주간 GPT 한도 소진 시 요금제에서 추가 팩을 구매할 수 있습니다.'
+        ? '주간 AI 한도 소진 시 요금제에서 추가 팩을 구매할 수 있습니다.'
         : '추천 전략 · 멀티슬롯 · 웹 리서치는 Pro · 한도 소진 시 업그레이드';
     }
     if (upgradeLink) {
@@ -229,11 +229,11 @@ const FuturesBotApp = (() => {
       if (show) {
         if (isPro) {
           const rem = gptLim == null ? '∞' : String(gptRem ?? Math.max(0, gptLim - gptUsed) + gptBonus);
-          mini.textContent = `Pro · 봇 무제한 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${rem}회`;
+          mini.textContent = `Pro · 봇 무제한 · 슬롯 ${usedSlots}/${maxSlots} · AI ${rem}회`;
         } else {
           const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
           const rem = gptRem ?? Math.max(0, (gptLim || 10) - gptUsed);
-          mini.textContent = `Free · 봇 ${formatHours(remH)}h 남음 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${rem}회`;
+          mini.textContent = `Free · 봇 ${formatHours(remH)}h 남음 · 슬롯 ${usedSlots}/${maxSlots} · AI ${rem}회`;
         }
       }
     }
@@ -649,7 +649,7 @@ const FuturesBotApp = (() => {
 
   function getFormStateForAi(targetSlotId = null) {
     readFormSettings();
-    // GPT 편집의 기준이 되는 entryRules: 저장 대상 슬롯이 선택돼 있으면 그
+    // AI 편집의 기준이 되는 entryRules: 저장 대상 슬롯이 선택돼 있으면 그
     // 슬롯의 규칙을 현재 전략으로 보여줘 follow-up 수정이 그 슬롯에 적용된다.
     let entryRules = state.entryRules;
     let exitRules = state.exitRules;
@@ -990,7 +990,7 @@ const FuturesBotApp = (() => {
       if (slots.length) {
         slots.forEach((slot) => {
           if (!slot.entryRules) {
-            lines.push(`· <strong>[${slot.enabled ? 'ON' : 'OFF'}] ${escapeHtml(slot.name)}</strong>: 비어 있음 — GPT로 전략을 저장하세요`);
+            lines.push(`· <strong>[${slot.enabled ? 'ON' : 'OFF'}] ${escapeHtml(slot.name)}</strong>: 비어 있음 — AI로 전략을 저장하세요`);
             return;
           }
           const rules = StrategyEngine.sanitizeEntryRules(slot.entryRules);
@@ -1139,7 +1139,7 @@ const FuturesBotApp = (() => {
   }
 
   function slotRulesSummaryText(slot) {
-    if (!slot.entryRules) return '비어 있음 — GPT로 전략을 저장하세요';
+    if (!slot.entryRules) return '비어 있음 — AI로 전략을 저장하세요';
     try {
       const rules = StrategyEngine.sanitizeEntryRules(slot.entryRules);
       return StrategyEngine.rulesSummary(rules);
@@ -1156,7 +1156,7 @@ const FuturesBotApp = (() => {
     if (!state.strategySlots.length) {
       const empty = document.createElement('div');
       empty.className = 'strategy-slot-empty';
-      empty.textContent = '진입 조건이 없습니다. "+ 조건 추가"를 누르거나 GPT에게 전략을 설명하세요. (조건이 없으면 기본 RSI 전략이 사용됩니다)';
+      empty.textContent = '진입 조건이 없습니다. "+ 조건 추가"를 누르거나 AI에게 전략을 설명하세요. (조건이 없으면 기본 RSI 전략이 사용됩니다)';
       list.appendChild(empty);
       return;
     }
@@ -1216,7 +1216,7 @@ const FuturesBotApp = (() => {
     });
   }
 
-  // GPT 채팅의 "저장할 진입 조건" 드롭다운을 현재 슬롯 목록과 동기화한다.
+  // AI 채팅의 "저장할 진입 조건" 드롭다운을 현재 슬롯 목록과 동기화한다.
   function updateStrategyAiSlotOptions() {
     const select = $('#strategyAiTargetSlot');
     if (!select) return;
@@ -1331,7 +1331,7 @@ const FuturesBotApp = (() => {
     const touches = (key) => changed.has(key)
       || (patchObj && Object.prototype.hasOwnProperty.call(patchObj, key));
 
-    // GPT가 changed_fields만 채우고 실제 patch가 비어 있으면(이해 못함·질문)
+    // AI가 changed_fields만 채우고 실제 patch가 비어 있으면(이해 못함·질문)
     // 설정·백테스트 캐시를 건드리지 않는다.
     if (!patchKeys.length) {
       if (changed.size > 0) {
@@ -3827,7 +3827,7 @@ const FuturesBotApp = (() => {
       }
       const guestMode = AppAuth.isRequired() && !AppAuth.isLoggedIn();
       if (guestMode) {
-        // Guest: chart viewing allowed; bot/API/GPT locked via GuestGate + UI.
+        // Guest: chart viewing allowed; bot/API/AI locked via GuestGate + UI.
         syncExchangeEnv(false);
         setModeBadge();
         updateChartIndicatorButtons();
@@ -3848,7 +3848,7 @@ const FuturesBotApp = (() => {
           }
           const slot = addStrategySlot();
           if (slot) {
-            addLog(`진입 조건 [${slot.name}] 추가됨 — GPT에게 전략을 설명해 저장하세요.`, 'info');
+            addLog(`진입 조건 [${slot.name}] 추가됨 — AI에게 전략을 설명해 저장하세요.`, 'info');
             onStrategySlotsChanged({ recompute: false });
           }
         });

@@ -297,7 +297,7 @@ MARKET DATA & BACKTEST (critical for accuracy):
   Prefer items with ok:true (winRate >= 50%, trades >= 5). Do not invent different rules.
 - For FVG/divergence/swing strategies use types fvg, divergence, swing_break, swing_near — do NOT fake with compare/cross alone.
 
-CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common GPT mistake):
+CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common AI mistake):
 - NEVER auto-apply structure.fvg or structure.divergence from market_context unless the user EXPLICITLY asks for FVG/갭/페어밸류 or divergence/다이버전스.
 - 볼린저/Bollinger/BB/밴드/Envelope/Keltner/Donchian + 진입/재진입/이탈/터치/하단/상단
   → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg".
@@ -549,7 +549,7 @@ def _parse_openai_error(status_code: int, body_text: str) -> tuple[str, str | No
             code or "rate_limit_exceeded",
         )
     if status_code == 404 or code_l == "model_not_found":
-        return ("선택한 GPT 모델을 사용할 수 없습니다. OPENAI_MODEL 설정을 확인하세요.", code)
+        return ("선택한 AI 모델을 사용할 수 없습니다. OPENAI_MODEL 설정을 확인하세요.", code)
     return (f"OpenAI API 오류 ({status_code}): {message}", code)
 
 
@@ -633,7 +633,7 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
 
     _set_test_result(
         verified=True,
-        message="OpenAI API 키가 정상이며 GPT 호출이 가능합니다.",
+        message="OpenAI API 키가 정상이며 AI 호출이 가능합니다.",
         error_code=None,
         api_key=key,
     )
@@ -642,7 +642,7 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
         "verified": True,
         "authenticated": True,
         "chatReady": True,
-        "message": "OpenAI API 키가 정상이며 GPT 호출이 가능합니다.",
+        "message": "OpenAI API 키가 정상이며 AI 호출이 가능합니다.",
         "errorCode": None,
         "keyPreview": mask_api_key(key),
         "model": model,
@@ -671,12 +671,12 @@ def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
     except requests.RequestException as exc:
         return {
             "chatReady": False,
-            "message": f"GPT 호출 테스트 실패: {exc}",
+            "message": f"AI 호출 테스트 실패: {exc}",
             "errorCode": "network_error",
         }
 
     if res.status_code == 200:
-        return {"chatReady": True, "message": "GPT 호출 가능"}
+        return {"chatReady": True, "message": "AI 호출 가능"}
 
     message, code = _parse_openai_error(res.status_code, res.text)
     logger.warning(
@@ -1828,7 +1828,7 @@ def _reconcile_patch_intent(
     *,
     follow_up: bool,
 ) -> dict[str, Any]:
-    """Replace GPT output when user intent clearly conflicts with condition types."""
+    """Replace AI output when user intent clearly conflicts with condition types."""
     if follow_up and not _looks_like_strategy_type_change(prompt):
         return patch
 
@@ -1851,7 +1851,7 @@ def _reconcile_patch_intent(
                 long_only=True if long_only else None,
             )
             logger.info(
-                "Intent reconcile: band strategy requested but GPT returned %s — applying band_reentry",
+                "Intent reconcile: band strategy requested but AI returned %s — applying band_reentry",
                 sorted(types) or "empty",
             )
             return _merge_template_patch(patch, tmpl, overwrite_exit=True)
@@ -1860,7 +1860,7 @@ def _reconcile_patch_intent(
         wrong = types & {"band_reentry", "divergence", "swing_break", "swing_near"}
         if wrong or not _has_condition_type(entry_rules, "fvg"):
             logger.info(
-                "Intent reconcile: FVG requested but GPT returned %s — applying fvg",
+                "Intent reconcile: FVG requested but AI returned %s — applying fvg",
                 sorted(types) or "empty",
             )
             return _merge_template_patch(patch, _fvg_entry_patch(prompt), overwrite_exit=True)
@@ -1869,7 +1869,7 @@ def _reconcile_patch_intent(
         wrong = types & {"band_reentry", "fvg", "swing_break", "swing_near"}
         if wrong or not _has_condition_type(entry_rules, "divergence"):
             logger.info(
-                "Intent reconcile: divergence requested but GPT returned %s — applying divergence",
+                "Intent reconcile: divergence requested but AI returned %s — applying divergence",
                 sorted(types) or "empty",
             )
             return _merge_template_patch(patch, _divergence_entry_patch(prompt), overwrite_exit=True)
@@ -1883,7 +1883,7 @@ def _reconcile_patch_intent(
                 else _swing_bounce_patch()
             )
             logger.info(
-                "Intent reconcile: swing requested but GPT returned %s — applying swing template",
+                "Intent reconcile: swing requested but AI returned %s — applying swing template",
                 sorted(types) or "empty",
             )
             return _merge_template_patch(patch, tmpl, overwrite_exit=True)
@@ -2020,7 +2020,7 @@ def interpret_strategy(
                 ),
                 rec_id or "추천 전략",
             )
-            summary = f"추천 전략 «{rec_name}» 적용 (GPT 호출 없음 · 측정된 설정 그대로)"
+            summary = f"추천 전략 «{rec_name}» 적용 (AI 호출 없음 · 측정된 설정 그대로)"
             append_turn(role="assistant", content=summary, user_id=user_id)
             logger.info("Recommended preset applied without OpenAI id=%s user=%s", rec_id, user_id)
             return {

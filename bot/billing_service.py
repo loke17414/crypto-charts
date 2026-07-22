@@ -285,15 +285,15 @@ def assert_can_use_gpt(db: Session, user: User | None) -> None:
         raise HTTPException(
             status_code=402,
             detail=(
-                f"Pro 주간 GPT 한도({limit}회)와 추가 팩을 모두 사용했습니다. "
-                f"요금제에서 GPT 추가 팩(+{gpt_pack_calls()}회 · "
+                f"Pro 주간 AI 한도({limit}회)와 추가 팩을 모두 사용했습니다. "
+                f"요금제에서 AI 추가 팩(+{gpt_pack_calls()}회 · "
                 f"{gpt_pack_amount_krw():,}원)을 구매하거나 다음 주 월요일까지 기다려 주세요."
             ),
         )
     raise HTTPException(
         status_code=402,
         detail=(
-            f"무료 플랜 주간 GPT 한도({limit}회)를 모두 사용했습니다. "
+            f"무료 플랜 주간 AI 한도({limit}회)를 모두 사용했습니다. "
             "Pro로 업그레이드하거나 다음 주 월요일까지 기다려 주세요."
         ),
     )
@@ -570,12 +570,12 @@ def confirm_billing_auth(
 
 
 def purchase_gpt_pack(db: Session, user: User) -> dict[str, Any]:
-    """Charge billing key for a one-time GPT call pack (Pro subscribers only)."""
+    """Charge billing key for a one-time AI call pack (Pro subscribers only)."""
     if not billing_configured():
         raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
     sub = _expire_if_needed(db, ensure_subscription(db, user.id))
     if not is_pro(sub):
-        raise HTTPException(status_code=402, detail="GPT 추가 팩은 Pro 구독 중일 때만 구매할 수 있습니다.")
+        raise HTTPException(status_code=402, detail="AI 추가 팩은 Pro 구독 중일 때만 구매할 수 있습니다.")
     if not sub.toss_billing_key_encrypted or not sub.toss_customer_key:
         raise HTTPException(
             status_code=400,
@@ -611,7 +611,7 @@ def purchase_gpt_pack(db: Session, user: User) -> dict[str, Any]:
             kind="gpt_pack",
         )
     except Exception:  # noqa: BLE001
-        logger.exception("Failed to persist GPT pack payment user=%s", user.id)
+        logger.exception("Failed to persist AI pack payment user=%s", user.id)
     return {
         "ok": True,
         "addedCalls": calls,
@@ -619,7 +619,7 @@ def purchase_gpt_pack(db: Session, user: User) -> dict[str, Any]:
         "amountKrw": amount,
         "paymentKey": payment.get("paymentKey"),
         "orderId": payment.get("orderId"),
-        "message": f"GPT 추가 팩 +{calls}회가 적용되었습니다.",
+        "message": f"AI 추가 팩 +{calls}회가 적용되었습니다.",
     }
 
 

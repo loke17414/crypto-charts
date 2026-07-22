@@ -17,9 +17,9 @@ const AppBilling = (() => {
     const bonus = snap.gpt?.bonusRemaining ?? 0;
     const rem = snap.gpt?.remaining;
     if (lim == null) {
-      return bonus > 0 ? `GPT: 무제한 · 추가팩 ${bonus}회` : 'GPT: 무제한';
+      return bonus > 0 ? `AI: 무제한 · 추가팩 ${bonus}회` : 'AI: 무제한';
     }
-    const base = `GPT: ${used} / ${lim}회 (이번 주)`;
+    const base = `AI: ${used} / ${lim}회 (이번 주)`;
     if (bonus > 0) return `${base} · 추가팩 ${bonus}회 · 남은 ${rem ?? 0}회`;
     return `${base} · 남은 ${rem ?? Math.max(0, lim - used)}회`;
   }
@@ -87,8 +87,8 @@ const AppBilling = (() => {
         const proGpt = snap.limits?.proGptCallsPerWeek ?? 100;
         const slots = snap.features?.maxStrategySlots ?? 1;
         noteEl.textContent =
-          `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개. ` +
-          `Pro: 봇 무제한 · GPT 주 ${proGpt}회 · 멀티슬롯 · 월 ${monthWon}원.`;
+          `무료: 주 ${botH}시간 봇 · AI ${gptN}회(mini) · 슬롯 ${slots}개. ` +
+          `Pro: 봇 무제한 · AI 주 ${proGpt}회 · 멀티슬롯 · 월 ${monthWon}원.`;
       }
     }
 
@@ -98,7 +98,7 @@ const AppBilling = (() => {
       upgradeBtn.disabled = busy;
     }
     if (packBtn) {
-      packBtn.textContent = `GPT 추가 팩 (+${packCalls}회 · ${packWon}원)`;
+      packBtn.textContent = `AI 추가 팩 (+${packCalls}회 · ${packWon}원)`;
       packBtn.classList.toggle('hidden', !snap.pro || !snap.paymentsConfigured);
       packBtn.disabled = busy;
     }
@@ -130,7 +130,7 @@ const AppBilling = (() => {
       el.innerHTML = `<ul style="list-style:none;padding:0;margin:0;font-size:0.86rem;">${rows.map((p) => {
         const when = p.createdAt ? new Date(p.createdAt).toLocaleString('ko-KR') : '—';
         const amt = Number(p.amount || 0).toLocaleString('ko-KR');
-        const kindMap = { renew: '갱신', subscribe: '구독', gpt_pack: 'GPT 팩' };
+        const kindMap = { renew: '갱신', subscribe: '구독', gpt_pack: 'AI 팩' };
         const kind = kindMap[p.kind] || p.kind || '결제';
         return `<li style="padding:0.45rem 0;border-bottom:1px solid var(--border, #333);">
           <strong>${kind}</strong> · ${amt}${p.currency || 'KRW'} · ${p.status || 'paid'}
@@ -210,15 +210,15 @@ const AppBilling = (() => {
     if (busy) return;
     const calls = lastSnap?.gptPackCalls || 50;
     const amt = won(lastSnap?.gptPackAmountKrw, 5000);
-    if (!confirm(`GPT 추가 팩 +${calls}회를 ${amt}원에 구매할까요?\n등록된 카드로 즉시 결제됩니다.`)) return;
+    if (!confirm(`AI 추가 팩 +${calls}회를 ${amt}원에 구매할까요?\n등록된 카드로 즉시 결제됩니다.`)) return;
     busy = true;
     render(lastSnap);
     try {
       const data = await FuturesApiClient.billingGptPack();
-      alert(data.message || 'GPT 추가 팩이 적용되었습니다.');
+      alert(data.message || 'AI 추가 팩이 적용되었습니다.');
       await refresh();
     } catch (err) {
-      alert(err.message || 'GPT 팩 구매 실패');
+      alert(err.message || 'AI 팩 구매 실패');
     } finally {
       busy = false;
       render(lastSnap);
