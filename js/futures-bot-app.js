@@ -296,7 +296,7 @@ const FuturesBotApp = (() => {
         : (() => {
           const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
           const usedH = snap.bot?.hoursUsed ?? 0;
-          const limH = snap.bot?.hoursLimit ?? 48;
+          const limH = snap.bot?.hoursLimit ?? 24;
           return `${formatHours(remH)}시간 남음 (${formatHours(usedH)}/${formatHours(limH)}h)`;
         })();
     }

@@ -61,7 +61,7 @@ const AppBilling = (() => {
     if (botEl) {
       botEl.textContent = snap.pro
         ? '봇 가동: 무제한'
-        : `봇 가동: ${snap.bot?.hoursUsed ?? 0} / ${snap.bot?.hoursLimit ?? 48}시간 (이번 주)`;
+        : `봇 가동: ${snap.bot?.hoursUsed ?? 0} / ${snap.bot?.hoursLimit ?? 24}시간 (이번 주)`;
     }
 
     if (gptEl) {
