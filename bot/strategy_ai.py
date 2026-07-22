@@ -406,7 +406,13 @@ def _openai_config() -> tuple[str, str]:
 
 
 def _model_routing_mode() -> str:
-    return os.getenv("OPENAI_MODEL_ROUTING", "hybrid").strip().lower() or "hybrid"
+    # Cost guard: default mini. Existing VPS .env with hybrid/4o is ignored unless OPENAI_ALLOW_4O=true.
+    raw = os.getenv("OPENAI_MODEL_ROUTING", "mini").strip().lower() or "mini"
+    if raw in {"hybrid", "complex", "4o", "all", "always"}:
+        allow = os.getenv("OPENAI_ALLOW_4O", "").strip().lower() in ("1", "true", "yes", "on")
+        if not allow:
+            return "mini"
+    return raw
 
 
 def mask_api_key(api_key: str) -> str:
@@ -475,7 +481,7 @@ def persist_openai_api_key(api_key: str) -> Path:
         if not found_complex:
             updated.append("OPENAI_MODEL_COMPLEX=gpt-4o")
         if not found_routing:
-            updated.append("OPENAI_MODEL_ROUTING=hybrid")
+            updated.append("OPENAI_MODEL_ROUTING=mini")
         updated.append(f'{key_name}="{value}"')
 
     env_path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
@@ -622,30 +628,33 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
             "httpStatus": res.status_code,
         }
 
-    chat_result = _test_chat_completion(key, model)
-    if not chat_result["chatReady"]:
-        _set_test_result(
-            verified=False,
-            message=chat_result["message"],
-            error_code=chat_result.get("errorCode"),
-            api_key=key,
-        )
-        return {
-            "ok": False,
-            "verified": False,
-            "authenticated": True,
-            "chatReady": False,
-            "message": chat_result["message"],
-            "errorCode": chat_result.get("errorCode"),
-            "keyPreview": mask_api_key(key),
-            "model": model,
-            "checkedAt": _now_iso(),
-            "httpStatus": chat_result.get("httpStatus"),
-        }
+    # Models list auth is enough by default. Chat probe burns tokens on every cache miss / restart.
+    verify_chat = os.getenv("OPENAI_VERIFY_CHAT", "").strip().lower() in ("1", "true", "yes", "on")
+    if verify_chat:
+        chat_result = _test_chat_completion(key, model)
+        if not chat_result["chatReady"]:
+            _set_test_result(
+                verified=False,
+                message=chat_result["message"],
+                error_code=chat_result.get("errorCode"),
+                api_key=key,
+            )
+            return {
+                "ok": False,
+                "verified": False,
+                "authenticated": True,
+                "chatReady": False,
+                "message": chat_result["message"],
+                "errorCode": chat_result.get("errorCode"),
+                "keyPreview": mask_api_key(key),
+                "model": model,
+                "checkedAt": _now_iso(),
+                "httpStatus": chat_result.get("httpStatus"),
+            }
 
     _set_test_result(
         verified=True,
-        message="OpenAI API 키가 정상이며 AI 호출이 가능합니다.",
+        message="OpenAI API 키가 정상입니다." + (" AI 호출 테스트 통과." if verify_chat else " (models 인증)"),
         error_code=None,
         api_key=key,
     )
@@ -988,6 +997,13 @@ _CATALOG_SHORT = (
 
 
 def _needs_full_system(route_reason: str | None) -> bool:
+    """Full ~5k-token system prompt is opt-in — default compact to cut OpenAI spend."""
+    raw = os.getenv("OPENAI_FULL_SYSTEM", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw not in ("1", "true", "yes", "on"):
+        # Default: never use the giant SYSTEM_PROMPT (saves ~5k input tokens/call).
+        return False
     return (route_reason or "") in {
         "strategy_rules",
         "research_apply",
@@ -1862,13 +1878,175 @@ def _prompt_applyish(prompt: str) -> bool:
     )
 
 
+def _local_risk_patch(prompt: str) -> dict[str, Any] | None:
+    """Parse simple risk edits without OpenAI (손절/익절/레버리지)."""
+    if not _looks_like_risk_only_edit(prompt):
+        return None
+    text = _prompt_text(prompt)
+    patch: dict[str, Any] = {}
+
+    sl = re.search(r"손절(?:을|를|은|는)?\s*(\d+(?:\.\d+)?)\s*%?", text)
+    if not sl:
+        sl = re.search(r"(?:stoploss|stop[\s_-]?loss)\s*[:=]?\s*(\d+(?:\.\d+)?)", text, re.I)
+    if sl:
+        patch["stopLossPct"] = max(0.1, min(50.0, float(sl.group(1))))
+        patch["useStopLoss"] = True
+
+    tp = re.search(r"익절(?:을|를|은|는)?\s*(\d+(?:\.\d+)?)\s*%?", text)
+    if not tp:
+        tp = re.search(r"(?:takeprofit|take[\s_-]?profit)\s*[:=]?\s*(\d+(?:\.\d+)?)", text, re.I)
+    if tp:
+        patch["takeProfitPct"] = max(0.1, min(100.0, float(tp.group(1))))
+
+    rr = re.search(r"(?:손익비|리스크리워드|rr)\s*[:=]?\s*(\d+(?:\.\d+)?)", text, re.I)
+    if rr and "exitRules" not in patch:
+        ratio = max(0.5, min(10.0, float(rr.group(1))))
+        patch["exitRules"] = {
+            "long": {
+                "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": ratio},
+            },
+            "short": {
+                "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+                "takeProfit": {"type": "risk_reward", "ratio": ratio},
+            },
+        }
+
+    lev = re.search(r"레버리지(?:를|을|는|은)?\s*(\d+)\s*배?", text)
+    if not lev:
+        lev = re.search(r"leverage\s*[:=]?\s*(\d+)", text, re.I)
+    if lev:
+        patch["leverage"] = max(1, min(125, int(lev.group(1))))
+
+    risk = re.search(r"(?:위험|리스크|risk(?:pertrade)?)\s*(\d+(?:\.\d+)?)\s*%?", text, re.I)
+    if risk and ("위험" in text or "리스크" in text or "risk" in text):
+        patch["riskPerTradePct"] = max(0.1, min(100.0, float(risk.group(1))))
+
+    return patch or None
+
+
+def _rsi_compare_patch(
+    *,
+    side: str,
+    op: str,
+    threshold: float,
+    period: int = 14,
+) -> dict[str, Any]:
+    cond = {
+        "type": "compare",
+        "left": {"source": "indicator", "id": "rsi", "field": "value", "params": {"period": period}, "offset": 0},
+        "op": op,
+        "right": {"source": "value", "value": threshold},
+    }
+    long_on = side == "long"
+    short_on = side == "short"
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": [cond] if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": [cond] if short_on else [],
+            },
+        },
+    }
+
+
+def _local_rsi_patch(prompt: str) -> dict[str, Any] | None:
+    """Common RSI threshold entries without OpenAI."""
+    text = _prompt_text(prompt)
+    if _prompt_wants_divergence(prompt):
+        return None
+    has_rsi = "rsi" in text or "과매도" in text or "과매수" in text
+    if not has_rsi:
+        return None
+    if not _prompt_applyish(text):
+        return None
+
+    period = 14
+    # Only RSI(14) style — avoid treating "RSI 30 이하" threshold as period.
+    pm = re.search(r"rsi\s*\(\s*(\d{1,3})\s*\)", text, re.I)
+    if pm:
+        period = max(2, min(100, int(pm.group(1))))
+
+    side = _prompt_side(prompt)
+    # 과매도 → long <= 30 ; 과매수 → short >= 70 (default)
+    if "과매도" in text and "과매수" not in text:
+        side = side or "long"
+        thr = 30.0
+        m = re.search(r"(\d+(?:\.\d+)?)", text)
+        if m and "rsi" in text:
+            thr = float(m.group(1))
+        return _rsi_compare_patch(side=side or "long", op="<=", threshold=thr, period=period)
+
+    if "과매수" in text and "과매도" not in text:
+        side = side or "short"
+        thr = 70.0
+        m = re.search(r"(\d+(?:\.\d+)?)", text)
+        if m and "rsi" in text:
+            thr = float(m.group(1))
+        op = ">=" if (side or "short") == "short" else ">="
+        return _rsi_compare_patch(side=side or "short", op=op, threshold=thr, period=period)
+
+    # RSI 30 이하/미만/아래 롱
+    m = re.search(
+        r"rsi\s*\(?\s*\d{0,3}\s*\)?\s*(?:가|이|을|를)?\s*(\d+(?:\.\d+)?)\s*(이하|미만|아래|밑|<=|<)",
+        text,
+        re.I,
+    )
+    if not m:
+        m = re.search(r"rsi\s*(?:<=|<)\s*(\d+(?:\.\d+)?)", text, re.I)
+    if m:
+        thr = float(m.group(1))
+        op = "<" if (len(m.groups()) > 1 and m.group(2) in {"미만", "아래", "밑", "<"}) else "<="
+        return _rsi_compare_patch(side=side or "long", op=op, threshold=thr, period=period)
+
+    m = re.search(
+        r"rsi\s*\(?\s*\d{0,3}\s*\)?\s*(?:가|이|을|를)?\s*(\d+(?:\.\d+)?)\s*(이상|초과|위|위로|>=|>)",
+        text,
+        re.I,
+    )
+    if not m:
+        m = re.search(r"rsi\s*(?:>=|>)\s*(\d+(?:\.\d+)?)", text, re.I)
+    if m:
+        thr = float(m.group(1))
+        op = ">" if (len(m.groups()) > 1 and m.group(2) in {"초과", "위", "위로", ">"}) else ">="
+        return _rsi_compare_patch(side=side or "short", op=op, threshold=thr, period=period)
+
+    return None
+
+
 def _local_strategy_template(
     prompt: str,
     current_settings: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str] | None:
     """Return (patch, route_reason, summary) when a local template can handle the request."""
     text = (prompt or "").strip()
-    if not text or _looks_like_question_only(text):
+    if not text:
+        return None
+
+    risk = _local_risk_patch(text)
+    if risk:
+        bits = []
+        if "stopLossPct" in risk:
+            bits.append(f"손절 {risk['stopLossPct']}%")
+        if "takeProfitPct" in risk:
+            bits.append(f"익절 {risk['takeProfitPct']}%")
+        if "leverage" in risk:
+            bits.append(f"레버리지 {risk['leverage']}x")
+        if "riskPerTradePct" in risk:
+            bits.append(f"위험 {risk['riskPerTradePct']}%")
+        if "exitRules" in risk:
+            bits.append("손익비")
+        summary = f"{', '.join(bits) or '리스크'} 설정을 로컬로 적용했습니다 (OpenAI 호출 없음)."
+        return risk, "risk_local_no_gpt", summary
+
+    if _looks_like_question_only(text):
         return None
 
     ma = _local_ma_strategy_patch(text, current_settings)
@@ -1879,6 +2057,10 @@ def _local_strategy_template(
             else "확인 봉 MA 하회 금지 필터를 로컬 템플릿으로 추가했습니다 (OpenAI 호출 없음)."
         )
         return ma, "ma_touch_local_no_gpt", summary
+
+    rsi = _local_rsi_patch(text)
+    if rsi:
+        return rsi, "rsi_local_no_gpt", "RSI 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
     if not _prompt_applyish(text):
         return None
