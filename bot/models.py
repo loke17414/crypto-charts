@@ -93,6 +93,8 @@ class Subscription(Base):
     toss_customer_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     toss_billing_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # month | year — controls renew amount and period length
+    billing_interval: Mapped[str] = mapped_column(String(16), default="month", nullable=False)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -115,6 +117,8 @@ class UsageQuota(Base):
     week_start: Mapped[str] = mapped_column(String(32), nullable=False, default="")  # YYYY-MM-DD
     bot_seconds_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     gpt_calls_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Purchased add-on GPT calls (not reset on weekly rollover)
+    gpt_bonus_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     bot_session_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

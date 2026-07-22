@@ -200,8 +200,43 @@ def toss_pro_amount_krw() -> int:
         return 29000
 
 
+def toss_pro_annual_amount_krw() -> int:
+    """Annual Pro price in KRW (default = 10× monthly = ₩290,000)."""
+    try:
+        return max(100, int(os.getenv("TOSS_PRO_ANNUAL_AMOUNT_KRW", "290000").strip()))
+    except ValueError:
+        return 290000
+
+
 def toss_pro_order_name() -> str:
     return os.getenv("TOSS_PRO_ORDER_NAME", "Orbinex Pro 월간 구독").strip() or "Orbinex Pro 월간 구독"
+
+
+def toss_pro_annual_order_name() -> str:
+    return (
+        os.getenv("TOSS_PRO_ANNUAL_ORDER_NAME", "Orbinex Pro 연간 구독").strip()
+        or "Orbinex Pro 연간 구독"
+    )
+
+
+def gpt_pack_amount_krw() -> int:
+    """One-time GPT add-on pack price (Pro only)."""
+    try:
+        return max(100, int(os.getenv("GPT_PACK_AMOUNT_KRW", "5000").strip()))
+    except ValueError:
+        return 5000
+
+
+def gpt_pack_calls() -> int:
+    """Extra GPT calls granted by one pack (does not reset weekly)."""
+    try:
+        return max(1, int(os.getenv("GPT_PACK_CALLS", "50").strip()))
+    except ValueError:
+        return 50
+
+
+def gpt_pack_order_name() -> str:
+    return os.getenv("GPT_PACK_ORDER_NAME", "Orbinex GPT 추가 팩").strip() or "Orbinex GPT 추가 팩"
 
 
 def billing_configured() -> bool:
@@ -238,6 +273,14 @@ def free_gpt_calls_per_week() -> int:
         return max(0, int(os.getenv("FREE_GPT_CALLS_PER_WEEK", "10").strip()))
     except ValueError:
         return 10
+
+
+def pro_gpt_calls_per_week() -> int:
+    """Pro plan GPT calls per week. Default 100 (hybrid). 0 = unlimited (not recommended)."""
+    try:
+        return max(0, int(os.getenv("PRO_GPT_CALLS_PER_WEEK", "100").strip()))
+    except ValueError:
+        return 100
 
 
 def free_max_strategy_slots() -> int:

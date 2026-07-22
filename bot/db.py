@@ -83,6 +83,40 @@ def _ensure_user_auth_columns() -> None:
             )
 
 
+def _ensure_billing_quota_columns() -> None:
+    """Add Pro interval + GPT bonus columns without requiring a manual Alembic run."""
+    insp = inspect(engine)
+    dialect = engine.dialect.name
+    int_default = "INTEGER NOT NULL DEFAULT 0" if dialect == "postgresql" else "INTEGER NOT NULL DEFAULT 0"
+
+    if "subscriptions" in insp.get_table_names():
+        sub_cols = {c["name"] for c in insp.get_columns("subscriptions")}
+        if "billing_interval" not in sub_cols:
+            with engine.begin() as conn:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE subscriptions ADD COLUMN billing_interval "
+                            "VARCHAR(16) NOT NULL DEFAULT 'month'"
+                        )
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE subscriptions ADD COLUMN billing_interval "
+                            "VARCHAR(16) NOT NULL DEFAULT 'month'"
+                        )
+                    )
+                logger.warning("Added missing column subscriptions.billing_interval")
+
+    if "usage_quotas" in insp.get_table_names():
+        uq_cols = {c["name"] for c in insp.get_columns("usage_quotas")}
+        if "gpt_bonus_calls" not in uq_cols:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE usage_quotas ADD COLUMN gpt_bonus_calls {int_default}"))
+                logger.warning("Added missing column usage_quotas.gpt_bonus_calls")
+
+
 def init_db() -> None:
     """Create tables if missing; patch columns Alembic may not have applied yet."""
     from bot import models  # noqa: F401
@@ -92,3 +126,7 @@ def init_db() -> None:
         _ensure_user_auth_columns()
     except Exception:
         logger.exception("Failed to ensure user auth columns — login may fail until alembic upgrade")
+    try:
+        _ensure_billing_quota_columns()
+    except Exception:
+        logger.exception("Failed to ensure billing/quota columns — Pro GPT limits may fail until migrate")

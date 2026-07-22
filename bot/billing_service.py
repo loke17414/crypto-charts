@@ -25,9 +25,15 @@ from bot.platform_config import (
     free_max_strategy_slots,
     free_recommended_strategies_allowed,
     free_web_research_allowed,
+    gpt_pack_amount_krw,
+    gpt_pack_calls,
+    gpt_pack_order_name,
+    pro_gpt_calls_per_week,
     pro_max_strategy_slots,
     toss_client_key,
     toss_pro_amount_krw,
+    toss_pro_annual_amount_krw,
+    toss_pro_annual_order_name,
     toss_pro_order_name,
     toss_secret_key,
 )
@@ -101,6 +107,35 @@ def is_pro(sub: Subscription | None) -> bool:
     return sub.plan == "pro" and sub.status in PRO_STATUSES
 
 
+def _normalize_interval(raw: str | None) -> str:
+    value = (raw or "month").strip().lower()
+    return "year" if value in {"year", "annual", "yearly"} else "month"
+
+
+def _pro_amount_and_name(interval: str) -> tuple[int, str]:
+    if _normalize_interval(interval) == "year":
+        return toss_pro_annual_amount_krw(), toss_pro_annual_order_name()
+    return toss_pro_amount_krw(), toss_pro_order_name()
+
+
+def _period_delta(interval: str) -> timedelta:
+    return timedelta(days=365) if _normalize_interval(interval) == "year" else timedelta(days=30)
+
+
+def gpt_weekly_limit(*, pro: bool) -> int:
+    return pro_gpt_calls_per_week() if pro else free_gpt_calls_per_week()
+
+
+def gpt_remaining_calls(usage: UsageQuota, *, pro: bool) -> int:
+    limit = gpt_weekly_limit(pro=pro)
+    used = int(usage.gpt_calls_used or 0)
+    weekly_rem = max(0, limit - used) if limit > 0 else 10**9
+    bonus = max(0, int(getattr(usage, "gpt_bonus_calls", 0) or 0))
+    if limit <= 0:
+        return weekly_rem + bonus
+    return weekly_rem + bonus
+
+
 def flush_bot_runtime(db: Session, user_id: int) -> UsageQuota:
     usage = ensure_usage(db, user_id)
     started = usage.bot_session_started_at
@@ -167,12 +202,16 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
 
     pro = is_pro(sub)
     bot_limit = free_bot_seconds_per_week()
-    gpt_limit = free_gpt_calls_per_week()
+    gpt_limit = gpt_weekly_limit(pro=pro)
     bot_used = int(usage.bot_seconds_used or 0)
     gpt_used = int(usage.gpt_calls_used or 0)
+    gpt_bonus = max(0, int(getattr(usage, "gpt_bonus_calls", 0) or 0))
+    gpt_remaining = gpt_remaining_calls(usage, pro=pro)
     max_slots = pro_max_strategy_slots() if pro else free_max_strategy_slots()
     web_research = True if pro else free_web_research_allowed()
     recommended = True if pro else free_recommended_strategies_allowed()
+    interval = _normalize_interval(getattr(sub, "billing_interval", None) or "month")
+    amount, _order = _pro_amount_and_name(interval)
 
     return {
         "plan": "pro" if pro else "free",
@@ -182,8 +221,13 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
         "provider": "toss",
         "enforce": billing_enforce(),
         "cancelAtPeriodEnd": bool(sub.cancel_at_period_end),
+        "billingInterval": interval,
         "currentPeriodEnd": sub.current_period_end.isoformat() if sub.current_period_end else None,
-        "amountKrw": toss_pro_amount_krw(),
+        "amountKrw": amount if pro else toss_pro_amount_krw(),
+        "monthlyAmountKrw": toss_pro_amount_krw(),
+        "annualAmountKrw": toss_pro_annual_amount_krw(),
+        "gptPackAmountKrw": gpt_pack_amount_krw(),
+        "gptPackCalls": gpt_pack_calls(),
         "weekStart": usage.week_start,
         "bot": {
             "secondsUsed": bot_used,
@@ -195,9 +239,10 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
         },
         "gpt": {
             "callsUsed": gpt_used,
-            "callsLimit": None if pro else gpt_limit,
-            "remaining": None if pro else max(0, gpt_limit - gpt_used),
-            "modelNote": "Free: gpt-4o-mini only" if not pro else "Pro: hybrid routing",
+            "callsLimit": None if gpt_limit <= 0 else gpt_limit,
+            "bonusRemaining": gpt_bonus,
+            "remaining": None if gpt_limit <= 0 and not gpt_bonus else gpt_remaining,
+            "modelNote": "Free: gpt-4o-mini only" if not pro else "Pro: hybrid · 주간 한도 + 추가팩",
         },
         "features": {
             "maxStrategySlots": max_slots,
@@ -230,29 +275,43 @@ def assert_can_use_gpt(db: Session, user: User | None) -> None:
     if user is None or not billing_enforce():
         return
     sub = _expire_if_needed(db, ensure_subscription(db, user.id))
-    if is_pro(sub):
-        return
+    pro = is_pro(sub)
     usage = ensure_usage(db, user.id)
-    limit = free_gpt_calls_per_week()
-    used = int(usage.gpt_calls_used or 0)
-    if used >= limit:
+    remaining = gpt_remaining_calls(usage, pro=pro)
+    limit = gpt_weekly_limit(pro=pro)
+    if remaining > 0:
+        return
+    if pro:
         raise HTTPException(
             status_code=402,
             detail=(
-                f"무료 플랜 주간 GPT 한도({limit}회)를 모두 사용했습니다. "
-                "Pro로 업그레이드하거나 다음 주까지 기다려 주세요."
+                f"Pro 주간 GPT 한도({limit}회)와 추가 팩을 모두 사용했습니다. "
+                f"요금제에서 GPT 추가 팩(+{gpt_pack_calls()}회 · "
+                f"{gpt_pack_amount_krw():,}원)을 구매하거나 다음 주 월요일까지 기다려 주세요."
             ),
         )
+    raise HTTPException(
+        status_code=402,
+        detail=(
+            f"무료 플랜 주간 GPT 한도({limit}회)를 모두 사용했습니다. "
+            "Pro로 업그레이드하거나 다음 주 월요일까지 기다려 주세요."
+        ),
+    )
 
 
 def record_gpt_call(db: Session, user_id: int) -> None:
     if not billing_enforce():
         return
     sub = ensure_subscription(db, user_id)
-    if is_pro(sub):
-        return
+    pro = is_pro(sub)
     usage = ensure_usage(db, user_id)
-    usage.gpt_calls_used = int(usage.gpt_calls_used or 0) + 1
+    limit = gpt_weekly_limit(pro=pro)
+    used = int(usage.gpt_calls_used or 0)
+    if limit <= 0 or used < limit:
+        usage.gpt_calls_used = used + 1
+    else:
+        bonus = max(0, int(getattr(usage, "gpt_bonus_calls", 0) or 0))
+        usage.gpt_bonus_calls = max(0, bonus - 1)
     db.commit()
 
 
@@ -318,12 +377,14 @@ def ensure_customer_key(db: Session, user: User) -> str:
     return key
 
 
-def prepare_billing_auth(db: Session, user: User) -> dict[str, Any]:
+def prepare_billing_auth(db: Session, user: User, *, interval: str = "month") -> dict[str, Any]:
     if not billing_configured():
         raise HTTPException(
             status_code=503,
             detail="결제가 아직 설정되지 않았습니다. TOSS_CLIENT_KEY / TOSS_SECRET_KEY를 설정하세요.",
         )
+    product = _normalize_interval(interval)
+    amount, order_name = _pro_amount_and_name(product)
     customer_key = ensure_customer_key(db, user)
     origin = _origin()
     return {
@@ -333,18 +394,23 @@ def prepare_billing_auth(db: Session, user: User) -> dict[str, Any]:
         "customerKey": customer_key,
         "customerEmail": user.email,
         "customerName": user.email.split("@")[0][:50] or "Orbinex",
-        "amountKrw": toss_pro_amount_krw(),
-        "orderName": toss_pro_order_name(),
-        "successUrl": f"{origin}/billing.html?billing=success",
-        "failUrl": f"{origin}/billing.html?billing=fail",
+        "interval": product,
+        "amountKrw": amount,
+        "orderName": order_name,
+        "monthlyAmountKrw": toss_pro_amount_krw(),
+        "annualAmountKrw": toss_pro_annual_amount_krw(),
+        "successUrl": f"{origin}/billing.html?billing=success&product={product}",
+        "failUrl": f"{origin}/billing.html?billing=fail&product={product}",
     }
 
 
-def _activate_pro(db: Session, sub: Subscription, *, months: int = 1) -> None:
+def _activate_pro(db: Session, sub: Subscription, *, interval: str = "month") -> None:
+    product = _normalize_interval(interval)
     sub.plan = "pro"
     sub.status = "active"
     sub.cancel_at_period_end = False
-    sub.current_period_end = _utcnow() + timedelta(days=30 * months)
+    sub.billing_interval = product
+    sub.current_period_end = _utcnow() + _period_delta(product)
     db.commit()
 
 
@@ -410,9 +476,11 @@ def _charge_billing_key(
     billing_key: str,
     *,
     kind: str = "subscribe",
+    interval: str | None = None,
 ) -> dict[str, Any]:
+    product = _normalize_interval(interval or getattr(sub, "billing_interval", None) or "month")
+    amount, order_name = _pro_amount_and_name(product)
     order_id = f"orb-pro-{user.id}-{uuid.uuid4().hex[:16]}"
-    amount = toss_pro_amount_krw()
     payment = _toss_request(
         "POST",
         f"/v1/billing/{billing_key}",
@@ -420,12 +488,12 @@ def _charge_billing_key(
             "customerKey": sub.toss_customer_key,
             "amount": amount,
             "orderId": order_id,
-            "orderName": toss_pro_order_name(),
+            "orderName": order_name,
             "customerEmail": user.email,
             "customerName": user.email.split("@")[0][:50] or "Orbinex",
         },
     )
-    _activate_pro(db, sub)
+    _activate_pro(db, sub, interval=product)
     try:
         _record_payment(
             db,
@@ -438,22 +506,31 @@ def _charge_billing_key(
     except Exception:  # noqa: BLE001
         logger.exception("Failed to persist payment record user=%s order=%s", user.id, order_id)
     logger.info(
-        "Toss charge OK user=%s order=%s amount=%s kind=%s",
+        "Toss charge OK user=%s order=%s amount=%s kind=%s interval=%s",
         user.id,
         order_id,
         amount,
         kind,
+        product,
     )
     return payment
 
 
-def confirm_billing_auth(db: Session, user: User, auth_key: str, customer_key: str) -> dict[str, Any]:
+def confirm_billing_auth(
+    db: Session,
+    user: User,
+    auth_key: str,
+    customer_key: str,
+    *,
+    interval: str = "month",
+) -> dict[str, Any]:
     if not billing_configured():
         raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
     auth_key = (auth_key or "").strip()
     customer_key = (customer_key or "").strip()
     if not auth_key or not customer_key:
         raise HTTPException(status_code=400, detail="authKey와 customerKey가 필요합니다.")
+    product = _normalize_interval(interval)
 
     sub = ensure_subscription(db, user.id)
     if sub.toss_customer_key and sub.toss_customer_key != customer_key:
@@ -474,16 +551,71 @@ def confirm_billing_auth(db: Session, user: User, auth_key: str, customer_key: s
     sub.toss_billing_key_encrypted = encrypt_secret(billing_key)
     db.commit()
 
-    payment = _charge_billing_key(db, user, sub, billing_key, kind="subscribe")
+    payment = _charge_billing_key(db, user, sub, billing_key, kind="subscribe", interval=product)
     return {
         "ok": True,
         "plan": "pro",
         "status": "active",
+        "billingInterval": product,
         "paymentKey": payment.get("paymentKey"),
         "orderId": payment.get("orderId"),
         "totalAmount": payment.get("totalAmount"),
         "currentPeriodEnd": sub.current_period_end.isoformat() if sub.current_period_end else None,
         "card": issued.get("card") or issued.get("cardNumber"),
+    }
+
+
+def purchase_gpt_pack(db: Session, user: User) -> dict[str, Any]:
+    """Charge billing key for a one-time GPT call pack (Pro subscribers only)."""
+    if not billing_configured():
+        raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
+    sub = _expire_if_needed(db, ensure_subscription(db, user.id))
+    if not is_pro(sub):
+        raise HTTPException(status_code=402, detail="GPT 추가 팩은 Pro 구독 중일 때만 구매할 수 있습니다.")
+    if not sub.toss_billing_key_encrypted or not sub.toss_customer_key:
+        raise HTTPException(
+            status_code=400,
+            detail="등록된 결제 수단이 없습니다. Pro를 카드 구독으로 이용 중이어야 합니다.",
+        )
+
+    billing_key = decrypt_secret(sub.toss_billing_key_encrypted)
+    amount = gpt_pack_amount_krw()
+    calls = gpt_pack_calls()
+    order_id = f"orb-gpt-{user.id}-{uuid.uuid4().hex[:16]}"
+    payment = _toss_request(
+        "POST",
+        f"/v1/billing/{billing_key}",
+        {
+            "customerKey": sub.toss_customer_key,
+            "amount": amount,
+            "orderId": order_id,
+            "orderName": gpt_pack_order_name(),
+            "customerEmail": user.email,
+            "customerName": user.email.split("@")[0][:50] or "Orbinex",
+        },
+    )
+    usage = ensure_usage(db, user.id)
+    usage.gpt_bonus_calls = max(0, int(getattr(usage, "gpt_bonus_calls", 0) or 0)) + calls
+    db.commit()
+    try:
+        _record_payment(
+            db,
+            user_id=user.id,
+            order_id=str(payment.get("orderId") or order_id),
+            payment=payment if isinstance(payment, dict) else {},
+            amount=amount,
+            kind="gpt_pack",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist GPT pack payment user=%s", user.id)
+    return {
+        "ok": True,
+        "addedCalls": calls,
+        "bonusRemaining": int(usage.gpt_bonus_calls or 0),
+        "amountKrw": amount,
+        "paymentKey": payment.get("paymentKey"),
+        "orderId": payment.get("orderId"),
+        "message": f"GPT 추가 팩 +{calls}회가 적용되었습니다.",
     }
 
 

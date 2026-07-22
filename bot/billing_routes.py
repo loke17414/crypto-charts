@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from bot.billing_service import (
     confirm_billing_auth,
     list_payment_history,
     prepare_billing_auth,
+    purchase_gpt_pack,
     resume_subscription,
     usage_snapshot,
 )
@@ -27,9 +28,13 @@ from bot.platform_config import (
     free_max_strategy_slots,
     free_recommended_strategies_allowed,
     free_web_research_allowed,
+    gpt_pack_amount_krw,
+    gpt_pack_calls,
+    pro_gpt_calls_per_week,
     pro_max_strategy_slots,
     toss_client_key,
     toss_pro_amount_krw,
+    toss_pro_annual_amount_krw,
 )
 from bot.rate_limit import RateLimiter, client_ip
 from bot.server_bot import is_running
@@ -42,10 +47,31 @@ _billing_limiter = RateLimiter(max_calls=20, window_seconds=3600)
 class ConfirmBody(BaseModel):
     authKey: str = Field(min_length=1, max_length=400)
     customerKey: str = Field(min_length=2, max_length=300)
+    product: Literal["month", "year", "monthly", "annual", "yearly"] | None = "month"
+
+
+class PrepareBody(BaseModel):
+    product: Literal["month", "year", "monthly", "annual", "yearly"] | None = "month"
 
 
 class CancelBody(BaseModel):
     immediate: bool = False
+
+
+def _limits_payload() -> dict[str, Any]:
+    return {
+        "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
+        "freeGptCallsPerWeek": free_gpt_calls_per_week(),
+        "proGptCallsPerWeek": pro_gpt_calls_per_week(),
+        "freeMaxStrategySlots": free_max_strategy_slots(),
+        "proMaxStrategySlots": pro_max_strategy_slots(),
+        "freeWebResearch": free_web_research_allowed(),
+        "freeRecommendedStrategies": free_recommended_strategies_allowed(),
+        "monthlyAmountKrw": toss_pro_amount_krw(),
+        "annualAmountKrw": toss_pro_annual_amount_krw(),
+        "gptPackAmountKrw": gpt_pack_amount_krw(),
+        "gptPackCalls": gpt_pack_calls(),
+    }
 
 
 @router.get("/me")
@@ -58,14 +84,7 @@ def billing_me(
     return {
         "ok": True,
         **snap,
-        "limits": {
-            "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
-            "freeGptCallsPerWeek": free_gpt_calls_per_week(),
-            "freeMaxStrategySlots": free_max_strategy_slots(),
-            "proMaxStrategySlots": pro_max_strategy_slots(),
-            "freeWebResearch": free_web_research_allowed(),
-            "freeRecommendedStrategies": free_recommended_strategies_allowed(),
-        },
+        "limits": _limits_payload(),
     }
 
 
@@ -78,24 +97,20 @@ def billing_status() -> dict[str, Any]:
         "enforce": billing_enforce(),
         "clientKey": toss_client_key() or None,
         "amountKrw": toss_pro_amount_krw(),
-        "limits": {
-            "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
-            "freeGptCallsPerWeek": free_gpt_calls_per_week(),
-            "freeMaxStrategySlots": free_max_strategy_slots(),
-            "proMaxStrategySlots": pro_max_strategy_slots(),
-            "freeWebResearch": free_web_research_allowed(),
-            "freeRecommendedStrategies": free_recommended_strategies_allowed(),
-        },
+        "monthlyAmountKrw": toss_pro_amount_krw(),
+        "annualAmountKrw": toss_pro_annual_amount_krw(),
+        "limits": _limits_payload(),
     }
 
 
 @router.post("/prepare")
 def billing_prepare(
+    body: PrepareBody = PrepareBody(),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Return Toss clientKey + customerKey for requestBillingAuth."""
-    return prepare_billing_auth(db, user)
+    return prepare_billing_auth(db, user, interval=body.product or "month")
 
 
 @router.post("/confirm")
@@ -105,7 +120,7 @@ def billing_confirm(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Exchange authKey → billingKey, charge first month, activate Pro."""
+    """Exchange authKey → billingKey, charge first period, activate Pro."""
     ip = client_ip(request)
     allowed, retry_after = _billing_limiter.check(f"billing-confirm:{ip}:{user.id}")
     if not allowed:
@@ -114,17 +129,40 @@ def billing_confirm(
             detail=f"결제 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-    return confirm_billing_auth(db, user, body.authKey, body.customerKey)
+    return confirm_billing_auth(
+        db,
+        user,
+        body.authKey,
+        body.customerKey,
+        interval=body.product or "month",
+    )
+
+
+@router.post("/gpt-pack")
+def billing_gpt_pack(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """One-time GPT call pack charged to the saved billing key."""
+    ip = client_ip(request)
+    allowed, retry_after = _billing_limiter.check(f"billing-gpt-pack:{ip}:{user.id}")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"결제 시도가 너무 많습니다. {retry_after}초 후에 다시 시도해 주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return purchase_gpt_pack(db, user)
 
 
 @router.post("/cancel")
 def billing_cancel(
-    body: CancelBody | None = None,
+    body: CancelBody,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    immediate = bool(body.immediate) if body else False
-    return cancel_subscription(db, user, immediate=immediate)
+    return cancel_subscription(db, user, immediate=body.immediate)
 
 
 @router.post("/resume")
@@ -132,7 +170,6 @@ def billing_resume(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Undo cancel-at-period-end while the paid period remains."""
     return resume_subscription(db, user)
 
 
@@ -141,5 +178,4 @@ def billing_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    rows = list_payment_history(db, user.id, limit=50)
-    return {"ok": True, "count": len(rows), "payments": rows}
+    return {"ok": True, "payments": list_payment_history(db, user.id)}

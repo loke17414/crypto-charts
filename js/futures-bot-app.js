@@ -170,7 +170,7 @@ const FuturesBotApp = (() => {
     if (!panel) return;
     const loggedIn = typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn?.();
     const snap = lastBillingSnap;
-    const show = loggedIn && snap && !snap.pro;
+    const show = loggedIn && !!snap;
     panel.classList.toggle('hidden', !show);
     if (!show) return;
 
@@ -179,30 +179,62 @@ const FuturesBotApp = (() => {
     const gptEl = document.getElementById('freeQuotaGpt');
     const slotsEl = document.getElementById('freeQuotaSlots');
     const noteEl = document.getElementById('freeQuotaNote');
+    const upgradeLink = document.getElementById('freeQuotaUpgrade');
 
-    if (planEl) planEl.textContent = 'Free';
-    const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
-    const usedH = snap.bot?.hoursUsed ?? 0;
-    const limH = snap.bot?.hoursLimit ?? 48;
-    if (botEl) botEl.textContent = `${formatHours(remH)}시간 남음 (${formatHours(usedH)}/${formatHours(limH)}h)`;
+    const isPro = !!snap.pro;
+    if (planEl) planEl.textContent = isPro ? 'Pro' : 'Free';
+
+    if (botEl) {
+      botEl.textContent = isPro
+        ? '무제한'
+        : (() => {
+          const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
+          const usedH = snap.bot?.hoursUsed ?? 0;
+          const limH = snap.bot?.hoursLimit ?? 48;
+          return `${formatHours(remH)}시간 남음 (${formatHours(usedH)}/${formatHours(limH)}h)`;
+        })();
+    }
+
     const gptUsed = snap.gpt?.callsUsed ?? 0;
-    const gptLim = snap.gpt?.callsLimit ?? 10;
-    const gptRem = snap.gpt?.remaining ?? Math.max(0, gptLim - gptUsed);
-    if (gptEl) gptEl.textContent = `${gptRem}회 남음 (${gptUsed}/${gptLim})`;
+    const gptLim = snap.gpt?.callsLimit;
+    const gptBonus = snap.gpt?.bonusRemaining ?? 0;
+    const gptRem = snap.gpt?.remaining;
+    if (gptEl) {
+      if (gptLim == null) {
+        gptEl.textContent = gptBonus > 0 ? `무제한 · 팩 ${gptBonus}회` : '무제한';
+      } else {
+        const rem = gptRem ?? Math.max(0, gptLim - gptUsed) + gptBonus;
+        gptEl.textContent = gptBonus > 0
+          ? `${rem}회 남음 (${gptUsed}/${gptLim} +팩${gptBonus})`
+          : `${rem}회 남음 (${gptUsed}/${gptLim})`;
+      }
+    }
+
     const maxSlots = maxAllowedStrategySlots();
     const usedSlots = (state.strategySlots || []).length;
     if (slotsEl) slotsEl.textContent = `${usedSlots}/${maxSlots}개`;
     if (noteEl) {
-      noteEl.textContent = '추천 전략 · 멀티슬롯 · 웹 리서치는 Pro';
+      noteEl.textContent = isPro
+        ? '주간 GPT 한도 소진 시 요금제에서 추가 팩을 구매할 수 있습니다.'
+        : '추천 전략 · 멀티슬롯 · 웹 리서치는 Pro · 한도 소진 시 업그레이드';
+    }
+    if (upgradeLink) {
+      upgradeLink.classList.toggle('hidden', isPro);
+      upgradeLink.textContent = 'Pro 업그레이드';
     }
 
     const mini = document.getElementById('freeQuotaMini');
     if (mini) {
       mini.classList.toggle('hidden', !show);
       if (show) {
-        const maxSlots = maxAllowedStrategySlots();
-        const usedSlots = (state.strategySlots || []).length;
-        mini.textContent = `Free · 봇 ${formatHours(remH)}h 남음 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${gptRem}회`;
+        if (isPro) {
+          const rem = gptLim == null ? '∞' : String(gptRem ?? Math.max(0, gptLim - gptUsed) + gptBonus);
+          mini.textContent = `Pro · 봇 무제한 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${rem}회`;
+        } else {
+          const remH = snap.bot?.remainingHours ?? Math.max(0, (snap.bot?.hoursLimit || 0) - (snap.bot?.hoursUsed || 0));
+          const rem = gptRem ?? Math.max(0, (gptLim || 10) - gptUsed);
+          mini.textContent = `Free · 봇 ${formatHours(remH)}h 남음 · 슬롯 ${usedSlots}/${maxSlots} · GPT ${rem}회`;
+        }
       }
     }
   }
@@ -4037,6 +4069,7 @@ const FuturesBotApp = (() => {
     refreshPlanFeatures,
     getPlanFeatures,
     renderFreeQuotaPanel,
+    refreshBillingQuota: refreshPlanFeatures,
   };
 })();
 

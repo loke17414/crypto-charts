@@ -598,7 +598,19 @@ const StrategyAI = (() => {
       });
     } catch (err) {
       console.error(err);
-      addMessage('assistant', formatAiError(err.message), { persist: true });
+      const msg = String(err.message || '');
+      const isQuota = /GPT 한도|402|추가 팩|Pro로 업그레이드|주간 GPT/i.test(msg);
+      if (isQuota) {
+        const cta = /Pro 주간|추가 팩/i.test(msg)
+          ? `${msg}\n\n→ 요금제에서 GPT 추가 팩을 구매하거나 다음 주 월요일에 리셋됩니다.\n(billing.html)`
+          : `${msg}\n\n→ Pro로 업그레이드하면 주 100회 GPT · 봇 무제한을 사용할 수 있습니다.\n요금제: billing.html`;
+        addMessage('assistant', formatAiError(cta), { persist: true });
+        if (typeof FuturesBotApp?.refreshBillingQuota === 'function') {
+          FuturesBotApp.refreshBillingQuota().catch(() => {});
+        }
+      } else {
+        addMessage('assistant', formatAiError(msg), { persist: true });
+      }
       await refreshStatus({ verify: true });
     } finally {
       setThinking(false);

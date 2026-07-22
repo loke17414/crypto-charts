@@ -33,11 +33,15 @@ from bot.platform_config import (
     free_max_strategy_slots,
     free_recommended_strategies_allowed,
     free_web_research_allowed,
+    gpt_pack_amount_krw,
+    gpt_pack_calls,
     is_admin_email,
     max_concurrent_bots,
+    pro_gpt_calls_per_week,
     pro_max_strategy_slots,
     resend_api_key,
     toss_pro_amount_krw,
+    toss_pro_annual_amount_krw,
 )
 from bot.server_bot import (
     bot_diagnostics,
@@ -434,6 +438,8 @@ def admin_grant_pro(
     sub.plan = "pro"
     sub.status = "active"
     sub.cancel_at_period_end = False
+    if not getattr(sub, "billing_interval", None):
+        sub.billing_interval = "month"
     sub.current_period_end = base + timedelta(days=body.days)
     db.commit()
     _audit(db, admin, "grant-pro", target_user_id=user.id, detail=f"+{body.days}d")
@@ -644,12 +650,16 @@ def admin_settings(admin: User = Depends(require_admin)) -> dict[str, Any]:
         "limits": {
             "freeBotHoursPerWeek": round(free_bot_seconds_per_week() / 3600, 2),
             "freeGptCallsPerWeek": free_gpt_calls_per_week(),
+            "proGptCallsPerWeek": pro_gpt_calls_per_week(),
             "freeMaxStrategySlots": free_max_strategy_slots(),
             "proMaxStrategySlots": pro_max_strategy_slots(),
             "freeWebResearch": free_web_research_allowed(),
             "freeRecommendedStrategies": free_recommended_strategies_allowed(),
             "maxConcurrentBots": max_concurrent_bots(),
             "proAmountKrw": toss_pro_amount_krw(),
+            "proAnnualAmountKrw": toss_pro_annual_amount_krw(),
+            "gptPackAmountKrw": gpt_pack_amount_krw(),
+            "gptPackCalls": gpt_pack_calls(),
         },
         "flags": {
             "billingEnforce": billing_enforce(),

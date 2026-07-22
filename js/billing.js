@@ -7,13 +7,29 @@ const AppBilling = (() => {
     return document.getElementById(id);
   }
 
+  function won(n, fallback = 29000) {
+    return Number(n || fallback).toLocaleString('ko-KR');
+  }
+
+  function gptLabel(snap) {
+    const used = snap.gpt?.callsUsed ?? 0;
+    const lim = snap.gpt?.callsLimit;
+    const bonus = snap.gpt?.bonusRemaining ?? 0;
+    const rem = snap.gpt?.remaining;
+    if (lim == null) {
+      return bonus > 0 ? `GPT: 무제한 · 추가팩 ${bonus}회` : 'GPT: 무제한';
+    }
+    const base = `GPT: ${used} / ${lim}회 (이번 주)`;
+    if (bonus > 0) return `${base} · 추가팩 ${bonus}회 · 남은 ${rem ?? 0}회`;
+    return `${base} · 남은 ${rem ?? Math.max(0, lim - used)}회`;
+  }
+
   function render(snap) {
     lastSnap = snap;
     const box = $('billingPanel');
     if (!box) return;
 
     const loggedIn = typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn();
-    // On dedicated billing page the panel sits inside #authLoggedIn; keep it visible when logged in.
     box.classList.toggle('hidden', !loggedIn);
     if (!loggedIn) return;
 
@@ -22,6 +38,8 @@ const AppBilling = (() => {
     const gptEl = $('billingGptQuota');
     const noteEl = $('billingNote');
     const upgradeBtn = $('billingUpgradeBtn');
+    const annualBtn = $('billingUpgradeAnnualBtn');
+    const packBtn = $('billingGptPackBtn');
     const cancelBtn = $('billingCancelBtn');
     const resumeBtn = $('billingResumeBtn');
 
@@ -32,8 +50,16 @@ const AppBilling = (() => {
       return;
     }
 
+    const monthWon = won(snap.monthlyAmountKrw || snap.amountKrw, 29000);
+    const yearWon = won(snap.annualAmountKrw, 290000);
+    const packWon = won(snap.gptPackAmountKrw, 5000);
+    const packCalls = snap.gptPackCalls || 50;
+    const interval = snap.billingInterval === 'year' ? 'year' : 'month';
+
     if (planEl) {
-      planEl.textContent = snap.pro ? 'Pro' : 'Free';
+      planEl.textContent = snap.pro
+        ? (interval === 'year' ? 'Pro (연간)' : 'Pro (월간)')
+        : 'Free';
       planEl.classList.toggle('is-pro', !!snap.pro);
     }
 
@@ -44,9 +70,7 @@ const AppBilling = (() => {
     }
 
     if (gptEl) {
-      gptEl.textContent = snap.pro
-        ? 'GPT: Pro (hybrid · 웹 리서치)'
-        : `GPT: ${snap.gpt?.callsUsed ?? 0} / ${snap.gpt?.callsLimit ?? 10}회 (이번 주 · mini)`;
+      gptEl.textContent = gptLabel(snap);
     }
 
     if (noteEl) {
@@ -59,25 +83,37 @@ const AppBilling = (() => {
           ? `해지 예약됨 · ${new Date(snap.currentPeriodEnd).toLocaleString()}까지 Pro`
           : '해지 예약됨 · 기간 종료 후 Free';
       } else if (snap.pro) {
-        const won = Number(snap.amountKrw || 0).toLocaleString('ko-KR');
+        const periodLabel = interval === 'year' ? `연 ${yearWon}원` : `월 ${monthWon}원`;
         noteEl.textContent = snap.currentPeriodEnd
-          ? `Pro 월 ${won}원 · 다음 결제일 ${new Date(snap.currentPeriodEnd).toLocaleDateString('ko-KR')}`
-          : `Pro 월 ${won}원 구독 중`;
+          ? `Pro ${periodLabel} · 다음 결제일 ${new Date(snap.currentPeriodEnd).toLocaleDateString('ko-KR')}`
+          : `Pro ${periodLabel} 구독 중`;
       } else {
-        const won = Number(snap.amountKrw || 29000).toLocaleString('ko-KR');
         const botH = snap.bot?.hoursLimit ?? 48;
-        const gptN = snap.gpt?.callsLimit ?? 10;
+        const gptN = snap.limits?.freeGptCallsPerWeek ?? snap.gpt?.callsLimit ?? 10;
+        const proGpt = snap.limits?.proGptCallsPerWeek ?? 100;
         const slots = snap.features?.maxStrategySlots ?? 1;
-        noteEl.textContent = `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개 · 추천/리서치 없음. Pro는 무제한·멀티슬롯·추천 · 월 ${won}원.`;
+        noteEl.textContent =
+          `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개. ` +
+          `Pro: 봇 무제한 · GPT 주 ${proGpt}회 · 멀티슬롯 · 월 ${monthWon}원 / 연 ${yearWon}원.`;
       }
     }
 
     if (upgradeBtn) {
+      upgradeBtn.textContent = `Pro 월간 구독 (${monthWon}원)`;
       upgradeBtn.classList.toggle('hidden', !!snap.pro || !snap.paymentsConfigured);
       upgradeBtn.disabled = busy;
     }
+    if (annualBtn) {
+      annualBtn.textContent = `Pro 연간 구독 (${yearWon}원 · 2개월 무료)`;
+      annualBtn.classList.toggle('hidden', !!snap.pro || !snap.paymentsConfigured);
+      annualBtn.disabled = busy;
+    }
+    if (packBtn) {
+      packBtn.textContent = `GPT 추가 팩 (+${packCalls}회 · ${packWon}원)`;
+      packBtn.classList.toggle('hidden', !snap.pro || !snap.paymentsConfigured);
+      packBtn.disabled = busy;
+    }
     if (cancelBtn) {
-      // Hide cancel while a period-end cancel is already scheduled
       cancelBtn.classList.toggle('hidden', !snap.pro || !!snap.cancelAtPeriodEnd);
       cancelBtn.disabled = busy;
       cancelBtn.textContent = '구독 해지';
@@ -105,7 +141,8 @@ const AppBilling = (() => {
       el.innerHTML = `<ul style="list-style:none;padding:0;margin:0;font-size:0.86rem;">${rows.map((p) => {
         const when = p.createdAt ? new Date(p.createdAt).toLocaleString('ko-KR') : '—';
         const amt = Number(p.amount || 0).toLocaleString('ko-KR');
-        const kind = p.kind === 'renew' ? '갱신' : '구독';
+        const kindMap = { renew: '갱신', subscribe: '구독', gpt_pack: 'GPT 팩' };
+        const kind = kindMap[p.kind] || p.kind || '결제';
         return `<li style="padding:0.45rem 0;border-bottom:1px solid var(--border, #333);">
           <strong>${kind}</strong> · ${amt}${p.currency || 'KRW'} · ${p.status || 'paid'}
           <div class="text-muted" style="font-size:0.78rem;">${when} · ${p.orderId || ''}</div>
@@ -156,12 +193,15 @@ const AppBilling = (() => {
     });
   }
 
-  async function startCheckout() {
+  async function startCheckout(product = 'month') {
     if (busy) return;
     busy = true;
     render(lastSnap);
     try {
-      const prep = await FuturesApiClient.billingPrepare();
+      try {
+        sessionStorage.setItem('orbinex_billing_product', product === 'year' ? 'year' : 'month');
+      } catch { /* ignore */ }
+      const prep = await FuturesApiClient.billingPrepare({ product });
       const TossPayments = await loadTossSdk();
       const tossPayments = TossPayments(prep.clientKey);
       const payment = tossPayments.payment({ customerKey: prep.customerKey });
@@ -174,6 +214,25 @@ const AppBilling = (() => {
       });
     } catch (err) {
       alert(err.message || '결제창을 열지 못했습니다.');
+    } finally {
+      busy = false;
+      render(lastSnap);
+    }
+  }
+
+  async function buyGptPack() {
+    if (busy) return;
+    const calls = lastSnap?.gptPackCalls || 50;
+    const amt = won(lastSnap?.gptPackAmountKrw, 5000);
+    if (!confirm(`GPT 추가 팩 +${calls}회를 ${amt}원에 구매할까요?\n등록된 카드로 즉시 결제됩니다.`)) return;
+    busy = true;
+    render(lastSnap);
+    try {
+      const data = await FuturesApiClient.billingGptPack();
+      alert(data.message || 'GPT 추가 팩이 적용되었습니다.');
+      await refresh();
+    } catch (err) {
+      alert(err.message || 'GPT 팩 구매 실패');
     } finally {
       busy = false;
       render(lastSnap);
@@ -227,12 +286,17 @@ const AppBilling = (() => {
     } else if (billing === 'success') {
       const authKey = params.get('authKey');
       const customerKey = params.get('customerKey');
+      let product = params.get('product') || 'month';
+      try {
+        product = sessionStorage.getItem('orbinex_billing_product') || product;
+      } catch { /* ignore */ }
       if (noteEl) noteEl.textContent = '결제 확인 중…';
       if (authKey && customerKey && typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
         try {
           busy = true;
-          await FuturesApiClient.billingConfirm({ authKey, customerKey });
+          await FuturesApiClient.billingConfirm({ authKey, customerKey, product });
           if (noteEl) noteEl.textContent = 'Pro 구독이 활성화되었습니다.';
+          try { sessionStorage.removeItem('orbinex_billing_product'); } catch { /* ignore */ }
           await refresh();
         } catch (err) {
           if (noteEl) noteEl.textContent = err.message || '결제 확정 실패';
@@ -246,6 +310,7 @@ const AppBilling = (() => {
     params.delete('billing');
     params.delete('authKey');
     params.delete('customerKey');
+    params.delete('product');
     params.delete('code');
     params.delete('message');
     const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
@@ -253,7 +318,9 @@ const AppBilling = (() => {
   }
 
   function init() {
-    $('billingUpgradeBtn')?.addEventListener('click', () => startCheckout());
+    $('billingUpgradeBtn')?.addEventListener('click', () => startCheckout('month'));
+    $('billingUpgradeAnnualBtn')?.addEventListener('click', () => startCheckout('year'));
+    $('billingGptPackBtn')?.addEventListener('click', () => buyGptPack());
     $('billingCancelBtn')?.addEventListener('click', () => cancelSubscription());
     $('billingResumeBtn')?.addEventListener('click', () => resumeSubscription());
     handleReturnQuery().then(() => refresh());

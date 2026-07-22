@@ -318,15 +318,22 @@ const FuturesApiClient = (() => {
     return request('/api/billing/status');
   }
 
-  async function billingPrepare() {
-    return request('/api/billing/prepare', { method: 'POST', body: '{}' });
+  async function billingPrepare({ product = 'month' } = {}) {
+    return request('/api/billing/prepare', {
+      method: 'POST',
+      body: JSON.stringify({ product }),
+    });
   }
 
-  async function billingConfirm({ authKey, customerKey }) {
+  async function billingConfirm({ authKey, customerKey, product = 'month' }) {
     return request('/api/billing/confirm', {
       method: 'POST',
-      body: JSON.stringify({ authKey, customerKey }),
+      body: JSON.stringify({ authKey, customerKey, product }),
     });
+  }
+
+  async function billingGptPack() {
+    return request('/api/billing/gpt-pack', { method: 'POST', body: '{}' });
   }
 
   async function billingCancel({ immediate = false } = {}) {
@@ -454,6 +461,7 @@ const FuturesApiClient = (() => {
     billingStatus,
     billingPrepare,
     billingConfirm,
+    billingGptPack,
     billingCancel,
     billingResume,
     billingHistory,

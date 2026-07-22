@@ -674,7 +674,7 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 def _normalize_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for item in (history or [])[-12:]:
+    for item in (history or [])[-8:]:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
@@ -836,11 +836,8 @@ def select_openai_model(
     if _looks_like_follow_up_edit(prompt):
         return complex_model, "follow_up"
 
-    settings = current_settings or {}
-    if settings.get("entryRules") or settings.get("strategySlots"):
-        if len((prompt or "").strip()) > 8:
-            return complex_model, "existing_strategy"
-
+    # Prefer mini when the user already has a strategy but the ask is light —
+    # avoids routing every short chat turn to gpt-4o.
     return default_model, "default"
 
 
@@ -856,6 +853,7 @@ def _call_openai(
     model: str | None = None,
     strategy_slot_target: str | None = None,
     api_key: str | None = None,
+    route_reason: str | None = None,
 ) -> dict[str, Any]:
     token = None
     if api_key:
@@ -878,10 +876,32 @@ def _call_openai(
             model=chosen_model,
             strategy_slot_target=strategy_slot_target,
             api_key=resolved,
+            route_reason=route_reason,
         )
     finally:
         if token is not None:
             _request_api_key.reset(token)
+
+
+def _slim_market_context(market_context: dict[str, Any] | None) -> dict[str, Any]:
+    """Drop heavy tape fields for simple question / risk-only turns."""
+    if not isinstance(market_context, dict):
+        return {}
+    keep = {
+        "symbol",
+        "interval",
+        "lastPrice",
+        "recentHigh",
+        "recentLow",
+        "strategyLog",
+        "structure",
+    }
+    slim = {k: market_context[k] for k in keep if k in market_context}
+    # Keep a short candle sample only
+    candles = market_context.get("recentCandles15")
+    if isinstance(candles, list):
+        slim["recentCandles15"] = candles[-5:]
+    return slim
 
 
 def _call_openai_with_key(
@@ -896,16 +916,22 @@ def _call_openai_with_key(
     model: str,
     strategy_slot_target: str | None,
     api_key: str,
+    route_reason: str | None = None,
 ) -> dict[str, Any]:
     chosen_model = model
+    slim_routes = {"question", "risk_only", "free_tier_mini", "default"}
+    use_slim = (route_reason or "") in slim_routes
+    catalog = "" if use_slim and route_reason in {"question", "risk_only"} else indicator_catalog
+    market = _slim_market_context(market_context) if use_slim else (market_context or {})
+    bt = {} if use_slim and route_reason in {"question", "risk_only"} else (backtest_snapshot or {})
 
     user_content = json.dumps(
         {
             "current_settings": current.model_dump(),
             "strategy_slot_target": strategy_slot_target,
-            "indicator_catalog": indicator_catalog,
-            "market_context": market_context or {},
-            "backtest_snapshot": backtest_snapshot or {},
+            "indicator_catalog": catalog,
+            "market_context": market,
+            "backtest_snapshot": bt,
             "web_research": web_research or [],
             "user_request": prompt,
         },
@@ -1655,6 +1681,7 @@ def interpret_strategy(
         model=chosen_model,
         strategy_slot_target=strategy_slot_target,
         api_key=api_key,
+        route_reason=route_reason,
     )
 
     patch = raw.get("settings") or {}
