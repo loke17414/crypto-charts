@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -433,16 +434,24 @@ def _set_test_result(*, verified: bool, message: str, error_code: str | None = N
 def _parse_openai_error(status_code: int, body_text: str) -> tuple[str, str | None]:
     code: str | None = None
     message = body_text[:500]
+    err_type: str | None = None
 
     try:
         payload = json.loads(body_text)
         err = payload.get("error") or {}
-        code = err.get("code") or err.get("type")
+        code = err.get("code")
+        err_type = err.get("type")
+        if not code and err_type:
+            code = err_type
         message = err.get("message") or message
     except json.JSONDecodeError:
         pass
 
-    if status_code == 401 or code == "invalid_api_key":
+    code_l = str(code or "").lower()
+    type_l = str(err_type or "").lower()
+    msg_l = str(message or "").lower()
+
+    if status_code == 401 or code_l == "invalid_api_key":
         return (
             "OpenAI API 키가 유효하지 않습니다. platform.openai.com/api-keys 에서 "
             "새 키를 발급한 뒤 전체 키를 다시 저장하세요.",
@@ -450,9 +459,33 @@ def _parse_openai_error(status_code: int, body_text: str) -> tuple[str, str | No
         )
     if status_code == 403:
         return ("OpenAI API 접근이 거부되었습니다. 프로젝트 권한과 결제 상태를 확인하세요.", code)
-    if status_code == 429 or code == "insufficient_quota":
-        return ("OpenAI 사용 한도를 초과했습니다. 결제/크레딧 잔액을 확인하세요.", code or "rate_limit")
-    if status_code == 404 or code == "model_not_found":
+
+    # 429 is overloaded: billing quota ≠ request rate limit
+    is_quota = (
+        code_l in {"insufficient_quota", "billing_not_active", "billing_hard_limit_reached"}
+        or type_l in {"insufficient_quota", "billing_not_active"}
+        or "exceeded your current quota" in msg_l
+        or "check your plan and billing" in msg_l
+        or "billing hard limit" in msg_l
+    )
+    is_rate = (
+        code_l in {"rate_limit_exceeded", "rate_limit_error", "too_many_requests"}
+        or type_l in {"rate_limit_exceeded", "tokens", "requests"}
+        or "rate limit" in msg_l
+    )
+    if is_quota or (status_code == 429 and not is_rate):
+        return (
+            "OpenAI API 크레딧/사용 한도가 부족합니다. "
+            "ChatGPT Plus와 별개이며, platform.openai.com/settings/organization/billing 에서 "
+            "결제 수단을 등록하고 Credits(선불 잔액)를 충전한 뒤 다시 시도하세요.",
+            code or "insufficient_quota",
+        )
+    if is_rate or status_code == 429:
+        return (
+            "OpenAI 요청이 너무 많아 일시적으로 제한되었습니다. 몇 초 후 다시 시도하세요.",
+            code or "rate_limit_exceeded",
+        )
+    if status_code == 404 or code_l == "model_not_found":
         return ("선택한 GPT 모델을 사용할 수 없습니다. OPENAI_MODEL 설정을 확인하세요.", code)
     return (f"OpenAI API 오류 ({status_code}): {message}", code)
 
@@ -575,11 +608,12 @@ def _test_chat_completion(api_key: str, model: str) -> dict[str, Any]:
         return {"chatReady": True, "message": "GPT 호출 가능"}
 
     message, code = _parse_openai_error(res.status_code, res.text)
-    if code == "insufficient_quota" or res.status_code == 429:
-        message = (
-            "API 키는 유효하지만 GPT 사용 한도/크레딧이 부족합니다. "
-            "platform.openai.com/settings/organization/billing 에서 결제와 잔액을 확인하세요."
-        )
+    logger.warning(
+        "OpenAI chat test failed status=%s code=%s body=%s",
+        res.status_code,
+        code,
+        (res.text or "")[:400],
+    )
     return {
         "chatReady": False,
         "message": message,
@@ -964,7 +998,43 @@ def _call_openai_with_key(
 
     if res.status_code != 200:
         message, code = _parse_openai_error(res.status_code, res.text)
+        logger.warning(
+            "OpenAI chat failed status=%s code=%s model=%s body=%s",
+            res.status_code,
+            code,
+            chosen_model,
+            (res.text or "")[:400],
+        )
         _set_test_result(verified=False, message=message, error_code=code)
+        # One automatic retry for transient rate limits only
+        if code == "rate_limit_exceeded" or (
+            res.status_code == 429 and code not in {"insufficient_quota", "billing_not_active", "billing_hard_limit_reached"}
+        ):
+            time.sleep(2.5)
+            try:
+                res2 = requests.post(
+                    OPENAI_CHAT_URL,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=60,
+                )
+            except requests.RequestException as exc:
+                raise ValueError(f"OpenAI API 연결 실패: {exc}") from exc
+            if res2.status_code == 200:
+                data = res2.json()
+                content = data["choices"][0]["message"]["content"]
+                return _extract_json(content)
+            message, code = _parse_openai_error(res2.status_code, res2.text)
+            logger.warning(
+                "OpenAI chat retry failed status=%s code=%s body=%s",
+                res2.status_code,
+                code,
+                (res2.text or "")[:400],
+            )
+            _set_test_result(verified=False, message=message, error_code=code)
         raise ValueError(message)
 
     data = res.json()
