@@ -86,6 +86,7 @@ const StrategyEngine = (() => {
     lines.push('- line_touch: candle wick/body touches MA/EMA (NOT close==ma). offset=1 means previous bar.');
     lines.push('  { type:"line_touch", indicator:"ma"|"ema", params:{period:20}, mode:"wick"|"body", offset:1 }');
     lines.push('  MA touch + next bullish candle long: line_touch offset:1 AND candle_pattern bullish offset:0');
+    lines.push('  Skip if confirm bar goes under MA: compare low[0] >= ma[0] (AND with the above)');
     lines.push('  params by indicator: boll{period,mult} · env{period,pct} · kc{period,mult} · dc{period}');
     lines.push('  long = closed back above lower band; short = closed back below upper band');
     lines.push('- exitRules: dynamic SL/TP — candle_extreme (field low|high, offset 1=prev bar) OR atr (period, mult); takeProfit risk_reward (ratio 1.5)');

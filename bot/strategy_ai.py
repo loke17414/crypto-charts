@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import copy
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -172,6 +173,9 @@ Condition types:
    body: min(open,close) <= line <= max(open,close)
    CRITICAL: "가격이 MA 터치" = WICK touch via line_touch — NEVER compare close==ma and call it 터치.
    "다음 캔들 상승/양봉 후 롱" = line_touch offset:1 AND candle_pattern bullish (or is_bullish) offset:0
+   "다음 캔들이 MA 밑으로 내려가면 진입 금지" = ALSO require confirm bar STAYS ABOVE the MA:
+     compare low[offset:0] >= ma(period)[offset:0]   (price wicked under MA → skip)
+     OR if user says 종가 기준: close[offset:0] >= ma[offset:0]
    SL at 터치한 캔들 저점 when entry is on the next bar → exitRules candle_extreme low offset:1
    TP 손익비 1:1 → takeProfit risk_reward ratio:1
 
@@ -180,8 +184,9 @@ PRICE vs CANDLE (CRITICAL — common AI mistake):
 - "다음 캔들" / "다음 봉" means conditions on the CONFIRM bar (offset 0) with the touch on the PRIOR bar (offset 1).
 - Do NOT put touch + rise on the same offset:0 bar unless the user says same-candle entry.
 - Do NOT use band_reentry for MA/EMA/이평 터치 (band_reentry is only Bollinger/Envelope/Keltner/Donchian).
+- "MA 밑으로 내려가면 진입 마" is a FILTER on the confirm bar (offset 0), NOT a second line_touch and NOT on offset 1.
 
-MA/이평 터치 + 다음 봉 상승 롱 EXAMPLE (copy this structure):
+MA/이평 터치 + 다음 봉 상승 롱 + (옵션) MA 하회 금지 EXAMPLE:
 {
   "entryRules": {
     "long": {
@@ -189,7 +194,11 @@ MA/이평 터치 + 다음 봉 상승 롱 EXAMPLE (copy this structure):
       "logic": "all",
       "conditions": [
         { "type":"line_touch", "indicator":"ma", "params":{"period":20}, "mode":"wick", "offset":1 },
-        { "type":"candle_pattern", "pattern":"bullish", "offset":0 }
+        { "type":"candle_pattern", "pattern":"bullish", "offset":0 },
+        { "type":"compare",
+          "left":{"source":"price","field":"low","offset":0},
+          "op":">=",
+          "right":{"source":"indicator","indicator":"ma","params":{"period":20},"field":"value","offset":0} }
       ]
     },
     "short": { "enabled": false, "logic": "all", "conditions": [] }
@@ -338,6 +347,7 @@ CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common
 - NEVER auto-apply structure.fvg or structure.divergence from market_context unless the user EXPLICITLY asks for FVG/갭/페어밸류 or divergence/다이버전스.
 - MA/SMA/EMA/이평/이동평균 + 터치/touch/닿음 → type:"line_touch" (wick). NEVER band_reentry. NEVER close==ma as "터치".
 - 다음 캔들/다음 봉 + 상승/양봉 + 롱 → line_touch offset:1 + candle_pattern bullish offset:0 (see EXAMPLE above).
+- 다음 캔들이 MA 밑/아래/하회하면 진입 금지 → confirm bar(offset 0) compare low>=ma (or close>=ma if 종가). Keep line_touch+양봉; ADD this filter, do not replace them.
 - 볼린저/Bollinger/BB/밴드/Envelope/Keltner/Donchian + 진입/재진입/이탈/터치/하단/상단
   → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg". NEVER for plain MA touch.
 - FVG/페어밸류/갭/gap/imbalance mentioned by user → type:"fvg" ONLY. NEVER band_reentry or swing for FVG requests.
@@ -397,6 +407,7 @@ Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct,
 Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, line_touch, fvg, divergence, swing_break, swing_near.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
+MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
 Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
 """
@@ -859,6 +870,7 @@ _COMPLEX_RULE_MARKERS = (
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
     "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
     "터치", "이평", "이동평균", "line_touch", "ma20", "다음캔들", "다음 봉", "다음봉",
+    "하회", "밑으로", "진입하지", "진입 하지",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -1621,6 +1633,174 @@ def _has_line_touch(rules: Any) -> bool:
     return False
 
 
+def _looks_like_ma_hold_above_filter(prompt: str) -> bool:
+    """User wants: skip entry if confirm candle goes under the MA."""
+    text = _prompt_text(prompt)
+    has_ma = any(
+        k in text
+        for k in ("ma", "sma", "ema", "wma", "이평", "이동평균", "line_touch")
+    )
+    if not has_ma:
+        return False
+    below = any(
+        k in text
+        for k in (
+            "밑", "아래", "하회", "below", "하방", "깨고 내려", "뚫고 내려",
+            "아래로", "밑으로",
+        )
+    )
+    skip = any(
+        k in text
+        for k in (
+            "진입 하지", "진입하지", "진입 마", "진입마", "하지 마", "하지마",
+            "말고", "스킵", "금지", "제외", "들어가면 안", "진입 안",
+        )
+    )
+    hold_above = any(
+        k in text
+        for k in ("위에서만", "위일 때", "위일때", "위에서 진입", "위에 있을", "유지할 때만")
+    )
+    return (below and skip) or hold_above
+
+
+def _ma_hold_filter_uses_low(prompt: str) -> bool:
+    """Default: wick/low must stay >= MA. 종가 명시 시 close만 검사."""
+    text = _prompt_text(prompt)
+    if any(k in text for k in ("종가", "close", "클로즈")) and not any(
+        k in text for k in ("저점", "저가", "윅", "wick", "밑으로 내려", "하회")
+    ):
+        return False
+    return True
+
+
+def _ma_confirm_hold_condition(
+    *,
+    long: bool,
+    indicator: str,
+    period: int,
+    use_low: bool,
+) -> dict[str, Any]:
+    if long:
+        field = "low" if use_low else "close"
+        op = ">="
+    else:
+        field = "high" if use_low else "close"
+        op = "<="
+    return {
+        "type": "compare",
+        "left": {"source": "price", "field": field, "offset": 0},
+        "op": op,
+        "right": {
+            "source": "indicator",
+            "indicator": indicator,
+            "params": {"period": period},
+            "field": "value",
+            "offset": 0,
+        },
+    }
+
+
+def _condition_is_ma_confirm_hold(cond: Any, *, long: bool, period: int | None = None) -> bool:
+    if not isinstance(cond, dict) or cond.get("type") != "compare":
+        return False
+    left = cond.get("left") if isinstance(cond.get("left"), dict) else {}
+    right = cond.get("right") if isinstance(cond.get("right"), dict) else {}
+    # price ? ma on same confirm bar (offset 0)
+    price_op = left if left.get("source") == "price" else right if right.get("source") == "price" else None
+    ma_op = left if left.get("indicator") in {"ma", "sma", "ema", "wma"} else (
+        right if right.get("indicator") in {"ma", "sma", "ema", "wma"} else None
+    )
+    if not price_op or not ma_op:
+        return False
+    if int(price_op.get("offset") or 0) != 0 or int(ma_op.get("offset") or 0) != 0:
+        return False
+    field = str(price_op.get("field") or "")
+    op = str(cond.get("op") or "")
+    if long:
+        if field not in {"low", "close"} or op not in {">=", ">"}:
+            return False
+    else:
+        if field not in {"high", "close"} or op not in {"<=", "<"}:
+            return False
+    if period is not None:
+        try:
+            p = int((ma_op.get("params") or {}).get("period") or 0)
+        except (TypeError, ValueError):
+            p = 0
+        if p and p != period:
+            return False
+    return True
+
+
+def _has_ma_confirm_hold_filter(rules: Any, *, long: bool = True, period: int | None = None) -> bool:
+    if not isinstance(rules, dict):
+        return False
+    side = "long" if long else "short"
+    group = rules.get(side)
+    if not isinstance(group, dict):
+        return False
+    for cond in group.get("conditions") or []:
+        if _condition_is_ma_confirm_hold(cond, long=long, period=period):
+            return True
+    return False
+
+
+def _ensure_ma_confirm_hold_filter(rules: Any, prompt: str) -> dict[str, Any]:
+    """Add confirm-bar MA hold filter without wiping existing MA-touch conditions."""
+    out = copy.deepcopy(rules) if isinstance(rules, dict) else {
+        "long": {"enabled": False, "logic": "all", "conditions": []},
+        "short": {"enabled": False, "logic": "all", "conditions": []},
+    }
+    period = _parse_ma_period(prompt, 20)
+    indicator = _parse_ma_indicator(prompt)
+    use_low = _ma_hold_filter_uses_low(prompt)
+
+    for side, is_long in (("long", True), ("short", False)):
+        group = out.get(side)
+        if not isinstance(group, dict):
+            continue
+        conds = list(group.get("conditions") or [])
+        if not conds and not group.get("enabled"):
+            continue
+        # Only add to sides that already have entry logic (or long default when long-only strategy)
+        if not conds:
+            continue
+        if _has_ma_confirm_hold_filter({side: group}, long=is_long, period=period):
+            continue
+        # Remove inverted / wrong-offset MA compares GPT sometimes emits for this intent
+        cleaned = []
+        for c in conds:
+            if not isinstance(c, dict) or c.get("type") != "compare":
+                cleaned.append(c)
+                continue
+            left = c.get("left") if isinstance(c.get("left"), dict) else {}
+            right = c.get("right") if isinstance(c.get("right"), dict) else {}
+            inds = {left.get("indicator"), right.get("indicator")}
+            fields = {left.get("field"), right.get("field")}
+            if inds & {"ma", "sma", "ema", "wma"} and fields & {"low", "high", "close"}:
+                # Drop conflicting MA position filters; we re-add the correct one.
+                if int(left.get("offset") or 0) == 0 or int(right.get("offset") or 0) == 0:
+                    op = str(c.get("op") or "")
+                    if is_long and op in {"<", "<="}:
+                        continue
+                    if (not is_long) and op in {">", ">="}:
+                        continue
+            cleaned.append(c)
+        cleaned.append(
+            _ma_confirm_hold_condition(
+                long=is_long,
+                indicator=indicator,
+                period=period,
+                use_low=use_low,
+            )
+        )
+        group["conditions"] = cleaned
+        group["enabled"] = True
+        group["logic"] = group.get("logic") if group.get("logic") in {"all", "any"} else "all"
+        out[side] = group
+    return out
+
+
 def _ma_touch_next_candle_patch(prompt: str) -> dict[str, Any]:
     period = _parse_ma_period(prompt, 20)
     indicator = _parse_ma_indicator(prompt)
@@ -1638,25 +1818,37 @@ def _ma_touch_next_candle_patch(prompt: str) -> dict[str, Any]:
     ) else False
     if not enable_long and not enable_short:
         enable_long = True
+    hold_filter = _looks_like_ma_hold_above_filter(prompt)
+    use_low = _ma_hold_filter_uses_low(prompt)
 
     def _entry(*, long: bool) -> dict[str, Any]:
+        conditions: list[dict[str, Any]] = [
+            {
+                "type": "line_touch",
+                "indicator": indicator,
+                "params": {"period": period},
+                "mode": "wick",
+                "offset": 1,
+            },
+            {
+                "type": "candle_pattern",
+                "pattern": "bullish" if long else "bearish",
+                "offset": 0,
+            },
+        ]
+        if hold_filter:
+            conditions.append(
+                _ma_confirm_hold_condition(
+                    long=long,
+                    indicator=indicator,
+                    period=period,
+                    use_low=use_low,
+                )
+            )
         return {
             "enabled": True,
             "logic": "all",
-            "conditions": [
-                {
-                    "type": "line_touch",
-                    "indicator": indicator,
-                    "params": {"period": period},
-                    "mode": "wick",
-                    "offset": 1,
-                },
-                {
-                    "type": "candle_pattern",
-                    "pattern": "bullish" if long else "bearish",
-                    "offset": 0,
-                },
-            ],
+            "conditions": conditions,
         }
 
     exit_rules: dict[str, Any] = {}
@@ -2102,6 +2294,7 @@ def _apply_rule_templates(
     prompt: str,
     patch: dict[str, Any],
     history: list[dict[str, str]] | None = None,
+    current_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     merged = dict(patch)
     follow_up = bool(history and _looks_like_follow_up_edit(prompt))
@@ -2118,10 +2311,28 @@ def _apply_rule_templates(
         tmpl = _ma_touch_next_candle_patch(prompt)
         if not _has_line_touch(merged.get("entryRules")):
             merged["entryRules"] = tmpl["entryRules"]
+        elif _looks_like_ma_hold_above_filter(prompt):
+            # Keep existing MA-touch rules; only ensure the hold-above filter is present.
+            merged["entryRules"] = _ensure_ma_confirm_hold_filter(
+                merged.get("entryRules"), prompt
+            )
         if not merged.get("exitRules"):
             merged["exitRules"] = tmpl["exitRules"]
         if "allowShort" not in merged:
             merged["allowShort"] = tmpl.get("allowShort", False)
+
+    # Follow-up like "MA 밑으로 내려가면 진입 마" — merge filter into current strategy.
+    if _looks_like_ma_hold_above_filter(prompt):
+        base_rules = merged.get("entryRules")
+        if not isinstance(base_rules, dict) or not (
+            (base_rules.get("long") or {}).get("conditions")
+            or (base_rules.get("short") or {}).get("conditions")
+        ):
+            cur = (current_settings or {}).get("entryRules")
+            if isinstance(cur, dict):
+                base_rules = cur
+        if isinstance(base_rules, dict):
+            merged["entryRules"] = _ensure_ma_confirm_hold_filter(base_rules, prompt)
 
     if _looks_like_bb_reentry_long(prompt) and (not follow_up or type_change):
         ratio = _parse_risk_reward_ratio(prompt)
@@ -2281,7 +2492,12 @@ def interpret_strategy(
         changed_fields = list(patch.keys())
 
     # Rule templates also run on empty patches — e.g. "1분봉 캔들 상승시 롱 진입".
-    patch = _apply_rule_templates(prompt.strip(), patch, merged_history)
+    patch = _apply_rule_templates(
+        prompt.strip(),
+        patch,
+        merged_history,
+        current_settings=raw_settings,
+    )
     # UI recommended strategies: force exact settings when user names an id.
     rec_patch = None
     if allow_recommended_strategies:
