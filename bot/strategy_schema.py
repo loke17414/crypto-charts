@@ -195,12 +195,12 @@ def _sanitize_condition(cond: Any) -> dict[str, Any] | None:
             return None
         return {"type": cond_type, "left": left, "right": right}
 
-    if cond_type == "band_reentry":
+    if cond_type in {"band_reentry", "band_breakout"}:
         side = "short" if cond.get("side") == "short" else "long"
         indicator = _resolve_indicator_id(cond.get("indicator") or "boll")
         params = cond.get("params") if isinstance(cond.get("params"), dict) else {}
         return {
-            "type": "band_reentry",
+            "type": cond_type,
             "side": side,
             "indicator": indicator,
             "params": _resolve_band_params(indicator, params),
@@ -381,6 +381,17 @@ def _deep_merge_entry_rules(current: Any, patch: Any) -> dict[str, Any] | None:
     return base or None
 
 
+def _sanitize_absolute_price(spec: Any) -> float | None:
+    if not isinstance(spec, dict):
+        return None
+    raw = spec.get("price", spec.get("value"))
+    try:
+        px = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return px if px > 0 else None
+
+
 def _sanitize_exit_side(rule: Any) -> dict[str, Any] | None:
     if not isinstance(rule, dict):
         return None
@@ -388,14 +399,15 @@ def _sanitize_exit_side(rule: Any) -> dict[str, Any] | None:
 
     sl = rule.get("stopLoss")
     if isinstance(sl, dict):
-        if sl.get("type") == "candle_extreme":
+        sl_type = str(sl.get("type") or "").lower()
+        if sl_type == "candle_extreme":
             field = "high" if sl.get("field") == "high" else "low"
             clean["stopLoss"] = {
                 "type": "candle_extreme",
                 "field": field,
                 "offset": max(1, int(sl.get("offset") or 1)),
             }
-        elif sl.get("type") == "atr":
+        elif sl_type == "atr":
             try:
                 mult = float(sl.get("mult") or 1.5)
             except (TypeError, ValueError):
@@ -405,14 +417,24 @@ def _sanitize_exit_side(rule: Any) -> dict[str, Any] | None:
                 "period": max(1, int(sl.get("period") or 14)),
                 "mult": mult if mult > 0 else 1.5,
             }
+        elif sl_type in {"price", "fixed", "absolute"}:
+            px = _sanitize_absolute_price(sl)
+            if px is not None:
+                clean["stopLoss"] = {"type": "price", "price": px}
 
     tp = rule.get("takeProfit")
-    if isinstance(tp, dict) and tp.get("type") == "risk_reward":
-        try:
-            ratio = float(tp.get("ratio") or 1.5)
-        except (TypeError, ValueError):
-            ratio = 1.5
-        clean["takeProfit"] = {"type": "risk_reward", "ratio": ratio if ratio > 0 else 1.5}
+    if isinstance(tp, dict):
+        tp_type = str(tp.get("type") or "").lower()
+        if tp_type == "risk_reward":
+            try:
+                ratio = float(tp.get("ratio") or 1.5)
+            except (TypeError, ValueError):
+                ratio = 1.5
+            clean["takeProfit"] = {"type": "risk_reward", "ratio": ratio if ratio > 0 else 1.5}
+        elif tp_type in {"price", "fixed", "absolute"}:
+            px = _sanitize_absolute_price(tp)
+            if px is not None:
+                clean["takeProfit"] = {"type": "price", "price": px}
 
     return clean or None
 

@@ -211,17 +211,20 @@ ExitRule:
              OR { "type": "atr", "period": 14, "mult": 1.5 }
              OR { "type": "price", "price": 66000 },
   "takeProfit": { "type": "risk_reward", "ratio": 1.5 }
+             OR { "type": "price", "price": 65000 }
 }
 - candle_extreme offset 1 = candle immediately before the ENTRY bar
   (예: MA 터치 봉 = offset 1 when entry is on the next confirm bar; 재진입 직전 봉도 동일)
 - atr stop = entry -/+ ATR(period) * mult (변동성 기반 손절)
-- price stop = absolute price level (손절 66000 → {"type":"price","price":66000})
+- price stop/TP = absolute price level (손절 66000 / 익절 65000 → {"type":"price","price":N})
 - risk_reward ratio 1 = net 1:1 after round-trip fee 0.1%; ratio 1.5 = 1.5R
   (engine sets TP so (reward-fee)/(risk+fee)=ratio; risk sizing also adds 0.1% fee to SL%)
 - Price-level + candle short example:
   "가격이 65888까지 오른후 하락캔들 숏, 손절 66000, 익절 손절대비 1:1"
   → short: high[1] >= 65888 AND candle_pattern bearish; exitRules.short stopLoss price 66000 + TP ratio 1
   Do NOT map this to bullish-candle long just because the word 진입/캔들 appears.
+- Unsupported (explain in summary, omit empty entryRules): multi-timeframe (상위봉/4H 필터),
+  order-flow/DOM, trailing stop as a first-class exit type.
 
 RuleGroup:
 {
@@ -242,6 +245,10 @@ Condition types:
    long: prev close < lower band AND current close >= lower band
    short: prev close > upper band AND current close <= upper band
    Use the same structure for Bollinger, Envelope, Keltner, Donchian — only indicator + params change.
+5b) band_breakout — close breaks outside a band (opposite of reentry)
+   { "type":"band_breakout", "side":"long"|"short", "indicator":"boll"|"env"|"kc"|"dc", "params":{...} }
+   long: prev close <= upper AND close > upper; short: prev close >= lower AND close < lower
+   Use for "볼린저/돈치안 상단 돌파 롱" — NEVER swing_break and NEVER band_reentry for pure breakouts.
 6) fvg — Fair Value Gap (3-candle imbalance)
    { "type":"fvg", "side":"bullish"|"bearish", "state":"present"|"in_zone"|"filled", "lookback":30 }
    bullish = gap up (candle[i-2].high < candle[i].low); bearish = gap down
@@ -459,7 +466,8 @@ SYSTEM_PROMPT_COMPACT = """You edit BTC USDT-M futures entry strategy. Reply JSO
 
 Incremental edits: change ONLY what the latest user_request needs. Prefer partial entryRules/exitRules patches.
 Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct, useStopLoss, allowShort, leverage, riskPerTradePct, maxAccountLossPct, pollSeconds, rsiPeriod, rsiOversold, rsiOverbought.
-Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, line_touch, fvg, divergence, swing_break, swing_near.
+Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, band_breakout, line_touch, fvg, divergence, swing_break, swing_near.
+Unsupported (omit empty entryRules; explain): multi-timeframe, order-flow/DOM, trailing stop.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
 Consecutive series (N bars rising/falling): use compare of same indicator at offsets, logic "all".
   Example MACD 매도모멘텀 2연속 약화 → 롱 (sell-momentum zone only):
@@ -1011,6 +1019,11 @@ _STRATEGY_NOT_IN_PATCH_ERROR = (
     "요청하신 진입 조건이 설정에 반영되지 않았습니다.\n"
     "롱/숏 진입 조건을 조금 더 구체적으로 다시 설명해 주세요."
 )
+_UNSUPPORTED_STRATEGY_ERROR = (
+    "현재 엔진이 지원하지 않는 전략 유형입니다.\n"
+    "멀티타임프레임·오더플로우/DOM·트레일링 스탑은 아직 사용할 수 없습니다.\n"
+    "단일 차트 타임프레임의 지표·캔들·밴드·스윙·가격 레벨 조건으로 다시 설명해 주세요."
+)
 
 
 def _looks_like_strategy_delete_request(prompt: str) -> bool:
@@ -1039,6 +1052,10 @@ def _validate_strategy_apply_or_raise(
     """Reject strategy-apply prompts that would produce empty or invalid rules."""
     if not _looks_like_strategy_apply_request(prompt):
         return
+
+    unsupported = _prompt_unsupported_strategy_reason(prompt)
+    if unsupported:
+        raise ValueError(_UNSUPPORTED_STRATEGY_ERROR)
 
     if not patch:
         raise ValueError(_STRATEGY_APPLY_ERROR)
@@ -1145,19 +1162,25 @@ _CATALOG_SHORT = (
 )
 
 
-def _needs_full_system(route_reason: str | None) -> bool:
-    """Full ~5k-token system prompt is opt-in — default compact to cut OpenAI spend."""
+def _needs_full_system(route_reason: str | None, prompt: str | None = None) -> bool:
+    """
+    Full system prompt for strategy compiles by default (even when model routing is mini).
+    Opt out with OPENAI_FULL_SYSTEM=0 to force compact everywhere.
+    """
     raw = os.getenv("OPENAI_FULL_SYSTEM", "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
-    if raw not in ("1", "true", "yes", "on"):
-        # Default: never use the giant SYSTEM_PROMPT (saves ~5k input tokens/call).
-        return False
-    return (route_reason or "") in {
+    if (route_reason or "") in {
         "strategy_rules",
         "research_apply",
         "all_complex",
-    }
+    }:
+        return True
+    # Default OPENAI_MODEL_ROUTING=mini tags most calls as "single" — still use full
+    # mapping whenever the user is clearly applying entry rules.
+    if prompt and _looks_like_strategy_apply_request(prompt):
+        return True
+    return False
 
 
 def _strip_notes(obj: Any) -> Any:
@@ -1230,7 +1253,7 @@ def _compact_market_context(
 ) -> dict[str, Any]:
     if not isinstance(market_context, dict):
         return {}
-    heavy = _needs_full_system(route_reason)
+    heavy = _needs_full_system(route_reason, prompt)
     out: dict[str, Any] = {}
     for key in ("symbol", "interval", "price", "rsi14", "recentHigh", "recentLow", "candleCount"):
         if market_context.get(key) is not None:
@@ -1396,7 +1419,7 @@ def _call_openai_with_key(
     route_reason: str | None = None,
 ) -> dict[str, Any]:
     chosen_model = model
-    heavy = _needs_full_system(route_reason)
+    heavy = _needs_full_system(route_reason, prompt)
     catalog = _CATALOG_SHORT if heavy else ""
     _ = indicator_catalog  # full client catalog discarded — too large / redundant
     market = _compact_market_context(market_context, prompt=prompt, route_reason=route_reason)
@@ -1609,7 +1632,7 @@ def _prompt_band_indicator(prompt: str) -> str:
 
 
 def _prompt_wants_band_strategy(prompt: str) -> bool:
-    """Local band template is reentry/touch only — pure breakouts go to GPT."""
+    """Local band template is reentry/touch only — pure breakouts use band_breakout."""
     text = _prompt_text(prompt)
     if not _prompt_mentions_band(prompt):
         return False
@@ -1620,6 +1643,50 @@ def _prompt_wants_band_strategy(prompt: str) -> bool:
     if breakout_only:
         return False
     return has_reentry
+
+
+def _prompt_wants_band_breakout(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if not _prompt_mentions_band(prompt):
+        return False
+    if _prompt_wants_band_strategy(prompt):
+        return False
+    if not any(k in text for k in _STRATEGY_CONTEXT_MARKERS):
+        return False
+    return any(k in text for k in ("돌파", "breakout", "상향돌파", "하향돌파"))
+
+
+def _prompt_unsupported_strategy_reason(prompt: str) -> str | None:
+    """Return a short label when the prompt needs features outside the DSL."""
+    text = _prompt_text(prompt)
+    if any(
+        k in text
+        for k in (
+            "멀티타임", "멀티 타임", "mtf", "상위봉", "상위 봉", "하위봉",
+            "4시간봉", "1시간봉 필터", "일봉 필터", "상위 타임", "다른 타임",
+        )
+    ):
+        return "멀티타임프레임"
+    if any(k in text for k in ("오더플로우", "orderflow", "order flow", "돔", "dom", "풋프린트", "footprint")):
+        return "오더플로우"
+    if any(k in text for k in ("트레일링", "trailing", "추적손절", "추적 손절")):
+        return "트레일링스탑"
+    return None
+
+
+def _local_combo_blocker(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if any(
+        k in text
+        for k in (
+            "그리고", "동시에", "같이", "+", "및", "이고", "이면서", "면서",
+            "해머", "hammer", "장악", "engulf",
+        )
+    ):
+        return True
+    # Two named complex indicators in one prompt → GPT.
+    hits = sum(1 for m in ("macd", "rsi", "stoch", "kdj", "cci", "mfi", "adx", "dmi") if m in text)
+    return hits >= 2
 
 
 def _prompt_wants_fvg(prompt: str) -> bool:
@@ -2147,6 +2214,13 @@ def _local_price_level_candle_patch(prompt: str) -> dict[str, Any] | None:
                 sl_price = p
                 break
 
+    tp_price: float | None = None
+    m_tp = re.search(r"익절(?:은|는|을|를|:)?\s*(\d+(?:\.\d+)?)", text)
+    if m_tp:
+        cand = float(m_tp.group(1))
+        if cand >= 100:
+            tp_price = cand
+
     # Side from explicit short/long, else candle direction.
     side = _prompt_side(prompt)
     if side is None:
@@ -2188,7 +2262,10 @@ def _local_price_level_candle_patch(prompt: str) -> dict[str, Any] | None:
             "field": "low" if long_on else "high",
             "offset": 1,
         }
-    tp = {"type": "risk_reward", "ratio": ratio}
+    if tp_price is not None:
+        tp: dict[str, Any] = {"type": "price", "price": tp_price}
+    else:
+        tp = {"type": "risk_reward", "ratio": ratio}
     return {
         "allowShort": short_on,
         "entryRules": {
@@ -2776,7 +2853,24 @@ def _local_strategy_template(
             "가격 레벨+캔들 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
         )
 
-    # Complex indicator entries (MACD/Stoch/ADX/… + combos) → GPT before RSI/swing/band.
+    # Simple crosses / single-indicator thresholds before forcing GPT for "complex" markers.
+    cross = _local_indicator_cross_patch(text)
+    if cross:
+        return (
+            cross,
+            "indicator_cross_local_no_gpt",
+            "지표 크로스 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
+    threshold = _local_indicator_threshold_patch(text)
+    if threshold:
+        return (
+            threshold,
+            "indicator_threshold_local_no_gpt",
+            "지표 임계값 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
+    # Complex multi-AND / candle hybrids → GPT (full system prompt).
     if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
         return None
 
@@ -2804,7 +2898,26 @@ def _local_strategy_template(
         )
         return patch, "band_reentry_local_no_gpt", "밴드 재진입 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
-    # Pure band breakout (no reentry/touch) → GPT; do not fall through to swing via "돌파".
+    if _prompt_wants_band_breakout(text):
+        ratio = _parse_risk_reward_ratio(text)
+        side = _prompt_side(text) or "long"
+        # 상단 돌파 → long, 하단 돌파 → short when side omitted
+        t = _prompt_text(text)
+        if _prompt_side(text) is None:
+            if any(k in t for k in ("하단", "lower")):
+                side = "short"
+            elif any(k in t for k in ("상단", "upper")):
+                side = "long"
+        long_only = side == "long"
+        patch = _band_breakout_patch(
+            side=side,
+            indicator=_prompt_band_indicator(text),
+            ratio=ratio,
+            long_only=True if long_only else None,
+        )
+        return patch, "band_breakout_local_no_gpt", "밴드 돌파 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    # Ambiguous band wording → GPT (do not steal as swing via "돌파").
     if _prompt_mentions_band(text):
         return None
 
@@ -2834,12 +2947,20 @@ def _local_strategy_template(
         _looks_like_bullish_candle_long(text)
         and not _looks_like_ma_line_touch(text)
         and not _prompt_wants_band_strategy(text)
+        and not _prompt_wants_band_breakout(text)
         and not _prompt_wants_swing(text)
         and not _prompt_wants_fvg(text)
         and not _prompt_wants_divergence(text)
     ):
         patch = _bullish_candle_long_patch()
         return patch, "bullish_candle_local_no_gpt", "양봉 롱 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    if _looks_like_bearish_candle_short(text):
+        return (
+            _bearish_candle_short_patch(),
+            "bearish_candle_local_no_gpt",
+            "음봉 숏 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
 
     return None
 
@@ -2884,13 +3005,15 @@ def _has_bullish_entry(rules: Any) -> bool:
     return False
 
 
-def _band_reentry_patch(
+def _band_side_patch(
     *,
+    cond_type: str,
     side: str = "long",
     indicator: str = "boll",
     ratio: float = 1.5,
     long_only: bool | None = None,
 ) -> dict[str, Any]:
+    cond_type = "band_breakout" if cond_type == "band_breakout" else "band_reentry"
     side = "short" if side == "short" else "long"
     indicator = indicator if indicator in {"boll", "env", "kc", "dc"} else "boll"
     params: dict[str, Any] = {"period": 20, "mult": 2}
@@ -2913,7 +3036,7 @@ def _band_reentry_patch(
                 "enabled": enable_long,
                 "logic": "all",
                 "conditions": [{
-                    "type": "band_reentry",
+                    "type": cond_type,
                     "side": "long",
                     "indicator": indicator,
                     "params": params,
@@ -2923,7 +3046,7 @@ def _band_reentry_patch(
                 "enabled": enable_short,
                 "logic": "all",
                 "conditions": [{
-                    "type": "band_reentry",
+                    "type": cond_type,
                     "side": "short",
                     "indicator": indicator,
                     "params": params,
@@ -2944,6 +3067,290 @@ def _band_reentry_patch(
             "takeProfit": {"type": "risk_reward", "ratio": ratio},
         }
     return patch
+
+
+def _band_reentry_patch(
+    *,
+    side: str = "long",
+    indicator: str = "boll",
+    ratio: float = 1.5,
+    long_only: bool | None = None,
+) -> dict[str, Any]:
+    return _band_side_patch(
+        cond_type="band_reentry",
+        side=side,
+        indicator=indicator,
+        ratio=ratio,
+        long_only=long_only,
+    )
+
+
+def _band_breakout_patch(
+    *,
+    side: str = "long",
+    indicator: str = "boll",
+    ratio: float = 1.5,
+    long_only: bool | None = None,
+) -> dict[str, Any]:
+    return _band_side_patch(
+        cond_type="band_breakout",
+        side=side,
+        indicator=indicator,
+        ratio=ratio,
+        long_only=long_only,
+    )
+
+
+def _cross_entry_patch(
+    *,
+    cross_type: str,
+    left: dict[str, Any],
+    right: dict[str, Any],
+    side: str,
+    ratio: float = 1.5,
+) -> dict[str, Any]:
+    cond = {"type": cross_type, "left": left, "right": right}
+    long_on = side == "long"
+    short_on = side == "short"
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": [cond] if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": [cond] if short_on else [],
+            },
+        },
+        "exitRules": _exit_rules_sl_tp_for_side(side, ratio=ratio, sl_offset=1),
+    }
+
+
+def _local_indicator_cross_patch(prompt: str) -> dict[str, Any] | None:
+    """Compile simple golden/dead / K-D crosses without GPT."""
+    if _local_combo_blocker(prompt) or _prompt_wants_divergence(prompt):
+        return None
+    text = _prompt_text(prompt)
+    golden = any(k in text for k in ("골든", "golden", "상향돌파", "상향 돌파", "cross above", "크로스업"))
+    dead = any(k in text for k in ("데드", "dead", "하향돌파", "하향 돌파", "cross below", "크로스다운"))
+    has_cross = "크로스" in text or "cross" in text or golden or dead
+    if not has_cross:
+        return None
+    side = _prompt_side(prompt)
+    if side is None:
+        side = "short" if dead and not golden else "long"
+    if not golden and not dead:
+        golden = side == "long"
+        dead = side == "short"
+    cross_type = "cross_above" if golden and not dead else "cross_below" if dead else "cross_above"
+    ratio = _parse_risk_reward_ratio(prompt)
+
+    if "macd" in text:
+        left = {
+            "source": "indicator",
+            "indicator": "macd",
+            "field": "macd",
+            "params": {"fast": 12, "slow": 26, "signal": 9},
+            "offset": 0,
+        }
+        right = {
+            "source": "indicator",
+            "indicator": "macd",
+            "field": "signal",
+            "params": {"fast": 12, "slow": 26, "signal": 9},
+            "offset": 0,
+        }
+        return _cross_entry_patch(cross_type=cross_type, left=left, right=right, side=side, ratio=ratio)
+
+    if "stoch" in text or "스토캐" in text:
+        left = {
+            "source": "indicator",
+            "indicator": "stoch",
+            "field": "k",
+            "params": {"kPeriod": 14, "dPeriod": 3},
+            "offset": 0,
+        }
+        right = {
+            "source": "indicator",
+            "indicator": "stoch",
+            "field": "d",
+            "params": {"kPeriod": 14, "dPeriod": 3},
+            "offset": 0,
+        }
+        return _cross_entry_patch(cross_type=cross_type, left=left, right=right, side=side, ratio=ratio)
+
+    m = re.search(
+        r"(ema|sma|ma|wma)\s*(\d+)\s*.{0,24}?(ema|sma|ma|wma)\s*(\d+)",
+        text,
+        re.I,
+    )
+    if not m:
+        # "EMA 12가 26 상향 돌파" — second MA kind omitted
+        m2 = re.search(
+            r"(ema|sma|ma|wma)\s*(\d+)\s*(?:가|이|을|를)?\s*(\d+)\s*"
+            r"(?:을|를|선|이평)?\s*(?:상향|하향|골든|데드|크로스|cross)",
+            text,
+            re.I,
+        )
+        if m2:
+            kind = m2.group(1).lower()
+            if kind == "sma":
+                kind = "ma"
+            a_period, b_period = int(m2.group(2)), int(m2.group(3))
+            left = {
+                "source": "indicator",
+                "indicator": kind,
+                "field": "value",
+                "params": {"period": a_period},
+                "offset": 0,
+            }
+            right = {
+                "source": "indicator",
+                "indicator": kind,
+                "field": "value",
+                "params": {"period": b_period},
+                "offset": 0,
+            }
+            return _cross_entry_patch(cross_type=cross_type, left=left, right=right, side=side, ratio=ratio)
+    if m:
+        a_kind, a_period, b_kind, b_period = m.group(1).lower(), int(m.group(2)), m.group(3).lower(), int(m.group(4))
+        if a_kind == "sma":
+            a_kind = "ma"
+        if b_kind == "sma":
+            b_kind = "ma"
+        left = {
+            "source": "indicator",
+            "indicator": a_kind,
+            "field": "value",
+            "params": {"period": a_period},
+            "offset": 0,
+        }
+        right = {
+            "source": "indicator",
+            "indicator": b_kind,
+            "field": "value",
+            "params": {"period": b_period},
+            "offset": 0,
+        }
+        return _cross_entry_patch(cross_type=cross_type, left=left, right=right, side=side, ratio=ratio)
+    return None
+
+
+_THRESHOLD_INDICATOR_SPECS: tuple[tuple[tuple[str, ...], str, str, dict[str, Any]], ...] = (
+    (("cci",), "cci", "value", {"period": 20}),
+    (("mfi",), "mfi", "value", {"period": 14}),
+    (("williams", "%r"), "wr", "value", {"period": 14}),
+    (("roc",), "roc", "value", {"period": 12}),
+    (("atr",), "atr", "value", {"period": 14}),
+    (("obv",), "obv", "value", {}),
+)
+
+
+def _local_indicator_threshold_patch(prompt: str) -> dict[str, Any] | None:
+    """Compile 'CCI -100 이하 롱' style single-threshold entries."""
+    if _local_combo_blocker(prompt) or _prompt_wants_divergence(prompt):
+        return None
+    text = _prompt_text(prompt)
+    if any(k in text for k in ("연속", "모멘텀", "크로스", "골든", "데드", "돌파")):
+        return None
+    side = _prompt_side(prompt)
+    for markers, ind_id, field, params in _THRESHOLD_INDICATOR_SPECS:
+        if not any(m in text for m in markers):
+            continue
+        m = re.search(
+            rf"(?:{'|'.join(re.escape(x) for x in markers)})"
+            r".{0,24}?(-?\d+(?:\.\d+)?)\s*(이하|미만|아래|밑|이상|초과|위|위로|<=|>=|<|>)",
+            text,
+            re.I,
+        )
+        if not m:
+            continue
+        thr = float(m.group(1))
+        cmp_word = m.group(2)
+        if cmp_word in {"미만", "아래", "밑", "<"}:
+            op = "<"
+        elif cmp_word in {"이하", "<="}:
+            op = "<="
+        elif cmp_word in {"초과", "위", "위로", ">"}:
+            op = ">"
+        else:
+            op = ">="
+        if side is None:
+            side = "long" if op in {"<", "<="} else "short"
+        cond = {
+            "type": "compare",
+            "left": {
+                "source": "indicator",
+                "indicator": ind_id,
+                "field": field,
+                "params": dict(params),
+                "offset": 0,
+            },
+            "op": op,
+            "right": {"source": "value", "value": thr},
+        }
+        long_on = side == "long"
+        short_on = side == "short"
+        ratio = _parse_risk_reward_ratio(prompt)
+        return {
+            "allowShort": short_on,
+            "entryRules": {
+                "long": {
+                    "enabled": long_on,
+                    "logic": "all",
+                    "conditions": [cond] if long_on else [],
+                },
+                "short": {
+                    "enabled": short_on,
+                    "logic": "all",
+                    "conditions": [cond] if short_on else [],
+                },
+            },
+            "exitRules": _exit_rules_sl_tp_for_side(side or "long", ratio=ratio, sl_offset=1),
+        }
+    return None
+
+
+def _bearish_candle_short_patch() -> dict[str, Any]:
+    return {
+        "allowShort": True,
+        "entryRules": {
+            "long": {"enabled": False, "logic": "all", "conditions": []},
+            "short": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "compare",
+                    "left": {"source": "candle", "metric": "is_bullish", "offset": 0},
+                    "op": "==",
+                    "right": {"source": "value", "value": 0},
+                }],
+            },
+        },
+    }
+
+
+def _looks_like_bearish_candle_short(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if _looks_like_ma_line_touch(prompt) or _looks_like_price_level_candle(prompt):
+        return False
+    if _prompt_has_complex_indicator_entry(prompt) or _prompt_mentions_complex_indicator(prompt):
+        return False
+    if _prompt_wants_band_strategy(prompt) or _prompt_wants_band_breakout(prompt):
+        return False
+    if _prompt_wants_swing(prompt) or _prompt_wants_fvg(prompt) or _prompt_wants_divergence(prompt):
+        return False
+    if _prompt_side(prompt) == "long":
+        return False
+    short_side = any(k in text for k in ("숏", "short", "매도"))
+    bearish_kw = any(k in text for k in ("음봉", "하락캔들", "bearish")) or (
+        "캔들" in text and "하락" in text and "상승" not in text and "양봉" not in text
+    )
+    return short_side and bearish_kw
 
 
 def _bollinger_reentry_long_patch(ratio: float = 1.5) -> dict[str, Any]:
@@ -3200,7 +3607,7 @@ def _reconcile_patch_intent(
 
     price_level_local = _local_price_level_candle_patch(prompt)
     if price_level_local:
-        wrong = types & {"swing_near", "swing_break", "fvg", "divergence", "band_reentry"}
+        wrong = types & {"swing_near", "swing_break", "fvg", "divergence", "band_reentry", "band_breakout"}
         if wrong or not types:
             logger.info(
                 "Intent reconcile: applying local price-level+candle template (was %s)",
@@ -3208,13 +3615,23 @@ def _reconcile_patch_intent(
             )
             return _merge_template_patch(patch, price_level_local, overwrite_exit=True)
 
+    cross_local = _local_indicator_cross_patch(prompt)
+    if cross_local and (not types or types & {"swing_near", "swing_break", "fvg", "band_reentry"}):
+        logger.info("Intent reconcile: applying local indicator cross template")
+        return _merge_template_patch(patch, cross_local, overwrite_exit=True)
+
+    threshold_local = _local_indicator_threshold_patch(prompt)
+    if threshold_local and (not types or types & {"swing_near", "swing_break"}):
+        logger.info("Intent reconcile: applying local indicator threshold template")
+        return _merge_template_patch(patch, threshold_local, overwrite_exit=True)
+
     if _prompt_wants_band_strategy(prompt):
         indicator = _prompt_band_indicator(prompt)
         side = _prompt_side(prompt) or "long"
         long_only = _prompt_side(prompt) == "long" or (
             _prompt_side(prompt) is None and any(k in _prompt_text(prompt) for k in ("롱", "long", "매수"))
         )
-        wrong = types & {"fvg", "divergence", "swing_break", "swing_near"}
+        wrong = types & {"fvg", "divergence", "swing_break", "swing_near", "band_breakout"}
         if wrong or not _has_band_reentry(entry_rules):
             tmpl = _band_reentry_patch(
                 side=side,
@@ -3228,8 +3645,31 @@ def _reconcile_patch_intent(
             )
             return _merge_template_patch(patch, tmpl, overwrite_exit=True)
 
+    if _prompt_wants_band_breakout(prompt):
+        indicator = _prompt_band_indicator(prompt)
+        side = _prompt_side(prompt) or "long"
+        t = _prompt_text(prompt)
+        if _prompt_side(prompt) is None:
+            if any(k in t for k in ("하단", "lower")):
+                side = "short"
+            elif any(k in t for k in ("상단", "upper")):
+                side = "long"
+        wrong = types & {"fvg", "divergence", "swing_break", "swing_near", "band_reentry"}
+        if wrong or not _has_condition_type(entry_rules, "band_breakout"):
+            tmpl = _band_breakout_patch(
+                side=side,
+                indicator=indicator,
+                ratio=ratio,
+                long_only=side == "long",
+            )
+            logger.info(
+                "Intent reconcile: band breakout requested but AI returned %s — applying band_breakout",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, tmpl, overwrite_exit=True)
+
     if _prompt_wants_fvg(prompt):
-        wrong = types & {"band_reentry", "divergence", "swing_break", "swing_near"}
+        wrong = types & {"band_reentry", "band_breakout", "divergence", "swing_break", "swing_near"}
         if wrong or not _has_condition_type(entry_rules, "fvg"):
             logger.info(
                 "Intent reconcile: FVG requested but AI returned %s — applying fvg",
@@ -3238,7 +3678,7 @@ def _reconcile_patch_intent(
             return _merge_template_patch(patch, _fvg_entry_patch(prompt), overwrite_exit=True)
 
     if _prompt_wants_divergence(prompt):
-        wrong = types & {"band_reentry", "fvg", "swing_break", "swing_near"}
+        wrong = types & {"band_reentry", "band_breakout", "fvg", "swing_break", "swing_near"}
         if wrong or not _has_condition_type(entry_rules, "divergence"):
             logger.info(
                 "Intent reconcile: divergence requested but AI returned %s — applying divergence",
@@ -3247,7 +3687,7 @@ def _reconcile_patch_intent(
             return _merge_template_patch(patch, _divergence_entry_patch(prompt), overwrite_exit=True)
 
     if _prompt_wants_swing(prompt):
-        wrong = types & {"fvg", "divergence", "band_reentry"}
+        wrong = types & {"fvg", "divergence", "band_reentry", "band_breakout"}
         if wrong or not _has_swing_entry(entry_rules):
             tmpl = (
                 _swing_breakout_patch()
@@ -3454,6 +3894,13 @@ def interpret_strategy(
             "route_reason": route_early,
             "sources": [],
         }
+
+    # Features outside the DSL — fail fast with a clear message (no GPT / no fake templates).
+    if (
+        _looks_like_strategy_apply_request(prompt.strip())
+        and _prompt_unsupported_strategy_reason(prompt.strip())
+    ):
+        raise ValueError(_UNSUPPORTED_STRATEGY_ERROR)
 
     merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
     prompt_s = prompt.strip()

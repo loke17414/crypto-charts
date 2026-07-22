@@ -83,6 +83,10 @@ const StrategyEngine = (() => {
     lines.push('- compare: { left: operand, op:"<|<=|>|>=|==|!=", right: operand } — operand can be indicator, price, value, or candle metric.');
     lines.push('- band_reentry: price left a band then closed back inside — works for ANY overlay-band indicator');
     lines.push('  { type:"band_reentry", side:"long"|"short", indicator:"boll"|"env"|"kc"|"dc", params:{...} }');
+    lines.push('- band_breakout: close breaks outside a band (opposite of reentry)');
+    lines.push('  { type:"band_breakout", side:"long"|"short", indicator:"boll"|"env"|"kc"|"dc", params:{...} }');
+    lines.push('  long: prev close <= upper AND close > upper; short: prev close >= lower AND close < lower');
+    lines.push('- exitRules: also support absolute price SL/TP { type:"price", price:66000 }');
     lines.push('- line_touch: candle wick/body touches MA/EMA (NOT close==ma). offset=1 means previous bar.');
     lines.push('  { type:"line_touch", indicator:"ma"|"ema", params:{period:20}, mode:"wick"|"body", offset:1 }');
     lines.push('  MA touch + next bullish candle long: line_touch offset:1 AND candle_pattern bullish offset:0');
@@ -281,7 +285,7 @@ const StrategyEngine = (() => {
           warnings.push(`알 수 없는 지표 '${op.indicator}' — 조건이 항상 거짓이 됩니다.`);
         }
       }
-      if (cond?.type === 'band_reentry' && !isBandIndicator(op.indicator)) {
+      if ((cond?.type === 'band_reentry' || cond?.type === 'band_breakout') && !isBandIndicator(op.indicator)) {
         const key = `band:${op.indicator}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -299,7 +303,7 @@ const StrategyEngine = (() => {
           visitor(cond, side);
           return;
         }
-        if (cond.type === 'band_reentry') {
+        if (cond.type === 'band_reentry' || cond.type === 'band_breakout') {
           visitor(
             {
               source: 'indicator',
@@ -444,13 +448,13 @@ const StrategyEngine = (() => {
       return { type, left, right };
     }
 
-    if (type === 'band_reentry') {
+    if (type === 'band_reentry' || type === 'band_breakout') {
       const side = cond.side === 'short' ? 'short' : 'long';
       const rawId = String(cond.indicator || 'boll').toLowerCase();
       const indicator = INDICATOR_ALIASES[rawId] || rawId;
       const rawParams = cond.params && typeof cond.params === 'object' ? cond.params : {};
       return {
-        type: 'band_reentry',
+        type,
         side,
         indicator,
         params: resolveBandParams(indicator, rawParams),
@@ -851,7 +855,7 @@ const StrategyEngine = (() => {
   function warmupCache(candles, rules, cache) {
     ['long', 'short'].forEach((side) => {
       (rules?.[side]?.conditions || []).forEach((cond) => {
-        if (cond?.type === 'band_reentry') {
+        if (cond?.type === 'band_reentry' || cond?.type === 'band_breakout') {
           const indicator = cond.indicator || 'boll';
           const params = resolveBandParams(indicator, cond.params || {});
           ['lower', 'middle', 'upper'].forEach((field) => {
@@ -1046,6 +1050,46 @@ const StrategyEngine = (() => {
     return closePrev > upperPrev && closeNow <= upperNow;
   }
 
+  function evaluateBandBreakout(candles, index, condition, cache) {
+    if (index < 1) return false;
+    const side = condition.side === 'short' ? 'short' : 'long';
+    const indicator = condition.indicator || 'boll';
+    const params = resolveBandParams(indicator, condition.params || {});
+    const closeNow = resolveOperand(candles, index, { source: 'price', field: 'close' }, cache);
+    const closePrev = resolveOperand(candles, index - 1, { source: 'price', field: 'close' }, cache);
+    const lowerPrev = resolveOperand(
+      candles,
+      index - 1,
+      { source: 'indicator', indicator, params, field: 'lower' },
+      cache,
+    );
+    const lowerNow = resolveOperand(
+      candles,
+      index,
+      { source: 'indicator', indicator, params, field: 'lower' },
+      cache,
+    );
+    const upperPrev = resolveOperand(
+      candles,
+      index - 1,
+      { source: 'indicator', indicator, params, field: 'upper' },
+      cache,
+    );
+    const upperNow = resolveOperand(
+      candles,
+      index,
+      { source: 'indicator', indicator, params, field: 'upper' },
+      cache,
+    );
+
+    if (side === 'long') {
+      if (![closeNow, closePrev, upperPrev, upperNow].every(Number.isFinite)) return false;
+      return closePrev <= upperPrev && closeNow > upperNow;
+    }
+    if (![closeNow, closePrev, lowerPrev, lowerNow].every(Number.isFinite)) return false;
+    return closePrev >= lowerPrev && closeNow < lowerNow;
+  }
+
   function evaluateLineTouch(candles, index, condition, cache) {
     const offset = Math.max(0, parseInt(condition.offset, 10) || 0);
     const barIdx = index - offset;
@@ -1089,6 +1133,10 @@ const StrategyEngine = (() => {
 
     if (type === 'band_reentry') {
       return evaluateBandReentry(candles, index, condition, cache);
+    }
+
+    if (type === 'band_breakout') {
+      return evaluateBandBreakout(candles, index, condition, cache);
     }
 
     if (type === 'line_touch') {
@@ -1174,7 +1222,7 @@ const StrategyEngine = (() => {
           const need = CandlePatterns.minBarsForPattern(cond.pattern) + (cond.offset || 0);
           if (need > maxPeriod) maxPeriod = need;
         }
-        if (cond.type === 'band_reentry') {
+        if (cond.type === 'band_reentry' || cond.type === 'band_breakout') {
           const period = cond.params?.period || 20;
           if (period > maxPeriod) maxPeriod = period;
         }
@@ -1236,14 +1284,15 @@ const StrategyEngine = (() => {
 
   function formatCondition(cond) {
     const type = cond.type || 'compare';
-    if (type === 'band_reentry') {
+    if (type === 'band_reentry' || type === 'band_breakout') {
       const side = cond.side === 'short' ? '숏' : '롱';
       const id = (cond.indicator || 'boll').toUpperCase();
       const params = cond.params
         ? Object.entries(cond.params).map(([k, v]) => `${k}=${v}`).join(',')
         : '';
       const paramLabel = params ? ` ${params}` : '';
-      return `${id} ${side} 밴드 재진입 (${id}${paramLabel})`;
+      const kind = type === 'band_breakout' ? '밴드 돌파' : '밴드 재진입';
+      return `${id} ${side} ${kind} (${id}${paramLabel})`;
     }
     if (type === 'line_touch') {
       const id = String(cond.indicator || 'ma').toUpperCase();
@@ -1404,6 +1453,11 @@ const StrategyEngine = (() => {
           period: Math.max(1, parseInt(sl.period, 10) || 14),
           mult: Number.isFinite(mult) && mult > 0 ? mult : 1.5,
         };
+      } else if (sl?.type === 'price' || sl?.type === 'fixed' || sl?.type === 'absolute') {
+        const px = parseFloat(sl.price ?? sl.value);
+        if (Number.isFinite(px) && px > 0) {
+          clean.stopLoss = { type: 'price', price: px };
+        }
       }
 
       const tp = rule.takeProfit;
@@ -1413,6 +1467,11 @@ const StrategyEngine = (() => {
           type: 'risk_reward',
           ratio: Number.isFinite(ratio) && ratio > 0 ? ratio : 1.5,
         };
+      } else if (tp?.type === 'price' || tp?.type === 'fixed' || tp?.type === 'absolute') {
+        const px = parseFloat(tp.price ?? tp.value);
+        if (Number.isFinite(px) && px > 0) {
+          clean.takeProfit = { type: 'price', price: px };
+        }
       }
 
       if (clean.stopLoss || clean.takeProfit) out[side] = clean;

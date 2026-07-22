@@ -62,6 +62,9 @@ const FuturesStrategy = (() => {
       if (Number.isFinite(atr) && atr > 0) {
         stopPrice = side === 'LONG' ? entry - atr * mult : entry + atr * mult;
       }
+    } else if (sl?.type === 'price' || sl?.type === 'fixed' || sl?.type === 'absolute') {
+      const px = parseFloat(sl.price ?? sl.value);
+      if (Number.isFinite(px) && px > 0) stopPrice = px;
     }
 
     if (!Number.isFinite(stopPrice) || stopPrice <= 0) return null;
@@ -92,6 +95,9 @@ const FuturesStrategy = (() => {
         if (!(dist > 0)) return null;
         takeProfitPrice = entry - dist;
       }
+    } else if (tp?.type === 'price' || tp?.type === 'fixed' || tp?.type === 'absolute') {
+      const px = parseFloat(tp.price ?? tp.value);
+      if (Number.isFinite(px) && px > 0) takeProfitPrice = px;
     }
 
     if (!Number.isFinite(takeProfitPrice) || takeProfitPrice <= 0) return null;

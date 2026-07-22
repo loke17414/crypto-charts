@@ -571,7 +571,8 @@ const StrategyAI = (() => {
       const patchKeys = patch ? Object.keys(patch) : [];
 
       if (!patchKeys.length && wantsStrategyApply) {
-        addMessage('assistant', formatAiError(result.summary || STRATEGY_APPLY_HINT), { persist: true });
+        const detail = result.detail || result.error || result.summary;
+        addMessage('assistant', formatAiError(detail || STRATEGY_APPLY_HINT), { persist: true });
         return;
       }
 
