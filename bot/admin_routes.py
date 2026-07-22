@@ -16,6 +16,7 @@ from bot.auth_service import request_password_reset, resend_verification
 from bot.billing_service import (
     cancel_subscription,
     cancel_toss_payment,
+    clear_stored_billing_key,
     ensure_subscription,
     ensure_usage,
     is_pro,
@@ -166,11 +167,12 @@ def _strategy_summary(user_id: int) -> dict[str, Any]:
 
 
 def _user_row(db: Session, user: User) -> dict[str, Any]:
+    # Snapshot first — may renew/expire the subscription before we read plan fields.
+    snap = usage_snapshot(db, user.id, running=is_running(user.id))
     sub = ensure_subscription(db, user.id)
     usage = ensure_usage(db, user.id)
     pro = is_pro(sub)
     manual_pro = bool(pro and not (sub.toss_billing_key_encrypted or "").strip())
-    snap = usage_snapshot(db, user.id, running=is_running(user.id))
     meta = _cred_meta(db, user.id)
     return {
         "id": user.id,
@@ -426,6 +428,9 @@ def admin_set_plan(
     sub = ensure_subscription(db, user.id)
     plan = body.plan.lower().strip()
     days = body.days or 365
+    # Always drop billing key so renew cron cannot surprise-charge after admin edits.
+    clear_stored_billing_key(db, sub, delete_remote=billing_configured())
+    sub = ensure_subscription(db, user.id)
     if plan == "pro":
         sub.plan = "pro"
         sub.status = "active"
@@ -452,6 +457,9 @@ def admin_grant_pro(
 ) -> dict[str, Any]:
     user = _get_user_or_404(db, user_id)
     sub = ensure_subscription(db, user.id)
+    # Complimentary grant must not keep a Toss billing key (would auto-renew).
+    clear_stored_billing_key(db, sub, delete_remote=billing_configured())
+    sub = ensure_subscription(db, user.id)
     now = _utcnow()
     base = sub.current_period_end if sub.current_period_end and sub.current_period_end > now else now
     if base.tzinfo is None:
@@ -467,7 +475,7 @@ def admin_grant_pro(
     return {
         "ok": True,
         "user": _user_row(db, user),
-        "message": f"Pro +{body.days}일 (종료 {sub.current_period_end.isoformat()})",
+        "message": f"Pro +{body.days}일 (종료 {sub.current_period_end.isoformat()} · 결제키 제거)",
     }
 
 
@@ -522,6 +530,8 @@ def admin_refund_payment(
             reason=body.reason,
             cancel_amount=body.cancelAmount,
             actor_user_id=admin.id,
+            expected_user_id=user.id,
+            reverse_entitlements=True,
         )
     except HTTPException:
         raise
@@ -534,7 +544,10 @@ def admin_refund_payment(
         target_user_id=user.id,
         detail=f"{body.paymentKey[:16]}… {body.reason}"[:200],
     )
-    return {"ok": True, "user": _user_row(db, user), **result, "message": "토스 결제 취소/환불을 요청했습니다."}
+    msg = "토스 결제 취소/환불을 요청했습니다."
+    if result.get("entitlementsReversed"):
+        msg += " 관련 Pro/AI 팩 권한도 회수했습니다."
+    return {"ok": True, "user": _user_row(db, user), **result, "message": msg}
 
 
 @router.post("/users/{user_id}/reset-quota")

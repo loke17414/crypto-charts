@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,7 @@ from bot.billing_service import (
     assert_can_start_bot,
     assert_can_use_gpt,
     ensure_subscription,
+    enforce_running_bot_quotas,
     is_pro,
     mark_bot_started,
     mark_bot_stopped,
@@ -210,7 +212,19 @@ async def lifespan(app: FastAPI):
     if not auth_required():
         auto_connect_from_env()
     restore_bot_if_needed()
+    stop_quota_watch = threading.Event()
+
+    def _quota_watch_loop() -> None:
+        while not stop_quota_watch.wait(60):
+            try:
+                enforce_running_bot_quotas()
+            except Exception:  # noqa: BLE001
+                logger.exception("Bot quota watchdog crashed")
+
+    quota_thread = threading.Thread(target=_quota_watch_loop, name="bot-quota-watch", daemon=True)
+    quota_thread.start()
     yield
+    stop_quota_watch.set()
     stop_all_bots()
 
 
@@ -1113,6 +1127,19 @@ def bot_start(
     user: User | None = Depends(get_optional_user),
     db: DbSession = Depends(get_db),
 ) -> dict[str, Any]:
+    live = body.live_trading if body else True
+    confirm_live = bool(body.confirm_live_trading) if body else False
+    # Kill switch + confirm before credential/quota work so errors are not masked.
+    if live and not live_trading_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="실거래 주문이 비활성화되어 있습니다 (LIVE_TRADING_ENABLED=false).",
+        )
+    if live and not confirm_live:
+        raise HTTPException(
+            status_code=400,
+            detail="실거래 봇 시작은 confirm_live_trading=true 확인이 필요합니다.",
+        )
     assert_can_start_bot(db, user)
     session = _get_session(user)
     if not session:
@@ -1137,24 +1164,6 @@ def bot_start(
         else:
             session = _get_session(None)
     assert session is not None
-    live = body.live_trading if body else True
-    confirm_live = bool(body.confirm_live_trading) if body else False
-    if live and not live_trading_enabled():
-        raise HTTPException(
-            status_code=403,
-            detail="실거래 주문이 비활성화되어 있습니다 (LIVE_TRADING_ENABLED=false).",
-        )
-    # Mainnet live orders require explicit client confirm; testnet still asks via UI.
-    if live and not session.config.use_testnet and not confirm_live:
-        raise HTTPException(
-            status_code=400,
-            detail="메인넷 실거래는 confirm_live_trading=true 확인이 필요합니다.",
-        )
-    if live and not confirm_live:
-        raise HTTPException(
-            status_code=400,
-            detail="실거래 봇 시작은 confirm_live_trading=true 확인이 필요합니다.",
-        )
     uid = user.id if user is not None else None
     try:
         if user is not None:

@@ -262,43 +262,90 @@ const AppBilling = (() => {
     }
   }
 
+  const PENDING_BILLING_KEY = 'orbinex_billing_pending';
+
+  function stripBillingQuery({ keepKeys = false } = {}) {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('billing');
+    params.delete('product');
+    params.delete('code');
+    params.delete('message');
+    if (!keepKeys) {
+      params.delete('authKey');
+      params.delete('customerKey');
+    }
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', next);
+  }
+
+  function stashPendingBilling(authKey, customerKey) {
+    try {
+      sessionStorage.setItem(PENDING_BILLING_KEY, JSON.stringify({ authKey, customerKey }));
+    } catch (_) { /* ignore */ }
+  }
+
+  async function confirmPendingBilling({ authKey, customerKey } = {}) {
+    const noteEl = $('billingNote');
+    if (!authKey || !customerKey) return false;
+    if (typeof AppAuth === 'undefined' || !AppAuth.isLoggedIn()) {
+      stashPendingBilling(authKey, customerKey);
+      if (noteEl) noteEl.textContent = '로그인 후 결제가 확정됩니다. 로그인해 주세요.';
+      return false;
+    }
+    try {
+      busy = true;
+      if (noteEl) noteEl.textContent = '결제 확인 중…';
+      await FuturesApiClient.billingConfirm({ authKey, customerKey, product: 'month' });
+      try { sessionStorage.removeItem(PENDING_BILLING_KEY); } catch (_) { /* ignore */ }
+      if (noteEl) noteEl.textContent = 'Pro 구독이 활성화되었습니다.';
+      await refresh();
+      return true;
+    } catch (err) {
+      stashPendingBilling(authKey, customerKey);
+      if (noteEl) noteEl.textContent = err.message || '결제 확정 실패';
+      alert(err.message || '결제 확정 실패');
+      return false;
+    } finally {
+      busy = false;
+    }
+  }
+
   async function handleReturnQuery() {
     const params = new URLSearchParams(window.location.search);
     const billing = params.get('billing');
-    if (!billing) return;
+    if (!billing) {
+      // Resume confirm after login if Toss return happened while logged out.
+      try {
+        const raw = sessionStorage.getItem(PENDING_BILLING_KEY);
+        if (raw && typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
+          const pending = JSON.parse(raw);
+          await confirmPendingBilling(pending);
+        }
+      } catch (_) { /* ignore */ }
+      return;
+    }
 
     const noteEl = $('billingNote');
     if (billing === 'fail') {
       if (noteEl) {
         noteEl.textContent = params.get('message') || '카드 등록이 취소되거나 실패했습니다.';
       }
-    } else if (billing === 'success') {
-      const authKey = params.get('authKey');
-      const customerKey = params.get('customerKey');
-      if (noteEl) noteEl.textContent = '결제 확인 중…';
-      if (authKey && customerKey && typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
-        try {
-          busy = true;
-          await FuturesApiClient.billingConfirm({ authKey, customerKey, product: 'month' });
-          if (noteEl) noteEl.textContent = 'Pro 구독이 활성화되었습니다.';
-          await refresh();
-        } catch (err) {
-          if (noteEl) noteEl.textContent = err.message || '결제 확정 실패';
-          alert(err.message || '결제 확정 실패');
-        } finally {
-          busy = false;
-        }
-      }
+      stripBillingQuery();
+      return;
     }
 
-    params.delete('billing');
-    params.delete('authKey');
-    params.delete('customerKey');
-    params.delete('product');
-    params.delete('code');
-    params.delete('message');
-    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-    window.history.replaceState({}, '', next);
+    if (billing === 'success') {
+      const authKey = params.get('authKey');
+      const customerKey = params.get('customerKey');
+      if (!authKey || !customerKey) {
+        if (noteEl) noteEl.textContent = '결제 정보가 없습니다. 다시 시도해 주세요.';
+      } else {
+        // Stash before stripping URL so a missing session cannot lose authKey.
+        stashPendingBilling(authKey, customerKey);
+        await confirmPendingBilling({ authKey, customerKey });
+      }
+      stripBillingQuery();
+    }
   }
 
   function init() {

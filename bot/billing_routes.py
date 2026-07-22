@@ -22,6 +22,7 @@ from bot.billing_service import (
 from bot.db import get_db
 from bot.models import User
 from bot.platform_config import (
+    auth_required,
     billing_configured,
     billing_enforce,
     free_bot_seconds_per_week,
@@ -188,8 +189,13 @@ async def billing_toss_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Toss dashboard webhook — public, optional shared-secret header."""
+    """Toss dashboard webhook — public path; secret required when billing is live."""
     secret = toss_webhook_secret()
+    if billing_configured() and auth_required() and not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="TOSS_WEBHOOK_SECRET가 필요합니다. 결제 웹훅을 활성화하기 전에 설정하세요.",
+        )
     if secret:
         got = (request.headers.get("X-Orbinex-Webhook-Secret") or "").strip()
         if got != secret:

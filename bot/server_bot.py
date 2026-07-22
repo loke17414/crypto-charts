@@ -442,6 +442,17 @@ def stop_all_bots() -> None:
             logger.warning("Failed to stop bot user=%s: %s", key, exc)
 
 
+def list_running_user_ids() -> list[int]:
+    """User ids with a live Node bot process (excludes legacy single-tenant key)."""
+    out: list[int] = []
+    for key in list(_bots.keys()):
+        if key == LEGACY_BOT_KEY:
+            continue
+        if is_running(key):
+            out.append(int(key))
+    return out
+
+
 def list_bot_fleet() -> list[dict[str, Any]]:
     """Running + persisted shouldRun bots for admin fleet view."""
     keys: set[int] = set(_persisted_bot_keys())

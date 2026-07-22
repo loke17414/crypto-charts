@@ -44,11 +44,17 @@ TOSS_API = "https://api.tosspayments.com"
 PRO_STATUSES = frozenset({"active", "past_due"})
 
 
-def _tz() -> ZoneInfo:
+def _tz() -> ZoneInfo | timezone:
+    """Billing week timezone. Falls back to fixed UTC+9 if tzdata is missing."""
+    name = billing_week_timezone() or "Asia/Seoul"
     try:
-        return ZoneInfo(billing_week_timezone())
+        return ZoneInfo(name)
     except Exception:  # noqa: BLE001
-        return ZoneInfo("Asia/Seoul")
+        try:
+            return ZoneInfo("Asia/Seoul")
+        except Exception:  # noqa: BLE001
+            logger.warning("tzdata missing — using fixed UTC+9 for billing week (%s)", name)
+            return timezone(timedelta(hours=9))
 
 
 def current_week_start() -> str:
@@ -92,10 +98,13 @@ def ensure_usage(db: Session, user_id: int) -> UsageQuota:
         db.refresh(row)
         return row
     if row.week_start != week:
+        # Keep session clock if bot is still running across the week boundary so
+        # new-week usage accrues from the cutover instead of dropping the run.
+        was_running = row.bot_session_started_at is not None
         row.week_start = week
         row.bot_seconds_used = 0
         row.gpt_calls_used = 0
-        row.bot_session_started_at = None
+        row.bot_session_started_at = _utcnow() if was_running else None
         db.commit()
         db.refresh(row)
     return row
@@ -337,6 +346,30 @@ def should_force_stop_bot(db: Session, user_id: int) -> bool:
     return int(usage.bot_seconds_used or 0) >= free_bot_seconds_per_week()
 
 
+def enforce_running_bot_quotas() -> int:
+    """Stop free-tier bots that exceeded weekly hours (server-side watchdog)."""
+    if not billing_enforce():
+        return 0
+    from bot.db import SessionLocal
+    from bot.server_bot import list_running_user_ids, stop_bot
+
+    stopped = 0
+    db = SessionLocal()
+    try:
+        for uid in list_running_user_ids():
+            try:
+                if should_force_stop_bot(db, uid):
+                    mark_bot_stopped(db, uid)
+                    stop_bot(uid)
+                    stopped += 1
+                    logger.info("Quota watchdog stopped bot user=%s", uid)
+            except Exception:  # noqa: BLE001
+                logger.exception("Quota watchdog failed user=%s", uid)
+    finally:
+        db.close()
+    return stopped
+
+
 def _toss_auth_header() -> dict[str, str]:
     secret = toss_secret_key()
     if not secret:
@@ -459,6 +492,46 @@ def _record_payment(
     return row
 
 
+def clear_stored_billing_key(
+    db: Session,
+    sub: Subscription,
+    *,
+    delete_remote: bool = False,
+) -> None:
+    """Drop local (and optionally Toss) billing key so renew cannot charge again."""
+    if delete_remote and sub.toss_billing_key_encrypted:
+        try:
+            billing_key = decrypt_secret(sub.toss_billing_key_encrypted)
+            _toss_request("DELETE", f"/v1/billing/{billing_key}", {"billingKey": billing_key})
+        except Exception:  # noqa: BLE001
+            logger.warning("Toss billing key delete failed user=%s", sub.user_id)
+    sub.toss_billing_key_encrypted = None
+    db.commit()
+
+
+def _reverse_payment_entitlements(db: Session, row: PaymentRecord, *, full_cancel: bool) -> None:
+    """Undo Pro / GPT pack grants after a successful Toss cancel."""
+    if not full_cancel:
+        return
+    kind = (row.kind or "").strip().lower()
+    if kind in {"subscribe", "renew"}:
+        sub = ensure_subscription(db, row.user_id)
+        if is_pro(sub) or sub.plan == "pro":
+            sub.plan = "free"
+            sub.status = "canceled"
+            sub.cancel_at_period_end = False
+            sub.current_period_end = _utcnow()
+            sub.toss_billing_key_encrypted = None
+            db.commit()
+    elif kind == "gpt_pack":
+        usage = ensure_usage(db, row.user_id)
+        usage.gpt_bonus_calls = max(
+            0,
+            int(getattr(usage, "gpt_bonus_calls", 0) or 0) - gpt_pack_calls(),
+        )
+        db.commit()
+
+
 def cancel_toss_payment(
     db: Session,
     *,
@@ -466,19 +539,13 @@ def cancel_toss_payment(
     reason: str,
     cancel_amount: int | None = None,
     actor_user_id: int | None = None,
+    expected_user_id: int | None = None,
+    reverse_entitlements: bool = True,
 ) -> dict[str, Any]:
     """Cancel/refund a Toss payment by paymentKey and update local ledger."""
-    if not billing_configured():
-        raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
     key = (payment_key or "").strip()
     if not key:
         raise HTTPException(status_code=400, detail="paymentKey가 필요합니다.")
-    reason_s = (reason or "고객 요청 환불").strip()[:200] or "고객 요청 환불"
-    payload: dict[str, Any] = {"cancelReason": reason_s}
-    if cancel_amount is not None:
-        payload["cancelAmount"] = int(cancel_amount)
-
-    data = _toss_request("POST", f"/v1/payments/{key}/cancel", payload)
 
     row = (
         db.query(PaymentRecord)
@@ -486,27 +553,55 @@ def cancel_toss_payment(
         .order_by(PaymentRecord.id.desc())
         .first()
     )
+    if expected_user_id is not None:
+        if row is None or int(row.user_id) != int(expected_user_id):
+            raise HTTPException(status_code=404, detail="해당 사용자의 결제 기록이 없습니다.")
+    if not billing_configured():
+        raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
+
+    reason_s = (reason or "고객 요청 환불").strip()[:200] or "고객 요청 환불"
+    payload: dict[str, Any] = {"cancelReason": reason_s}
+    if cancel_amount is not None:
+        payload["cancelAmount"] = int(cancel_amount)
+
+    data = _toss_request("POST", f"/v1/payments/{key}/cancel", payload)
+    toss_status = str(data.get("status") or "").strip().upper()
+    if toss_status == "PARTIAL_CANCELED":
+        mapped = "partial_canceled"
+    elif toss_status == "CANCELED":
+        mapped = "canceled"
+    else:
+        mapped = "canceled" if cancel_amount is None else "partial_canceled"
+
+    full_cancel = cancel_amount is None
+    if row is not None and cancel_amount is not None:
+        full_cancel = int(cancel_amount) >= int(row.amount or 0)
+
     if row is not None:
-        row.status = "canceled"
+        row.status = mapped[:32]
         db.commit()
         db.refresh(row)
+        if reverse_entitlements:
+            _reverse_payment_entitlements(db, row, full_cancel=full_cancel)
 
     logger.info(
-        "Toss payment canceled key=%s amount=%s actor=%s",
+        "Toss payment canceled key=%s amount=%s actor=%s status=%s",
         key[:12],
         cancel_amount,
         actor_user_id,
+        mapped,
     )
     return {
         "ok": True,
         "paymentKey": key,
-        "status": "canceled",
+        "status": mapped,
         "toss": {
             "status": data.get("status"),
             "cancels": data.get("cancels"),
             "totalAmount": data.get("totalAmount"),
         },
         "localRecordId": row.id if row else None,
+        "entitlementsReversed": bool(reverse_entitlements and full_cancel and row is not None),
     }
 
 

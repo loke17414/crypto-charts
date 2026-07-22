@@ -22,6 +22,10 @@ has MASTER_ENCRYPTION_KEY && ok "MASTER_ENCRYPTION_KEY" || bad "MASTER_ENCRYPTIO
 has DATABASE_URL && ok "DATABASE_URL" || bad "DATABASE_URL"
 has APP_ORIGIN && [[ "$(val APP_ORIGIN)" == https://* ]] && ok "APP_ORIGIN https" || bad "APP_ORIGIN=https://..."
 has TOSS_SECRET_KEY && has TOSS_CLIENT_KEY && ok "TOSS keys" || bad "TOSS_CLIENT_KEY / TOSS_SECRET_KEY"
+has TOSS_WEBHOOK_SECRET && [[ "$(val TOSS_WEBHOOK_SECRET | wc -c)" -gt 8 ]] && ok "TOSS_WEBHOOK_SECRET" || bad "TOSS_WEBHOOK_SECRET"
+# LIVE_TRADING_ENABLED unset defaults to true; explicit false is an intentional halt.
+live="$(val LIVE_TRADING_ENABLED 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+if [[ -z "$live" || "$live" =~ ^(true|1|yes)$ ]]; then ok "LIVE_TRADING_ENABLED on"; else ok "LIVE_TRADING_ENABLED=$live (halt)"; fi
 has OPENAI_API_KEY && ok "OPENAI_API_KEY" || bad "OPENAI_API_KEY"
 has ADMIN_EMAILS && ok "ADMIN_EMAILS" || bad "ADMIN_EMAILS"
 has SUPPORT_EMAIL && ok "SUPPORT_EMAIL" || bad "SUPPORT_EMAIL"
