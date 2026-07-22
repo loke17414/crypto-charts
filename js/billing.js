@@ -73,6 +73,9 @@ const AppBilling = (() => {
         noteEl.textContent = '결제(토스페이먼츠)가 아직 서버에 설정되지 않았습니다.';
       } else if (!snap.enforce) {
         noteEl.textContent = '쿼터 강제 적용이 꺼져 있습니다 (BILLING_ENFORCE).';
+      } else if (snap.paymentFailed || snap.status === 'past_due') {
+        noteEl.textContent = snap.statusMessage
+          || '최근 구독 갱신 결제에 실패했습니다. 결제 수단을 확인한 뒤 Pro를 다시 구독해 주세요.';
       } else if (snap.pro && snap.cancelAtPeriodEnd) {
         noteEl.textContent = snap.currentPeriodEnd
           ? `해지 예약됨 · ${new Date(snap.currentPeriodEnd).toLocaleString()}까지 Pro`

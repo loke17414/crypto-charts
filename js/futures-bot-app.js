@@ -3655,6 +3655,21 @@ const FuturesBotApp = (() => {
 
     if (isTestnetMode()) {
       try {
+        const netLabel = (typeof testnetStatus?.sessionTestnet === 'boolean'
+          ? testnetStatus.sessionTestnet
+          : true)
+          ? '바이낸스 테스트넷'
+          : '바이낸스 메인넷(실자금)';
+        const okLive = window.confirm(
+          `${netLabel}에서 서버 봇이 실제 주문을 넣습니다.\n\n` +
+          `심볼 ${state.symbol} · 레버리지 ${state.leverage}x\n` +
+          '손절·익절·잔고를 확인한 뒤에만 확인을 누르세요.',
+        );
+        if (!okLive) return;
+        if (netLabel.includes('메인넷')) {
+          const ok2 = window.confirm('메인넷 실거래입니다. 손실 위험이 있습니다. 정말 시작할까요?');
+          if (!ok2) return;
+        }
         await syncStrategyToServer();
         const marginPreview = await calcTradeMarginForTrade();
         await FuturesApiClient.setup({
@@ -3665,7 +3680,7 @@ const FuturesBotApp = (() => {
         });
         await FuturesApiClient.clearBotEntryPause();
         seenServerBotLogs.clear();
-        await FuturesApiClient.startServerBot({ liveTrading: true });
+        await FuturesApiClient.startServerBot({ liveTrading: true, confirmLiveTrading: true });
         serverBotActive = true;
         serverBotLive = true;
         serverBotDryWarned = false;

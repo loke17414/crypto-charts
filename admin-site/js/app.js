@@ -199,6 +199,8 @@
             <button class="btn btn-sm" data-dact="to-free">Free로</button>
             <button class="btn btn-sm" data-dact="cancel-end">구독 기간종료 취소</button>
             <button class="btn btn-sm btn-danger" data-dact="cancel-now">구독 즉시 해지</button>
+            <button class="btn btn-sm" data-dact="payments">결제내역</button>
+            <button class="btn btn-sm btn-danger" data-dact="refund">결제 환불</button>
             <button class="btn btn-sm" data-dact="reset-quota">쿼터 리셋</button>
             <button class="btn btn-sm" data-dact="set-quota">쿼터 수동입력</button>
             <button class="btn btn-sm" data-dact="clear-gate">진입게이트 해제</button>
@@ -257,6 +259,20 @@
       else if (act === 'cancel-now') {
         if (!confirm('결제키까지 즉시 해지할까요?')) return;
         ({ message: msg } = await AdminApi.cancelSubscription(id, true));
+      } else if (act === 'payments') {
+        const data = await AdminApi.listPayments(id);
+        const rows = data.payments || [];
+        alert(rows.length
+          ? rows.map((p) => `${p.createdAt || ''} · ${p.kind} · ${p.amount}${p.currency || 'KRW'} · ${p.status} · key=${p.paymentKey || '-'}`).join('\n')
+          : '결제 내역이 없습니다.');
+        return;
+      } else if (act === 'refund') {
+        const paymentKey = prompt('환불할 Toss paymentKey를 입력하세요');
+        if (!paymentKey) return;
+        const reason = prompt('환불 사유', '관리자 환불') || '관리자 환불';
+        const amt = prompt('부분 환불 금액(원). 전액이면 비우기', '');
+        if (!confirm(`paymentKey=${paymentKey}\n사유=${reason}\n정말 환불할까요?`)) return;
+        ({ message: msg } = await AdminApi.refundPayment(id, paymentKey, reason, amt));
       } else if (act === 'reset-quota') ({ message: msg } = await AdminApi.resetQuota(id));
       else if (act === 'set-quota') {
         const botH = prompt('봇 사용 시간(시간)을 입력하세요', '0');

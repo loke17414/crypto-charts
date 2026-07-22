@@ -213,10 +213,22 @@ def usage_snapshot(db: Session, user_id: int, *, running: bool = False) -> dict[
     interval = _normalize_interval(getattr(sub, "billing_interval", None) or "month")
     amount, _order = _pro_amount_and_name(interval)
 
+    payment_failed = str(sub.status or "") == "past_due"
+    status_message = ""
+    if payment_failed:
+        status_message = (
+            "최근 구독 갱신 결제에 실패해 Free로 전환되었습니다. "
+            "요금제에서 결제 수단을 확인한 뒤 Pro를 다시 구독해 주세요."
+        )
+    elif pro and sub.cancel_at_period_end:
+        status_message = "해지 예약됨 — 기간 종료 후 Free로 전환됩니다."
+
     return {
         "plan": "pro" if pro else "free",
         "status": sub.status,
         "pro": pro,
+        "paymentFailed": payment_failed,
+        "statusMessage": status_message,
         "paymentsConfigured": billing_configured(),
         "provider": "toss",
         "enforce": billing_enforce(),
@@ -445,6 +457,115 @@ def _record_payment(
     db.commit()
     db.refresh(row)
     return row
+
+
+def cancel_toss_payment(
+    db: Session,
+    *,
+    payment_key: str,
+    reason: str,
+    cancel_amount: int | None = None,
+    actor_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Cancel/refund a Toss payment by paymentKey and update local ledger."""
+    if not billing_configured():
+        raise HTTPException(status_code=503, detail="결제가 아직 설정되지 않았습니다.")
+    key = (payment_key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="paymentKey가 필요합니다.")
+    reason_s = (reason or "고객 요청 환불").strip()[:200] or "고객 요청 환불"
+    payload: dict[str, Any] = {"cancelReason": reason_s}
+    if cancel_amount is not None:
+        payload["cancelAmount"] = int(cancel_amount)
+
+    data = _toss_request("POST", f"/v1/payments/{key}/cancel", payload)
+
+    row = (
+        db.query(PaymentRecord)
+        .filter(PaymentRecord.payment_key == key)
+        .order_by(PaymentRecord.id.desc())
+        .first()
+    )
+    if row is not None:
+        row.status = "canceled"
+        db.commit()
+        db.refresh(row)
+
+    logger.info(
+        "Toss payment canceled key=%s amount=%s actor=%s",
+        key[:12],
+        cancel_amount,
+        actor_user_id,
+    )
+    return {
+        "ok": True,
+        "paymentKey": key,
+        "status": "canceled",
+        "toss": {
+            "status": data.get("status"),
+            "cancels": data.get("cancels"),
+            "totalAmount": data.get("totalAmount"),
+        },
+        "localRecordId": row.id if row else None,
+    }
+
+
+def apply_toss_webhook_event(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
+    """Idempotent ledger update from Toss webhook JSON."""
+    event = str(payload.get("eventType") or payload.get("type") or "").strip()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    if not isinstance(data, dict):
+        data = {}
+
+    payment_key = str(data.get("paymentKey") or "").strip() or None
+    order_id = str(data.get("orderId") or "").strip() or None
+    status_raw = str(data.get("status") or "").strip().upper()
+
+    row: PaymentRecord | None = None
+    if payment_key:
+        row = (
+            db.query(PaymentRecord)
+            .filter(PaymentRecord.payment_key == payment_key)
+            .order_by(PaymentRecord.id.desc())
+            .first()
+        )
+    if row is None and order_id:
+        row = (
+            db.query(PaymentRecord)
+            .filter(PaymentRecord.order_id == order_id)
+            .order_by(PaymentRecord.id.desc())
+            .first()
+        )
+
+    mapped = None
+    if status_raw == "DONE":
+        mapped = "paid"
+    elif status_raw == "CANCELED":
+        mapped = "canceled"
+    elif status_raw in {"PARTIAL_CANCELED", "EXPIRED", "ABORTED", "WAITING_FOR_DEPOSIT"}:
+        mapped = status_raw.lower()
+    elif status_raw:
+        mapped = status_raw.lower()[:32]
+
+    changed = False
+    if row is not None and mapped and row.status != mapped:
+        row.status = mapped[:32]
+        if payment_key and not row.payment_key:
+            row.payment_key = payment_key[:200]
+        db.commit()
+        changed = True
+
+    # Failed renewals already downgrade in try_renew_if_due; webhook is ledger sync.
+    return {
+        "ok": True,
+        "eventType": event or None,
+        "paymentKey": payment_key,
+        "orderId": order_id,
+        "status": mapped or status_raw or None,
+        "matched": row is not None,
+        "updated": changed,
+        "recordId": row.id if row else None,
+    }
 
 
 def list_payment_history(db: Session, user_id: int, *, limit: int = 50) -> list[dict[str, Any]]:

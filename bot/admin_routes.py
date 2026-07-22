@@ -15,9 +15,11 @@ from bot.auth_routes import get_current_user
 from bot.auth_service import request_password_reset, resend_verification
 from bot.billing_service import (
     cancel_subscription,
+    cancel_toss_payment,
     ensure_subscription,
     ensure_usage,
     is_pro,
+    list_payment_history,
     mark_bot_stopped,
     usage_snapshot,
 )
@@ -88,6 +90,12 @@ class SetQuotaBody(BaseModel):
 
 class CancelSubBody(BaseModel):
     immediate: bool = False
+
+
+class RefundPaymentBody(BaseModel):
+    paymentKey: str = Field(min_length=4, max_length=200)
+    reason: str = Field(default="관리자 환불", max_length=200)
+    cancelAmount: int | None = Field(default=None, ge=1)
 
 
 class PauseEntryBody(BaseModel):
@@ -485,6 +493,48 @@ def admin_cancel_subscription(
         detail="immediate" if body.immediate else "period-end",
     )
     return {"ok": True, "user": _user_row(db, user), **result}
+
+
+@router.get("/users/{user_id}/payments")
+def admin_user_payments(
+    user_id: int,
+    limit: int = Query(default=30, ge=1, le=100),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _get_user_or_404(db, user_id)
+    _ = admin
+    return {"ok": True, "userId": user.id, "payments": list_payment_history(db, user.id, limit=limit)}
+
+
+@router.post("/users/{user_id}/refund-payment")
+def admin_refund_payment(
+    user_id: int,
+    body: RefundPaymentBody,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _get_user_or_404(db, user_id)
+    try:
+        result = cancel_toss_payment(
+            db,
+            payment_key=body.paymentKey,
+            reason=body.reason,
+            cancel_amount=body.cancelAmount,
+            actor_user_id=admin.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(
+        db,
+        admin,
+        "refund-payment",
+        target_user_id=user.id,
+        detail=f"{body.paymentKey[:16]}… {body.reason}"[:200],
+    )
+    return {"ok": True, "user": _user_row(db, user), **result, "message": "토스 결제 취소/환불을 요청했습니다."}
 
 
 @router.post("/users/{user_id}/reset-quota")

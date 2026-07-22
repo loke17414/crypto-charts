@@ -70,6 +70,12 @@ const AdminApi = (() => {
     }),
     grantPro: (id, days) => post(`/api/admin/users/${id}/grant-pro`, { days: Number(days) || 30 }),
     cancelSubscription: (id, immediate = false) => post(`/api/admin/users/${id}/cancel-subscription`, { immediate: !!immediate }),
+    listPayments: (id) => request(`/api/admin/users/${id}/payments`),
+    refundPayment: (id, paymentKey, reason, cancelAmount) => post(`/api/admin/users/${id}/refund-payment`, {
+      paymentKey,
+      reason: reason || '관리자 환불',
+      cancelAmount: cancelAmount == null || cancelAmount === '' ? null : Number(cancelAmount),
+    }),
     resetQuota: (id) => post(`/api/admin/users/${id}/reset-quota`),
     setQuota: (id, body) => post(`/api/admin/users/${id}/set-quota`, body),
     stopBot: (id) => post(`/api/admin/users/${id}/stop-bot`),

@@ -46,6 +46,7 @@ from bot.platform_config import (
     free_max_strategy_slots,
     free_recommended_strategies_allowed,
     free_web_research_allowed,
+    live_trading_enabled,
     pro_max_strategy_slots,
 )
 from bot.email_service import smtp_configured
@@ -223,6 +224,7 @@ PUBLIC_API_PATHS = {
     "/api/auth/reset-password",
     "/api/platform/outbound-ip",
     "/api/billing/status",
+    "/api/billing/webhook/toss",
     "/api/public/site",
 }
 
@@ -317,6 +319,7 @@ class StrategySyncBody(BaseModel):
 
 class BotStartBody(BaseModel):
     live_trading: bool = True
+    confirm_live_trading: bool = False
 
 
 class CloseOrderBody(BaseModel):
@@ -1135,6 +1138,23 @@ def bot_start(
             session = _get_session(None)
     assert session is not None
     live = body.live_trading if body else True
+    confirm_live = bool(body.confirm_live_trading) if body else False
+    if live and not live_trading_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="실거래 주문이 비활성화되어 있습니다 (LIVE_TRADING_ENABLED=false).",
+        )
+    # Mainnet live orders require explicit client confirm; testnet still asks via UI.
+    if live and not session.config.use_testnet and not confirm_live:
+        raise HTTPException(
+            status_code=400,
+            detail="메인넷 실거래는 confirm_live_trading=true 확인이 필요합니다.",
+        )
+    if live and not confirm_live:
+        raise HTTPException(
+            status_code=400,
+            detail="실거래 봇 시작은 confirm_live_trading=true 확인이 필요합니다.",
+        )
     uid = user.id if user is not None else None
     try:
         if user is not None:

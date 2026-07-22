@@ -258,6 +258,17 @@ def billing_enforce() -> bool:
     return auth_required()
 
 
+def live_trading_enabled() -> bool:
+    """Global kill switch for real exchange orders (server bot live mode). Default true."""
+    raw = os.getenv("LIVE_TRADING_ENABLED", "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def toss_webhook_secret() -> str:
+    """Optional shared secret; if set, webhook must send X-Orbinex-Webhook-Secret."""
+    return os.getenv("TOSS_WEBHOOK_SECRET", "").strip().strip('"').strip("'")
+
+
 def free_bot_seconds_per_week() -> int:
     """Free plan bot runtime per week. Default 24h."""
     try:

@@ -8,7 +8,6 @@ bot-js-state.json
 strategy-ai-memory.json
 strategy.json
 node_modules/
-.github/workflows/
 __pycache__/
 *.pyc
 *.pyo

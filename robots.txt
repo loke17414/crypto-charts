@@ -1,14 +1,14 @@
 User-agent: *
 Allow: /
+Allow: /terms.html
+Allow: /privacy.html
+Allow: /refund.html
+Allow: /risk-disclosure.html
 Disallow: /admin.html
 Disallow: /admin-site/
 Disallow: /login.html
 Disallow: /register.html
 Disallow: /billing.html
 Disallow: /account.html
-Disallow: /refund.html
-Disallow: /terms.html
-Disallow: /privacy.html
-Disallow: /risk-disclosure.html
 
 Sitemap: https://orbinex.net/sitemap.xml

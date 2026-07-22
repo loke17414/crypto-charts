@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from bot.auth_routes import get_current_user
 from bot.billing_service import (
+    apply_toss_webhook_event,
     cancel_subscription,
     confirm_billing_auth,
     list_payment_history,
@@ -35,6 +36,7 @@ from bot.platform_config import (
     toss_client_key,
     toss_pro_amount_krw,
     toss_pro_annual_amount_krw,
+    toss_webhook_secret,
 )
 from bot.rate_limit import RateLimiter, client_ip
 from bot.server_bot import is_running
@@ -179,3 +181,23 @@ def billing_history(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return {"ok": True, "payments": list_payment_history(db, user.id)}
+
+
+@router.post("/webhook/toss")
+async def billing_toss_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Toss dashboard webhook — public, optional shared-secret header."""
+    secret = toss_webhook_secret()
+    if secret:
+        got = (request.headers.get("X-Orbinex-Webhook-Secret") or "").strip()
+        if got != secret:
+            raise HTTPException(status_code=401, detail="webhook secret mismatch")
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid JSON body") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="webhook body must be an object")
+    return apply_toss_webhook_event(db, payload)
