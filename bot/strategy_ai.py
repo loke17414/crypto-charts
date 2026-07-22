@@ -291,6 +291,13 @@ ALWAYS use the exact param names from indicator_catalog; do NOT invent names lik
 Examples of correct multi-line usage:
 - MACD golden cross: cross_above { indicator:"macd", field:"macd" } vs { indicator:"macd", field:"signal" }
 - MACD histogram > 0: compare { indicator:"macd", field:"histogram" } > { value:0 }
+- MACD 매도모멘텀 연속 약화 → 롱: histogram rising for N bars (still often < 0).
+  Use compare with offsets, logic "all", short.enabled=false. Example for 2 consecutive:
+  hist[0] > hist[1] AND hist[1] > hist[2]
+  ({ source:"indicator", indicator:"macd", field:"histogram", offset:0 } > offset:1)
+  AND (offset:1 > offset:2). Optional: keep hist < 0 with compare < {value:0}.
+- 손절 전저점 + 익절 손익비 1:1: exitRules.long stopLoss candle_extreme field:low (prefer offset covering recent swing low; if unsure offset:2~5) + takeProfit risk_reward ratio:1
+  Do NOT replace MACD entry with swing_near/swing_break just because SL mentions 전저점.
 - Stoch oversold long: compare { indicator:"stoch", field:"k" } < { value:20 }
 - KDJ J > 100 short: compare { indicator:"kdj", field:"j" } > { value:100 }
 - ADX trend filter: compare { indicator:"dmi", field:"adx" } > { value:25 }
@@ -1590,10 +1597,56 @@ def _prompt_wants_divergence(prompt: str) -> bool:
     return any(k in text for k in _DIVERGENCE_MARKERS)
 
 
+def _strip_exit_only_swing_phrases(prompt: str) -> str:
+    """Remove 전저점/전고점 when they are only SL/TP anchors (not entry triggers)."""
+    text = _prompt_text(prompt)
+    text = re.sub(
+        r"(손절|익절|stoploss|take[\s_-]?profit|stop[\s_-]?loss)"
+        r"[^\n,.]{0,48}(전저점|전고점|전저|전고|스윙고점|스윙저점)",
+        " ",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"(손절|익절)\s*(은|는|을|를|:)?\s*(전저점|전고점|전저|전고)",
+        " ",
+        text,
+    )
+    return text
+
+
+def _prompt_has_complex_indicator_entry(prompt: str) -> bool:
+    """
+    True when entry is driven by MACD/RSI/etc logic that local swing/band
+    templates cannot express (e.g. consecutive MACD momentum weakening).
+    """
+    text = _prompt_text(prompt)
+    has_macd = "macd" in text
+    has_rsi = bool(re.search(r"\brsi\b|알에스아이", text))
+    has_stoch = any(k in text for k in ("스토캐", "stoch", "kdj"))
+    if not (has_macd or has_rsi or has_stoch):
+        return False
+    # Momentum / consecutive / cross style — needs GPT (or dedicated local MACD later)
+    complex_kw = (
+        "모멘텀", "momentum", "히스토그램", "histogram", "연속", "약화", "강화",
+        "크로스", "골든", "데드", "다이버전", "divergence",
+        "기울", "감소", "증가", "수렴", "발산",
+    )
+    if any(k in text for k in complex_kw):
+        return True
+    # "MACD … 진입" without being a pure divergence keyword hit handled elsewhere
+    if has_macd and any(k in text for k in ("진입", "조건", "롱", "숏", "long", "short")):
+        return True
+    return False
+
+
 def _prompt_wants_swing(prompt: str) -> bool:
     if _prompt_wants_band_strategy(prompt) or _prompt_wants_fvg(prompt) or _prompt_wants_divergence(prompt):
         return False
-    text = _prompt_text(prompt)
+    # Do not hijack MACD/RSI momentum entries just because SL says 전저점.
+    if _prompt_has_complex_indicator_entry(prompt):
+        return False
+    text = _strip_exit_only_swing_phrases(prompt)
     swing_kw = any(k in text for k in _SWING_MARKERS)
     apply_kw = any(k in text for k in _STRATEGY_CONTEXT_MARKERS)
     return swing_kw and apply_kw
@@ -1601,6 +1654,13 @@ def _prompt_wants_swing(prompt: str) -> bool:
 
 def _prompt_side(prompt: str) -> str | None:
     text = _prompt_text(prompt)
+    # "매도모멘텀/매수모멘텀" is indicator language, not trade side.
+    text = re.sub(
+        r"매도\s*모멘텀|매수\s*모멘텀|sell\s*momentum|buy\s*momentum",
+        " ",
+        text,
+        flags=re.I,
+    )
     long_kw = any(k in text for k in ("롱", "long", "매수"))
     short_kw = any(k in text for k in ("숏", "short", "매도"))
     if long_kw and not short_kw:
@@ -2215,6 +2275,10 @@ def _local_strategy_template(
         return rsi, "rsi_local_no_gpt", "RSI 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
     if not _prompt_applyish(text):
+        return None
+
+    # Complex MACD/RSI momentum (consecutive weaken/strengthen, etc.) → GPT.
+    if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
         return None
 
     # Prefer more specific templates before generic bullish-candle.
