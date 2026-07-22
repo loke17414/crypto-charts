@@ -38,7 +38,51 @@ _last_test_result: dict[str, Any] = {
     "checkedAt": None,
     "message": "아직 연결 테스트를 하지 않았습니다.",
     "errorCode": None,
+    "keyFingerprint": None,
 }
+
+# Avoid burning OpenAI credits on repeated connection tests (page load / every chat).
+def _verify_cache_seconds() -> int:
+    try:
+        return max(60, int(os.getenv("OPENAI_VERIFY_CACHE_SECONDS", "21600").strip()))  # 6h
+    except ValueError:
+        return 21600
+
+
+def _key_fingerprint(api_key: str) -> str:
+    cleaned = (api_key or "").strip()
+    if len(cleaned) < 12:
+        return cleaned
+    return f"{cleaned[:8]}…{cleaned[-4:]}:{len(cleaned)}"
+
+
+def _cached_verify_ok(api_key: str) -> dict[str, Any] | None:
+    """Return a synthetic success result if a recent live verify succeeded for this key."""
+    if not _last_test_result.get("verified") or not _last_test_result.get("checkedAt"):
+        return None
+    if _last_test_result.get("keyFingerprint") != _key_fingerprint(api_key):
+        return None
+    try:
+        checked = datetime.fromisoformat(str(_last_test_result["checkedAt"]))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - checked).total_seconds()
+    except ValueError:
+        return None
+    if age > _verify_cache_seconds():
+        return None
+    return {
+        "ok": True,
+        "verified": True,
+        "authenticated": True,
+        "chatReady": True,
+        "message": _last_test_result.get("message") or "캐시된 OpenAI 연결 상태 (최근 검증 통과)",
+        "errorCode": None,
+        "keyPreview": mask_api_key(api_key),
+        "model": _openai_config()[1],
+        "checkedAt": _last_test_result.get("checkedAt"),
+        "cached": True,
+    }
 
 SYSTEM_PROMPT = """You edit BTC USDT-M futures entry strategy for a web trading bot.
 
@@ -421,13 +465,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _set_test_result(*, verified: bool, message: str, error_code: str | None = None) -> None:
+def _set_test_result(
+    *,
+    verified: bool,
+    message: str,
+    error_code: str | None = None,
+    api_key: str | None = None,
+) -> None:
     global _last_test_result
     _last_test_result = {
         "verified": verified,
         "checkedAt": _now_iso(),
         "message": message,
         "errorCode": error_code,
+        "keyFingerprint": _key_fingerprint(api_key) if api_key else _last_test_result.get("keyFingerprint"),
     }
 
 
@@ -490,7 +541,7 @@ def _parse_openai_error(status_code: int, body_text: str) -> tuple[str, str | No
     return (f"OpenAI API 오류 ({status_code}): {message}", code)
 
 
-def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
+def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> dict[str, Any]:
     key = (api_key or _openai_config()[0]).strip()
     model = _openai_config()[1]
 
@@ -503,10 +554,16 @@ def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
             "keyPreview": None,
             "model": model,
         }
-        _set_test_result(verified=False, message=result["message"], error_code="missing_key")
+        _set_test_result(verified=False, message=result["message"], error_code="missing_key", api_key=None)
         return result
 
     validate_api_key_format(key)
+
+    if not force:
+        cached = _cached_verify_ok(key)
+        if cached:
+            logger.info("OpenAI verify cache hit fingerprint=%s", _key_fingerprint(key))
+            return cached
 
     try:
         res = requests.get(
@@ -516,7 +573,7 @@ def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
         )
     except requests.RequestException as exc:
         message = f"OpenAI 서버 연결 실패: {exc}"
-        _set_test_result(verified=False, message=message, error_code="network_error")
+        _set_test_result(verified=False, message=message, error_code="network_error", api_key=key)
         return {
             "ok": False,
             "verified": False,
@@ -528,7 +585,7 @@ def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
 
     if res.status_code != 200:
         message, code = _parse_openai_error(res.status_code, res.text)
-        _set_test_result(verified=False, message=message, error_code=code)
+        _set_test_result(verified=False, message=message, error_code=code, api_key=key)
         return {
             "ok": False,
             "verified": False,
@@ -547,6 +604,7 @@ def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
             verified=False,
             message=chat_result["message"],
             error_code=chat_result.get("errorCode"),
+            api_key=key,
         )
         return {
             "ok": False,
@@ -565,6 +623,7 @@ def test_openai_api_key(api_key: str | None = None) -> dict[str, Any]:
         verified=True,
         message="OpenAI API 키가 정상이며 GPT 호출이 가능합니다.",
         error_code=None,
+        api_key=key,
     )
     return {
         "ok": True,
@@ -682,7 +741,7 @@ def ai_available(
 
 def configure_openai_api_key(api_key: str, *, persist_env: bool = True) -> dict[str, Any]:
     validate_api_key_format(api_key)
-    test_result = test_openai_api_key(api_key)
+    test_result = test_openai_api_key(api_key, force=True)
     if not test_result["verified"]:
         raise ValueError(test_result["message"])
 
@@ -979,9 +1038,19 @@ def _call_openai_with_key(
     payload = {
         "model": chosen_model,
         "temperature": 0.2,
+        "max_tokens": 2500,
         "response_format": {"type": "json_object"},
         "messages": messages,
     }
+
+    approx_chars = sum(len(m.get("content") or "") for m in messages)
+    logger.info(
+        "OpenAI chat request model=%s approx_input_tokens~%s messages=%s route=%s",
+        chosen_model,
+        max(1, approx_chars // 4),
+        len(messages),
+        route_reason or "-",
+    )
 
     try:
         res = requests.post(

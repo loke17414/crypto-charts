@@ -552,13 +552,13 @@ def strategy_test_key(
         # End users do not supply keys — retest the platform key only.
         if user is None:
             raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-        result = test_openai_api_key(None)
+        result = test_openai_api_key(None, force=True)
         if not result["verified"]:
             raise HTTPException(status_code=400, detail=result["message"])
         return {"ok": True, **result, "hosted": True}
     try:
         candidate = (body.openai_api_key if body else "").strip()
-        result = test_openai_api_key(candidate or None)
+        result = test_openai_api_key(candidate or None, force=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not result["verified"]:

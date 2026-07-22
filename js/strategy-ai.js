@@ -512,7 +512,7 @@ const StrategyAI = (() => {
     if (!trimmed) return;
     if (typeof GuestGate !== 'undefined' && !GuestGate.requireLogin('전략 GPT')) return;
 
-    const priorHistory = conversationHistory.slice(-20);
+    const priorHistory = conversationHistory.slice(-8);
     const wantsStrategyApply = looksLikeStrategyApply(trimmed);
     addMessage('user', trimmed, { persist: true });
     setThinking(
@@ -529,9 +529,18 @@ const StrategyAI = (() => {
         return;
       }
 
-      const status = await refreshStatus({ verify: true });
-      if (!status?.verified) {
-        addMessage('assistant', status?.message || 'OpenAI API Key 인증에 실패했습니다. 키를 다시 저장하거나 연결 테스트를 실행하세요.', { persist: true });
+      const status = await refreshStatus({ verify: false });
+      if (!status?.configured && !status?.verified) {
+        addMessage('assistant', status?.message || '플랫폼 GPT가 아직 준비되지 않았습니다.', { persist: true });
+        return;
+      }
+      // Hosted platform key: do NOT live-verify on every message (burns OpenAI credits).
+      if (status && status.configured === false) {
+        addMessage('assistant', status?.message || 'OpenAI API Key가 설정되지 않았습니다.', { persist: true });
+        return;
+      }
+      if (status && status.chatReady === false && status.verified === false && status.errorCode) {
+        addMessage('assistant', status?.message || 'GPT를 사용할 수 없습니다.', { persist: true });
         return;
       }
 
@@ -611,7 +620,7 @@ const StrategyAI = (() => {
       } else {
         addMessage('assistant', formatAiError(msg), { persist: true });
       }
-      await refreshStatus({ verify: true });
+      await refreshStatus({ verify: false });
     } finally {
       setThinking(false);
     }
@@ -689,7 +698,7 @@ const StrategyAI = (() => {
     } catch (err) {
       console.error(err);
       addMessage('assistant', err.message || 'API 키 저장에 실패했습니다.', { persist: true });
-      await refreshStatus({ verify: true });
+      await refreshStatus({ verify: false });
     } finally {
       setThinking(false);
       if (saveBtn) saveBtn.disabled = false;
@@ -820,12 +829,12 @@ const StrategyAI = (() => {
   async function init() {
     loadHistory();
     bindEvents();
-    const status = await refreshStatus({ verify: true });
+    const status = await refreshStatus({ verify: false });
     await syncHistoryFromServer();
 
     if (conversationHistory.length) {
       restoreHistoryToUi();
-    } else if (status?.configured && (status?.verified || status?.hosted)) {
+    } else if (status?.configured && (status?.verified || status?.hosted || status?.chatReady !== false)) {
       addMessage(
         'assistant',
         'Orbinex 플랫폼 GPT를 사용할 수 있습니다. 차트·백테스트 데이터를 분석해 전략을 적용합니다. API 키는 입력할 필요 없습니다.',
