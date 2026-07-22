@@ -38,7 +38,6 @@ const AppBilling = (() => {
     const gptEl = $('billingGptQuota');
     const noteEl = $('billingNote');
     const upgradeBtn = $('billingUpgradeBtn');
-    const annualBtn = $('billingUpgradeAnnualBtn');
     const packBtn = $('billingGptPackBtn');
     const cancelBtn = $('billingCancelBtn');
     const resumeBtn = $('billingResumeBtn');
@@ -51,15 +50,11 @@ const AppBilling = (() => {
     }
 
     const monthWon = won(snap.monthlyAmountKrw || snap.amountKrw, 29000);
-    const yearWon = won(snap.annualAmountKrw, 290000);
     const packWon = won(snap.gptPackAmountKrw, 5000);
     const packCalls = snap.gptPackCalls || 50;
-    const interval = snap.billingInterval === 'year' ? 'year' : 'month';
 
     if (planEl) {
-      planEl.textContent = snap.pro
-        ? (interval === 'year' ? 'Pro (연간)' : 'Pro (월간)')
-        : 'Free';
+      planEl.textContent = snap.pro ? 'Pro' : 'Free';
       planEl.classList.toggle('is-pro', !!snap.pro);
     }
 
@@ -83,10 +78,9 @@ const AppBilling = (() => {
           ? `해지 예약됨 · ${new Date(snap.currentPeriodEnd).toLocaleString()}까지 Pro`
           : '해지 예약됨 · 기간 종료 후 Free';
       } else if (snap.pro) {
-        const periodLabel = interval === 'year' ? `연 ${yearWon}원` : `월 ${monthWon}원`;
         noteEl.textContent = snap.currentPeriodEnd
-          ? `Pro ${periodLabel} · 다음 결제일 ${new Date(snap.currentPeriodEnd).toLocaleDateString('ko-KR')}`
-          : `Pro ${periodLabel} 구독 중`;
+          ? `Pro 월 ${monthWon}원 · 다음 결제일 ${new Date(snap.currentPeriodEnd).toLocaleDateString('ko-KR')}`
+          : `Pro 월 ${monthWon}원 구독 중`;
       } else {
         const botH = snap.bot?.hoursLimit ?? 48;
         const gptN = snap.limits?.freeGptCallsPerWeek ?? snap.gpt?.callsLimit ?? 10;
@@ -94,19 +88,14 @@ const AppBilling = (() => {
         const slots = snap.features?.maxStrategySlots ?? 1;
         noteEl.textContent =
           `무료: 주 ${botH}시간 봇 · GPT ${gptN}회(mini) · 슬롯 ${slots}개. ` +
-          `Pro: 봇 무제한 · GPT 주 ${proGpt}회 · 멀티슬롯 · 월 ${monthWon}원 / 연 ${yearWon}원.`;
+          `Pro: 봇 무제한 · GPT 주 ${proGpt}회 · 멀티슬롯 · 월 ${monthWon}원.`;
       }
     }
 
     if (upgradeBtn) {
-      upgradeBtn.textContent = `Pro 월간 구독 (${monthWon}원)`;
+      upgradeBtn.textContent = `Pro 구독 (${monthWon}원/월)`;
       upgradeBtn.classList.toggle('hidden', !!snap.pro || !snap.paymentsConfigured);
       upgradeBtn.disabled = busy;
-    }
-    if (annualBtn) {
-      annualBtn.textContent = `Pro 연간 구독 (${yearWon}원 · 2개월 무료)`;
-      annualBtn.classList.toggle('hidden', !!snap.pro || !snap.paymentsConfigured);
-      annualBtn.disabled = busy;
     }
     if (packBtn) {
       packBtn.textContent = `GPT 추가 팩 (+${packCalls}회 · ${packWon}원)`;
@@ -193,15 +182,12 @@ const AppBilling = (() => {
     });
   }
 
-  async function startCheckout(product = 'month') {
+  async function startCheckout() {
     if (busy) return;
     busy = true;
     render(lastSnap);
     try {
-      try {
-        sessionStorage.setItem('orbinex_billing_product', product === 'year' ? 'year' : 'month');
-      } catch { /* ignore */ }
-      const prep = await FuturesApiClient.billingPrepare({ product });
+      const prep = await FuturesApiClient.billingPrepare({ product: 'month' });
       const TossPayments = await loadTossSdk();
       const tossPayments = TossPayments(prep.clientKey);
       const payment = tossPayments.payment({ customerKey: prep.customerKey });
@@ -286,17 +272,12 @@ const AppBilling = (() => {
     } else if (billing === 'success') {
       const authKey = params.get('authKey');
       const customerKey = params.get('customerKey');
-      let product = params.get('product') || 'month';
-      try {
-        product = sessionStorage.getItem('orbinex_billing_product') || product;
-      } catch { /* ignore */ }
       if (noteEl) noteEl.textContent = '결제 확인 중…';
       if (authKey && customerKey && typeof AppAuth !== 'undefined' && AppAuth.isLoggedIn()) {
         try {
           busy = true;
-          await FuturesApiClient.billingConfirm({ authKey, customerKey, product });
+          await FuturesApiClient.billingConfirm({ authKey, customerKey, product: 'month' });
           if (noteEl) noteEl.textContent = 'Pro 구독이 활성화되었습니다.';
-          try { sessionStorage.removeItem('orbinex_billing_product'); } catch { /* ignore */ }
           await refresh();
         } catch (err) {
           if (noteEl) noteEl.textContent = err.message || '결제 확정 실패';
@@ -318,8 +299,7 @@ const AppBilling = (() => {
   }
 
   function init() {
-    $('billingUpgradeBtn')?.addEventListener('click', () => startCheckout('month'));
-    $('billingUpgradeAnnualBtn')?.addEventListener('click', () => startCheckout('year'));
+    $('billingUpgradeBtn')?.addEventListener('click', () => startCheckout());
     $('billingGptPackBtn')?.addEventListener('click', () => buyGptPack());
     $('billingCancelBtn')?.addEventListener('click', () => cancelSubscription());
     $('billingResumeBtn')?.addEventListener('click', () => resumeSubscription());

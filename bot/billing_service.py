@@ -383,7 +383,9 @@ def prepare_billing_auth(db: Session, user: User, *, interval: str = "month") ->
             status_code=503,
             detail="결제가 아직 설정되지 않았습니다. TOSS_CLIENT_KEY / TOSS_SECRET_KEY를 설정하세요.",
         )
-    product = _normalize_interval(interval)
+    # Annual checkout disabled for now — always month.
+    product = "month"
+    _ = interval
     amount, order_name = _pro_amount_and_name(product)
     customer_key = ensure_customer_key(db, user)
     origin = _origin()
@@ -530,7 +532,9 @@ def confirm_billing_auth(
     customer_key = (customer_key or "").strip()
     if not auth_key or not customer_key:
         raise HTTPException(status_code=400, detail="authKey와 customerKey가 필요합니다.")
-    product = _normalize_interval(interval)
+    # Annual checkout disabled for now — always month.
+    product = "month"
+    _ = interval
 
     sub = ensure_subscription(db, user.id)
     if sub.toss_customer_key and sub.toss_customer_key != customer_key:
