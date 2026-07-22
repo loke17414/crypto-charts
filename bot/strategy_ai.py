@@ -291,11 +291,10 @@ ALWAYS use the exact param names from indicator_catalog; do NOT invent names lik
 Examples of correct multi-line usage:
 - MACD golden cross: cross_above { indicator:"macd", field:"macd" } vs { indicator:"macd", field:"signal" }
 - MACD histogram > 0: compare { indicator:"macd", field:"histogram" } > { value:0 }
-- MACD 매도모멘텀 연속 약화 → 롱: histogram rising for N bars (still often < 0).
-  Use compare with offsets, logic "all", short.enabled=false. Example for 2 consecutive:
-  hist[0] > hist[1] AND hist[1] > hist[2]
-  ({ source:"indicator", indicator:"macd", field:"histogram", offset:0 } > offset:1)
-  AND (offset:1 > offset:2). Optional: keep hist < 0 with compare < {value:0}.
+- MACD 매도모멘텀 연속 약화 → 롱: histogram rising for N bars AND still in sell zone (hist < 0).
+  REQUIRED: compare histogram < 0 (offset 0). Rising bars while hist > 0 are 매수모멘텀 강화 — NOT 매도모멘텀 약화.
+  Example 2 consecutive: hist[0]<0 AND hist[0]>hist[1] AND hist[1]>hist[2]; short.enabled=false.
+- MACD 매수모멘텀 연속 약화 → 숏: hist[0]>0 AND hist falling for N bars.
 - 손절 전저점 + 익절 손익비 1:1: exitRules.long stopLoss candle_extreme field:low (prefer offset covering recent swing low; if unsure offset:2~5) + takeProfit risk_reward ratio:1
   Do NOT replace MACD entry with swing_near/swing_break just because SL mentions 전저점.
 - Stoch oversold long: compare { indicator:"stoch", field:"k" } < { value:20 }
@@ -457,10 +456,11 @@ Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct,
 Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, line_touch, fvg, divergence, swing_break, swing_near.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
 Consecutive series (N bars rising/falling): use compare of same indicator at offsets, logic "all".
-  Example MACD 매도모멘텀 2연속 약화 → 롱 (histogram rising; do NOT use swing_near for entry):
-  hist[0]>hist[1] AND hist[1]>hist[2] with field:"histogram"; short.enabled=false;
+  Example MACD 매도모멘텀 2연속 약화 → 롱 (sell-momentum zone only):
+  hist[0]<0 AND hist[0]>hist[1] AND hist[1]>hist[2]; short.enabled=false.
+  매수모멘텀 약화 → 숏: hist[0]>0 AND hist falling. Do NOT treat plain histogram rising (any sign) as 매도모멘텀 약화.
   SL 전저점 → exitRules.long.stopLoss candle_extreme field:low offset:2; TP 1:1 → risk_reward ratio:1.
-  Same pattern for RSI/CCI/ROC/MFI/etc with field:"value" (rising=증가/상승, falling=감소/하락).
+  Same consecutive pattern for RSI/CCI/ROC/MFI/etc with field:"value" (rising=증가/상승, falling=감소/하락).
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
@@ -1717,14 +1717,9 @@ def _prompt_wants_swing(prompt: str) -> bool:
 
 
 def _prompt_side(prompt: str) -> str | None:
-    text = _prompt_text(prompt)
+    text = _normalize_momentum_text(prompt)
     # "매도모멘텀/매수모멘텀" is indicator language, not trade side.
-    text = re.sub(
-        r"매도\s*모멘텀|매수\s*모멘텀|sell\s*momentum|buy\s*momentum",
-        " ",
-        text,
-        flags=re.I,
-    )
+    text = re.sub(r"매도모멘텀|매수모멘텀", " ", text)
     long_kw = any(k in text for k in ("롱", "long", "매수"))
     short_kw = any(k in text for k in ("숏", "short", "매도"))
     if long_kw and not short_kw:
@@ -1802,34 +1797,54 @@ def _detect_series_indicator(prompt: str) -> tuple[str, str, dict[str, Any]] | N
     return None
 
 
+def _normalize_momentum_text(prompt: str) -> str:
+    """Fix common typos (모맨텀) and spacing so sell/buy momentum matches."""
+    text = _prompt_text(prompt)
+    text = text.replace("모맨텀", "모멘텀")
+    text = re.sub(r"매도\s*모멘텀", "매도모멘텀", text)
+    text = re.sub(r"매수\s*모멘텀", "매수모멘텀", text)
+    text = re.sub(r"sell\s*momentum", "매도모멘텀", text, flags=re.I)
+    text = re.sub(r"buy\s*momentum", "매수모멘텀", text, flags=re.I)
+    return text
+
+
+def _macd_momentum_kind(prompt: str) -> str | None:
+    """Return 'sell' | 'buy' | None for MACD 매도/매수모멘텀 wording."""
+    text = _normalize_momentum_text(prompt)
+    sell = "매도모멘텀" in text
+    buy = "매수모멘텀" in text
+    if sell and not buy:
+        return "sell"
+    if buy and not sell:
+        return "buy"
+    return None
+
+
 def _parse_series_direction(prompt: str, *, indicator_id: str, side: str) -> str | None:
     """Return 'rising' or 'falling' for consecutive bar-to-bar compares."""
-    text = _prompt_text(prompt)
+    text = _normalize_momentum_text(prompt)
     weaken = any(k in text for k in ("약화", "약해", "줄어", "둔화"))
     strengthen = any(k in text for k in ("강화", "강해", "커지", "확대"))
     rising_kw = any(k in text for k in ("증가", "상승", "올라", "rising", "높아"))
     falling_kw = any(k in text for k in ("감소", "하락", "내려", "falling", "낮아"))
 
     if indicator_id == "macd":
-        sell_mom = "매도모멘텀" in text or "sell momentum" in text or "매도 모멘텀" in text
-        buy_mom = "매수모멘텀" in text or "buy momentum" in text or "매수 모멘텀" in text
-        # 매도모멘텀 약화 = sell pressure easing = histogram rising (often still < 0)
-        if sell_mom and weaken:
+        kind = _macd_momentum_kind(prompt)
+        # 매도모멘텀 약화 = sell pressure easing = histogram rising while still < 0
+        if kind == "sell" and weaken:
             return "rising"
-        if buy_mom and weaken:
+        if kind == "buy" and weaken:
             return "falling"
-        if sell_mom and strengthen:
+        if kind == "sell" and strengthen:
             return "falling"
-        if buy_mom and strengthen:
+        if kind == "buy" and strengthen:
             return "rising"
-        if rising_kw:
+        # Explicit histogram up/down (not sell/buy-momentum language)
+        if rising_kw and not weaken:
             return "rising"
-        if falling_kw:
+        if falling_kw and not weaken:
             return "falling"
-        if weaken and side == "long":
-            return "rising"
-        if weaken and side == "short":
-            return "falling"
+        # Bare "모멘텀 약화" without 매도/매수 is ambiguous — do not guess.
         return None
 
     if rising_kw or (strengthen and not weaken):
@@ -1837,6 +1852,22 @@ def _parse_series_direction(prompt: str, *, indicator_id: str, side: str) -> str
     if falling_kw or (weaken and not strengthen):
         return "falling"
     return None
+
+
+def _macd_zone_condition(*, kind: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Keep MACD histogram in sell (<0) or buy (>0) momentum zone."""
+    return {
+        "type": "compare",
+        "left": {
+            "source": "indicator",
+            "indicator": "macd",
+            "field": "histogram",
+            "params": params,
+            "offset": 0,
+        },
+        "op": "<" if kind == "sell" else ">",
+        "right": {"source": "value", "value": 0},
+    }
 
 
 def _series_compare_conditions(
@@ -1883,7 +1914,7 @@ def _local_indicator_consecutive_patch(prompt: str) -> dict[str, Any] | None:
     Compile 'indicator N consecutive rising/falling' without GPT.
     Covers MACD 매도모멘텀 연속 약화, RSI 2연속 상승, CCI/ROC/… same pattern.
     """
-    text = _prompt_text(prompt)
+    text = _normalize_momentum_text(prompt)
     if _prompt_wants_divergence(prompt):
         return None
     # Combos / crosses need GPT (local only handles pure consecutive series).
@@ -1896,12 +1927,12 @@ def _local_indicator_consecutive_patch(prompt: str) -> dict[str, Any] | None:
     ):
         return None
 
-    detected = _detect_series_indicator(prompt)
+    detected = _detect_series_indicator(text)
     if not detected:
         return None
     ind_id, field, params = detected
 
-    steps = _parse_consecutive_steps(prompt)
+    steps = _parse_consecutive_steps(text)
     if steps is None:
         return None
 
@@ -1914,11 +1945,11 @@ def _local_indicator_consecutive_patch(prompt: str) -> dict[str, Any] | None:
         return None
 
     side = _prompt_side(prompt) or "long"
-    direction = _parse_series_direction(prompt, indicator_id=ind_id, side=side)
+    direction = _parse_series_direction(text, indicator_id=ind_id, side=side)
     if direction is None:
         return None
 
-    # MACD: prefer histogram wording; allow 모멘텀 without explicit hist.
+    # MACD: prefer histogram / sell-buy momentum wording.
     if ind_id == "macd" and field == "histogram":
         if not any(k in text for k in ("모멘텀", "히스토그램", "histogram", "hist", "약화", "강화", "연속")):
             return None
@@ -1930,6 +1961,11 @@ def _local_indicator_consecutive_patch(prompt: str) -> dict[str, Any] | None:
         steps=steps,
         rising=(direction == "rising"),
     )
+    # 매도/매수모멘텀: require histogram sign so rising bars in the wrong zone do not fire.
+    mom_kind = _macd_momentum_kind(text) if ind_id == "macd" else None
+    if mom_kind in {"sell", "buy"}:
+        conds.append(_macd_zone_condition(kind=mom_kind, params=params))
+
     ratio = _parse_risk_reward_ratio(prompt, default=1.0 if re.search(r"1\s*대\s*1|1\s*:\s*1", text) else 1.5)
     long_on = side == "long"
     short_on = side == "short"
@@ -2977,6 +3013,15 @@ def _reconcile_patch_intent(
     entry_rules = patch.get("entryRules")
     types = _entry_condition_types(entry_rules)
     ratio = _parse_risk_reward_ratio(prompt)
+
+    # MACD 매도/매수모멘텀 연속 약화: force hist sign zone (hist<0 / hist>0), never bare rising.
+    series_local = _local_indicator_consecutive_patch(prompt)
+    if series_local and _macd_momentum_kind(prompt):
+        logger.info(
+            "Intent reconcile: applying local MACD %s-momentum series (zone + consecutive)",
+            _macd_momentum_kind(prompt),
+        )
+        return _merge_template_patch(patch, series_local, overwrite_exit=True)
 
     if _prompt_wants_band_strategy(prompt):
         indicator = _prompt_band_indicator(prompt)
