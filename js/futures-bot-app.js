@@ -680,14 +680,20 @@ const FuturesBotApp = (() => {
       entryRules,
       exitRules,
       strategySlotTarget: targetSlotId,
-      strategySlots: (state.strategySlots || []).map((s) => ({
-        id: s.id,
-        name: s.name,
-        enabled: s.enabled !== false,
-        entryRules: s.entryRules ?? null,
-        exitRules: s.exitRules ?? null,
-      })),
-      indicatorCatalog: window.StrategyEngine?.catalogForAi?.() || '',
+      // Only metadata for other slots — full rules for the edit target only (saves tokens).
+      strategySlots: (state.strategySlots || []).map((s) => {
+        const row = {
+          id: s.id,
+          name: s.name,
+          enabled: s.enabled !== false,
+        };
+        if (!targetSlotId || targetSlotId === s.id || targetSlotId === '__new__') {
+          row.entryRules = s.entryRules ?? null;
+          row.exitRules = s.exitRules ?? null;
+        }
+        return row;
+      }),
+      // Full indicator catalog omitted — server uses a short catalog + system prompt.
     };
   }
 
@@ -817,13 +823,12 @@ const FuturesBotApp = (() => {
       // Range extremes of last N bars — NOT swing pivots. Use structure.swings for 전고점/전저점.
       recentHigh: rangeHigh,
       recentLow: rangeLow,
-      recentRangeNote: 'recentHigh/recentLow = simple max/min of last ~24 bars. NOT confirmed swing highs/lows. For 전고점/전저점 ALWAYS use structure.swings.',
       indicators,
     };
 
     if (packed?.structure) {
       const structure = packed.structure;
-      ctx.recentCandles15 = structure.recentCandles;
+      ctx.recentCandles15 = (structure.recentCandles || []).slice(-10);
       ctx.structure = {
         swings: structure.swings,
         fvg: structure.fvg,
@@ -831,10 +836,13 @@ const FuturesBotApp = (() => {
         trend: structure.trend,
         trendReversal: structure.trendReversal,
       };
-      ctx.strategyLog = packed.strategyLog;
+      // lines only — drop duplicate text / nested machine copies (server compacts further)
+      if (packed.strategyLog?.lines) {
+        ctx.strategyLog = { lines: packed.strategyLog.lines.slice(0, 16) };
+      }
     } else if (window.ChartStructure?.analyzeForAi) {
       const structure = ChartStructure.analyzeForAi(candles, { recentCount: 15, fvgLookback: 30 });
-      ctx.recentCandles15 = structure.recentCandles;
+      ctx.recentCandles15 = (structure.recentCandles || []).slice(-10);
       ctx.structure = {
         swings: structure.swings,
         fvg: structure.fvg,
@@ -842,7 +850,8 @@ const FuturesBotApp = (() => {
         trend: structure.trend,
         trendReversal: structure.trendReversal,
       };
-      ctx.strategyLog = ChartStructure.buildStrategyLog?.(candles, structure, indicators) || structure.strategyLog;
+      const slog = ChartStructure.buildStrategyLog?.(candles, structure, indicators) || structure.strategyLog;
+      if (slog?.lines) ctx.strategyLog = { lines: slog.lines.slice(0, 16) };
     }
 
     ctx.timeframe = timeframeInfoForAi(state.interval);
@@ -852,28 +861,18 @@ const FuturesBotApp = (() => {
       ctx.hoveredCandle = hovered;
     }
 
-    // Recommended strategies (winRate measured on this chart) for GPT "추천전략 적용"
+    // Keep settings for local/server preset apply; drop gptPrompt (huge, unused when applying by id)
     if (planFeatures.recommendedStrategies) {
       if (window.__lastRecommendedStrategies?.items?.length) {
         ctx.recommendedStrategies = {
-          note: window.__lastRecommendedStrategies.note,
-          minWinRate: 50,
           items: window.__lastRecommendedStrategies.items.map((it) => ({
             id: it.id,
             name: it.name,
-            blurb: it.blurb,
             winRate: it.winRate,
             trades: it.trades,
-            totalPnlPct: it.totalPnlPct,
             ok: it.ok,
             settings: it.settings,
-            gptPrompt: it.gptPrompt,
           })),
-        };
-      } else if (window.StrategyPresets?.listCatalog) {
-        ctx.recommendedStrategies = {
-          note: 'UI에서 추천 목록을 새로고침하면 승률이 채워집니다.',
-          catalog: StrategyPresets.listCatalog(),
         };
       }
     }

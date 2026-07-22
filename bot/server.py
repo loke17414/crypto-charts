@@ -605,7 +605,12 @@ def strategy_interpret(
 ) -> StrategyInterpretResponse:
     if auth_required() and user is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다. 다시 로그인해 주세요.")
-    assert_can_use_gpt(db, user)
+    # Local recommended-preset apply does not use OpenAI — skip quota for that path.
+    from bot.strategy_ai import _recommended_preset_patch
+
+    skip_gpt_quota = bool(_recommended_preset_patch(body.prompt or "", body.market_context))
+    if not skip_gpt_quota:
+        assert_can_use_gpt(db, user)
     force_mini = False
     allow_web_research = True
     allow_recommended = True
@@ -640,7 +645,7 @@ def strategy_interpret(
         logger.exception("Strategy interpret failed")
         raise HTTPException(status_code=502, detail=f"전략 해석 실패: {exc}") from exc
 
-    if user is not None:
+    if user is not None and result.get("route_reason") != "recommended_preset_no_gpt":
         record_gpt_call(db, user.id)
 
     settings = StrategySettings.model_validate(result["settings"])

@@ -349,6 +349,18 @@ TIMEFRAME (봉 주기):
   translate the researched strategy into entryRules/exitRules as usual and still fill "sources".
 """
 
+# Lightweight system prompt for Q&A / risk / light turns (saves ~4k+ tokens vs full).
+SYSTEM_PROMPT_COMPACT = """You edit BTC USDT-M futures entry strategy. Reply JSON only:
+{"settings":{/* changed keys only */},"changed_fields":["..."],"summary":"Korean 1-3 sentences","rules":"Korean HTML bullets"}
+
+Incremental edits: change ONLY what the latest user_request needs. Prefer partial entryRules/exitRules patches.
+Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct, useStopLoss, allowShort, leverage, riskPerTradePct, maxAccountLossPct, pollSeconds, rsiPeriod, rsiOversold, rsiOverbought.
+Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, fvg, divergence, swing_break, swing_near.
+Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
+Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
+Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
+"""
+
 
 def _env_path() -> Path:
     return ROOT / ".env"
@@ -767,13 +779,13 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 def _normalize_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for item in (history or [])[-8:]:
+    for item in (history or [])[-6:]:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
         content = str(item.get("content") or "").strip()
         if role in {"user", "assistant"} and content:
-            out.append({"role": role, "content": content[:2000]})
+            out.append({"role": role, "content": content[:800]})
     return out
 
 
@@ -786,6 +798,7 @@ def _looks_like_follow_up_edit(prompt: str) -> bool:
     return any(m in text for m in markers)
 
 
+# Broad markers: detect "user wants a strategy change" (validation / templates).
 _STRATEGY_RULE_MARKERS = (
     "진입", "조건", "entryrules", "entry", "롱", "숏", "long", "short",
     "rsi", "macd", "ema", "sma", "볼린저", "bollinger", "boll", "스토캐스틱", "stoch",
@@ -796,6 +809,17 @@ _STRATEGY_RULE_MARKERS = (
     "fvg", "갭", "페어밸류", "다이버",
 )
 
+# Narrow markers: only these justify expensive gpt-4o routing.
+_COMPLEX_RULE_MARKERS = (
+    "진입", "조건", "entryrules", "entry rules", "entryrules",
+    "크로스", "cross_above", "cross_below", "재진입", "band_reentry",
+    "볼린저", "bollinger", "envelope", "keltner", "donchian",
+    "다이버", "divergence", "fvg", "페어밸류", "스윙", "전고점", "전저점",
+    "swing_break", "swing_near", "골든", "데드",
+    "삭제", "제거", "비활성", "슬롯", "strategySlots",
+    "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
+)
+
 _RISK_ONLY_MARKERS = (
     "손절", "익절", "레버리지", "leverage", "stoploss", "takeprofit",
     "손익비", "riskpertrade", "maxaccountloss", "pollseconds",
@@ -804,6 +828,7 @@ _RISK_ONLY_MARKERS = (
 _APPLY_MARKERS = ("적용", "apply", "설정해", "만들어", "추가해", "넣어", "바꿔줘", "변경해")
 _RULE_PATCH_KEYS = frozenset({"entryRules", "exitRules", "strategySlots"})
 _DELETE_MARKERS = ("삭제", "제거", "비활성", "없애", "초기화", "지워", "없애줘", "빼줘")
+_RECOMMENDED_ID_RE = re.compile(r"추천전략\s+([a-z0-9\-]+)", re.IGNORECASE)
 
 _STRATEGY_APPLY_ERROR = (
     "전략을 이해하지 못했습니다. 진입 조건을 더 구체적으로 설명해 주세요.\n"
@@ -900,7 +925,7 @@ def select_openai_model(
     web_research: list[dict[str, Any]] | None = None,
     force_mini: bool = False,
 ) -> tuple[str, str]:
-    """Return (model_name, route_reason). Uses mini by default; 4o for hard strategy edits."""
+    """Return (model_name, route_reason). Uses mini by default; 4o only for hard rule compiles."""
     _api_key, default_model, complex_model = _openai_models()
     if force_mini:
         return default_model, "free_tier_mini"
@@ -911,27 +936,224 @@ def select_openai_model(
         return complex_model, "all_complex"
 
     text = (prompt or "").lower()
+    wants_complex = any(m in text for m in _COMPLEX_RULE_MARKERS) or (
+        any(m in text for m in _APPLY_MARKERS)
+        and any(m in text for m in _STRATEGY_RULE_MARKERS)
+    )
 
     if _looks_like_question_only(prompt):
         return default_model, "question"
 
     if web_research and looks_like_research_request(prompt):
-        if any(m in text for m in _APPLY_MARKERS) or any(m in text for m in _STRATEGY_RULE_MARKERS):
+        if wants_complex:
             return complex_model, "research_apply"
         return default_model, "research_question"
 
     if _looks_like_risk_only_edit(prompt):
         return default_model, "risk_only"
 
-    if any(m in text for m in _STRATEGY_RULE_MARKERS):
+    if wants_complex:
         return complex_model, "strategy_rules"
 
     if _looks_like_follow_up_edit(prompt):
-        return complex_model, "follow_up"
+        return default_model, "follow_up_light"
 
-    # Prefer mini when the user already has a strategy but the ask is light —
-    # avoids routing every short chat turn to gpt-4o.
     return default_model, "default"
+
+
+_CATALOG_SHORT = (
+    "ids: ma,ema,rsi,macd,boll,stoch,kdj,cci,atr,obv,mfi,wr,roc,psar,vwap,hma,env,kc,dc,dmi | "
+    "MULTI field REQUIRED: macd→macd|signal|histogram; stoch→k|d; kdj→k|d|j; dmi→pdi|mdi|adx | "
+    "band_reentry boll{period,mult}|env{period,pct}|kc{period,mult}|dc{period} | "
+    "exitRules: candle_extreme(field,offset)|atr(period,mult); TP risk_reward(ratio)"
+)
+
+
+def _needs_full_system(route_reason: str | None) -> bool:
+    return (route_reason or "") in {
+        "strategy_rules",
+        "research_apply",
+        "all_complex",
+    }
+
+
+def _strip_notes(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {
+            k: _strip_notes(v)
+            for k, v in obj.items()
+            if k not in {"note", "recentRangeNote"} and not str(k).endswith("Note")
+        }
+    if isinstance(obj, list):
+        return [_strip_notes(x) for x in obj]
+    return obj
+
+
+def _compact_strategy_log(log: Any) -> dict[str, Any] | None:
+    if not isinstance(log, dict):
+        return None
+    lines = log.get("lines")
+    if not isinstance(lines, list):
+        return None
+    cleaned = [str(x)[:160] for x in lines[:16] if x]
+    return {"lines": cleaned} if cleaned else None
+
+
+def _compact_structure(structure: Any, *, heavy: bool) -> dict[str, Any] | None:
+    if not isinstance(structure, dict):
+        return None
+    out: dict[str, Any] = {}
+    swings = structure.get("swings")
+    if isinstance(swings, dict):
+        out["swings"] = _strip_notes({
+            k: swings.get(k)
+            for k in (
+                "lastSwingHigh", "lastSwingLow", "recentHighs", "recentLows",
+                "priceVsLastHighPct", "priceVsLastLowPct", "relation",
+            )
+            if swings.get(k) is not None
+        })
+    trend = structure.get("trend")
+    if isinstance(trend, dict):
+        out["trend"] = _strip_notes({
+            k: trend.get(k)
+            for k in ("direction", "bias", "emaStack", "adx14", "hh", "hl")
+            if trend.get(k) is not None
+        })
+    if heavy:
+        for key in ("fvg", "divergence"):
+            if structure.get(key) is not None:
+                out[key] = _strip_notes(structure.get(key))
+        tr = structure.get("trendReversal")
+        if isinstance(tr, dict):
+            out["trendReversal"] = _strip_notes({
+                "priorBias": tr.get("priorBias"),
+                "phase": tr.get("phase"),
+                "latest": tr.get("latest"),
+                "signals": (tr.get("signals") or [])[:3],
+            })
+    return out or None
+
+
+def _wants_recommended(prompt: str) -> bool:
+    return bool(_RECOMMENDED_ID_RE.search(prompt or "")) or "추천전략" in (prompt or "")
+
+
+def _compact_market_context(
+    market_context: dict[str, Any] | None,
+    *,
+    prompt: str,
+    route_reason: str | None,
+) -> dict[str, Any]:
+    if not isinstance(market_context, dict):
+        return {}
+    heavy = _needs_full_system(route_reason)
+    out: dict[str, Any] = {}
+    for key in ("symbol", "interval", "price", "rsi14", "recentHigh", "recentLow", "candleCount"):
+        if market_context.get(key) is not None:
+            out[key] = market_context[key]
+    if market_context.get("lastPrice") is not None and "price" not in out:
+        out["price"] = market_context["lastPrice"]
+
+    candles = market_context.get("recentCandles15")
+    if isinstance(candles, list) and candles:
+        keep_n = 10 if heavy else 4
+        slim_candles = []
+        for c in candles[-keep_n:]:
+            if not isinstance(c, dict):
+                continue
+            slim_candles.append({
+                k: c.get(k)
+                for k in ("o", "h", "l", "c", "dir", "bodyPct", "upperWickPct", "lowerWickPct", "shape", "offset")
+                if c.get(k) is not None
+            })
+        if slim_candles:
+            out["recentCandles15"] = slim_candles
+
+    structure = _compact_structure(market_context.get("structure"), heavy=heavy)
+    if structure:
+        out["structure"] = structure
+
+    slog = _compact_strategy_log(market_context.get("strategyLog"))
+    if slog:
+        out["strategyLog"] = slog
+
+    inds = market_context.get("indicators")
+    if isinstance(inds, dict):
+        out["indicators"] = {
+            k: inds.get(k)
+            for k in ("rsi14", "ema7", "ema25", "ema99", "macd", "atr14", "adx14", "stoch")
+            if inds.get(k) is not None
+        }
+
+    if _wants_recommended(prompt):
+        block = market_context.get("recommendedStrategies")
+        if isinstance(block, dict):
+            items = []
+            for it in (block.get("items") or [])[:10]:
+                if not isinstance(it, dict):
+                    continue
+                items.append({
+                    "id": it.get("id"),
+                    "name": it.get("name"),
+                    "winRate": it.get("winRate"),
+                    "trades": it.get("trades"),
+                    "ok": it.get("ok"),
+                    # settings only when applying a named id (needed for server patch fallback)
+                    **(
+                        {"settings": it.get("settings")}
+                        if _RECOMMENDED_ID_RE.search(prompt or "") and it.get("settings")
+                        else {}
+                    ),
+                })
+            if items:
+                out["recommendedStrategies"] = {"items": items}
+
+    if heavy and isinstance(market_context.get("hoveredCandle"), dict):
+        out["hoveredCandle"] = market_context["hoveredCandle"]
+
+    return out
+
+
+def _compact_current_settings(current: StrategySettings, strategy_slot_target: str | None) -> dict[str, Any]:
+    data = current.model_dump()
+    slots = data.get("strategySlots") or []
+    slim_slots = []
+    for s in slots:
+        if not isinstance(s, dict):
+            continue
+        row = {
+            "id": s.get("id"),
+            "name": s.get("name"),
+            "enabled": s.get("enabled", True),
+        }
+        # Full rules only for the target slot (or all if no target / single-slot mode)
+        if not strategy_slot_target or strategy_slot_target in {s.get("id"), "__new__"}:
+            if s.get("entryRules") is not None:
+                row["entryRules"] = s.get("entryRules")
+            if s.get("exitRules") is not None:
+                row["exitRules"] = s.get("exitRules")
+        slim_slots.append(row)
+    data["strategySlots"] = slim_slots
+    return data
+
+
+def _compact_web_research(web_research: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for src in (web_research or [])[:2]:
+        if not isinstance(src, dict):
+            continue
+        out.append({
+            "title": str(src.get("title") or "")[:120],
+            "url": str(src.get("url") or "")[:200],
+            "content": str(src.get("content") or "")[:1500],
+        })
+    return out
+
+
+def _slim_market_context(market_context: dict[str, Any] | None) -> dict[str, Any]:
+    """Backward-compatible alias — prefer _compact_market_context."""
+    return _compact_market_context(market_context, prompt="", route_reason="default")
 
 
 def _call_openai(
@@ -1012,44 +1234,55 @@ def _call_openai_with_key(
     route_reason: str | None = None,
 ) -> dict[str, Any]:
     chosen_model = model
-    slim_routes = {"question", "risk_only", "free_tier_mini", "default"}
-    use_slim = (route_reason or "") in slim_routes
-    catalog = "" if use_slim and route_reason in {"question", "risk_only"} else indicator_catalog
-    market = _slim_market_context(market_context) if use_slim else (market_context or {})
-    bt = {} if use_slim and route_reason in {"question", "risk_only"} else (backtest_snapshot or {})
+    heavy = _needs_full_system(route_reason)
+    catalog = _CATALOG_SHORT if heavy else ""
+    _ = indicator_catalog  # full client catalog discarded — too large / redundant
+    market = _compact_market_context(market_context, prompt=prompt, route_reason=route_reason)
+    bt: dict[str, Any] = {}
+    if heavy and isinstance(backtest_snapshot, dict):
+        cur = backtest_snapshot.get("current") if isinstance(backtest_snapshot.get("current"), dict) else backtest_snapshot
+        if isinstance(cur, dict):
+            bt = {
+                k: cur.get(k)
+                for k in ("trades", "winRate", "totalPnlPct", "profitFactor", "maxDrawdownPct")
+                if cur.get(k) is not None
+            }
 
     user_content = json.dumps(
         {
-            "current_settings": current.model_dump(),
+            "current_settings": _compact_current_settings(current, strategy_slot_target),
             "strategy_slot_target": strategy_slot_target,
             "indicator_catalog": catalog,
             "market_context": market,
             "backtest_snapshot": bt,
-            "web_research": web_research or [],
+            "web_research": _compact_web_research(web_research),
             "user_request": prompt,
         },
         ensure_ascii=False,
+        separators=(",", ":"),
     )
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system = SYSTEM_PROMPT if heavy else SYSTEM_PROMPT_COMPACT
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     for turn in _normalize_history(history):
         messages.append(turn)
     messages.append({"role": "user", "content": user_content})
     payload = {
         "model": chosen_model,
         "temperature": 0.2,
-        "max_tokens": 2500,
+        "max_tokens": 2500 if heavy else 900,
         "response_format": {"type": "json_object"},
         "messages": messages,
     }
 
     approx_chars = sum(len(m.get("content") or "") for m in messages)
     logger.info(
-        "OpenAI chat request model=%s approx_input_tokens~%s messages=%s route=%s",
+        "OpenAI chat request model=%s approx_input_tokens~%s messages=%s route=%s system=%s",
         chosen_model,
         max(1, approx_chars // 4),
         len(messages),
         route_reason or "-",
+        "full" if heavy else "compact",
     )
 
     try:
@@ -1658,9 +1891,6 @@ def _reconcile_patch_intent(
     return patch
 
 
-_RECOMMENDED_ID_RE = re.compile(r"추천전략\s+([a-z0-9\-]+)", re.IGNORECASE)
-
-
 def _recommended_preset_patch(
     prompt: str,
     market_context: dict[str, Any] | None,
@@ -1773,6 +2003,37 @@ def interpret_strategy(
     indicator_catalog = str(raw_settings.pop("indicatorCatalog", "") or "")
     strategy_slot_target = raw_settings.pop("strategySlotTarget", None)
     current = StrategySettings.model_validate(clamp_numeric_fields(raw_settings))
+
+    # Fast path: named recommended preset — no Binance fetch, no OpenAI.
+    if allow_recommended_strategies:
+        rec_early = _recommended_preset_patch(prompt.strip(), market_context)
+        if rec_early:
+            append_turn(role="user", content=prompt.strip(), user_id=user_id)
+            merged = current.merged(rec_early)
+            rec_match = _RECOMMENDED_ID_RE.search(prompt.strip())
+            rec_id = rec_match.group(1).lower() if rec_match else ""
+            rec_name = next(
+                (
+                    str(it.get("name"))
+                    for it in (((market_context or {}).get("recommendedStrategies") or {}).get("items") or [])
+                    if isinstance(it, dict) and str(it.get("id", "")).lower() == rec_id
+                ),
+                rec_id or "추천 전략",
+            )
+            summary = f"추천 전략 «{rec_name}» 적용 (GPT 호출 없음 · 측정된 설정 그대로)"
+            append_turn(role="assistant", content=summary, user_id=user_id)
+            logger.info("Recommended preset applied without OpenAI id=%s user=%s", rec_id, user_id)
+            return {
+                "ok": True,
+                "settings": merged.model_dump(),
+                "patch": rec_early,
+                "changed_fields": list(rec_early.keys()),
+                "summary": summary,
+                "rules": merged.rules_text(),
+                "model": "local-preset",
+                "route_reason": "recommended_preset_no_gpt",
+                "sources": [],
+            }
 
     merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
     market = build_market_context(

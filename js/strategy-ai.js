@@ -236,13 +236,19 @@ const StrategyAI = (() => {
       addMessage('assistant', '⚠️ AI 추천 전략은 Pro 플랜에서 사용할 수 있습니다. 요금제에서 업그레이드해 주세요.', { persist: false });
       return;
     }
-    const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id);
-    const preset = StrategyPresets.getPreset(id);
-    const prompt = pack?.gptPrompt || preset?.gptPrompt
-      || `추천전략 ${id} 적용해줘`;
-    handlePrompt(
-      `${prompt}\n(현재 차트 백테스트 승률 ${pack?.winRate ?? '—'}%, ${pack?.trades ?? 0}거래. 설정을 그대로 적용하고 summary에 전략명을 적어줘.)`,
-    );
+    // Apply measured preset locally — do not spend OpenAI tokens for a known settings pack.
+    const applied = FuturesBotApp.applyRecommendedPreset?.(id);
+    if (applied?.applied) {
+      const pack = window.__lastRecommendedStrategies?.items?.find((x) => x.id === id);
+      addMessage(
+        'assistant',
+        `✅ 추천 전략 «${pack?.name || id}» 적용 완료 (GPT 미사용 · 차트 측정 설정). 승률 ${pack?.winRate ?? '—'}% · ${pack?.trades ?? 0}거래.`,
+        { persist: true },
+      );
+      return;
+    }
+    // Fallback: named-id prompt (server also short-circuits without GPT when settings present)
+    handlePrompt(`추천전략 ${id} 적용해줘`);
   }
 
   function closeAiPopup() {

@@ -23,8 +23,8 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 )
-MAX_SOURCES = 3
-MAX_PAGE_CHARS = 3500
+MAX_SOURCES = 2
+MAX_PAGE_CHARS = 1500
 CACHE_TTL_SECONDS = 15 * 60
 
 _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
