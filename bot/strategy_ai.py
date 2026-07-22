@@ -479,6 +479,16 @@ def _openai_models() -> tuple[str, str, str]:
     api_key = (req or _runtime_api_key or os.getenv("OPENAI_API_KEY", "")).strip().strip('"').strip("'")
     default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     complex_model = os.getenv("OPENAI_MODEL_COMPLEX", "gpt-4o").strip() or "gpt-4o"
+    # Cost footgun: if OPENAI_MODEL was set to gpt-4o, "mini routing" still billed as 4o.
+    allow_4o = os.getenv("OPENAI_ALLOW_4O", "").strip().lower() in ("1", "true", "yes", "on")
+    if not allow_4o:
+        dl = default_model.lower()
+        if "gpt-4o" in dl and "mini" not in dl:
+            logger.warning(
+                "OPENAI_MODEL=%s blocked without OPENAI_ALLOW_4O — forcing gpt-4o-mini",
+                default_model,
+            )
+            default_model = "gpt-4o-mini"
     return api_key, default_model, complex_model
 
 
@@ -671,9 +681,10 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
 
     validate_api_key_format(key)
 
-    # Default: trust key presence — NEVER call OpenAI from status/test endpoints.
-    # Idle scrapers, health polls, and systemd restarts must not burn usage.
-    if not _openai_live_verify_allowed() and not force:
+    # HARD STOP: never hit OpenAI for key checks unless OPENAI_LIVE_VERIFY=true.
+    # force=True must NOT bypass this — that regression (48f4df3 test-key force=True)
+    # caused live models(+chat) probes and token spikes.
+    if not _openai_live_verify_allowed():
         _set_test_result(
             verified=True,
             message="OpenAI 키가 설정되어 있습니다 (라이브 검증 생략).",
@@ -732,7 +743,7 @@ def test_openai_api_key(api_key: str | None = None, *, force: bool = False) -> d
             "httpStatus": res.status_code,
         }
 
-    # Models list auth is enough by default. Chat probe burns tokens on every cache miss / restart.
+    # Chat probe is NEVER default — it bills tokens. Opt-in only.
     verify_chat = os.getenv("OPENAI_VERIFY_CHAT", "").strip().lower() in ("1", "true", "yes", "on")
     if verify_chat:
         chat_result = _test_chat_completion(key, model)
@@ -889,16 +900,9 @@ def ai_available(
 
 def configure_openai_api_key(api_key: str, *, persist_env: bool = True) -> dict[str, Any]:
     validate_api_key_format(api_key)
-    # Configuring a new key may force a models-list check, but never a chat probe unless explicitly enabled.
-    prev_live = os.environ.get("OPENAI_LIVE_VERIFY")
-    os.environ["OPENAI_LIVE_VERIFY"] = "true"
-    try:
-        test_result = test_openai_api_key(api_key, force=True)
-    finally:
-        if prev_live is None:
-            os.environ.pop("OPENAI_LIVE_VERIFY", None)
-        else:
-            os.environ["OPENAI_LIVE_VERIFY"] = prev_live
+    # Do NOT flip OPENAI_LIVE_VERIFY on — that reopened paid verify probes.
+    # Format validation + optional live check only if operator already enabled LIVE_VERIFY.
+    test_result = test_openai_api_key(api_key, force=True)
     if not test_result["verified"]:
         raise ValueError(test_result["message"])
 
