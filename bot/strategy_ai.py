@@ -456,10 +456,16 @@ Incremental edits: change ONLY what the latest user_request needs. Prefer partia
 Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct, useStopLoss, allowShort, leverage, riskPerTradePct, maxAccountLossPct, pollSeconds, rsiPeriod, rsiOversold, rsiOverbought.
 Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, line_touch, fvg, divergence, swing_break, swing_near.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
+Consecutive series (N bars rising/falling): use compare of same indicator at offsets, logic "all".
+  Example MACD 매도모멘텀 2연속 약화 → 롱 (histogram rising; do NOT use swing_near for entry):
+  hist[0]>hist[1] AND hist[1]>hist[2] with field:"histogram"; short.enabled=false;
+  SL 전저점 → exitRules.long.stopLoss candle_extreme field:low offset:2; TP 1:1 → risk_reward ratio:1.
+  Same pattern for RSI/CCI/ROC/MFI/etc with field:"value" (rising=증가/상승, falling=감소/하락).
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
 Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
+Do NOT replace indicator entries with swing_near/swing_break just because SL mentions 전저점/전고점.
 """
 
 
@@ -1732,7 +1738,11 @@ def _parse_risk_reward_ratio(prompt: str, default: float = 1.5) -> float:
     text = _prompt_text(prompt)
     if re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", text):
         return 1.5
-    if re.search(r"1\s*대\s*1|1\s*:\s*1|손익비\s*1(?:\D|$)|rr\s*1(?:\D|$)", text, re.I):
+    if re.search(
+        r"1\s*대\s*1|1\s*:\s*1|손익비\s*(?:대비\s*)?1(?:\D|$)|대비\s*1\s*대\s*1|rr\s*1(?:\D|$)",
+        text,
+        re.I,
+    ):
         return 1.0
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:배|:1|r\b)", text)
     if match:
@@ -1741,6 +1751,204 @@ def _parse_risk_reward_ratio(prompt: str, default: float = 1.5) -> float:
         except ValueError:
             pass
     return default
+
+
+# (markers, indicator_id, field, default_params)
+_SERIES_INDICATOR_SPECS: tuple[tuple[tuple[str, ...], str, str, dict[str, Any]], ...] = (
+    (("macd",), "macd", "histogram", {"fast": 12, "slow": 26, "signal": 9}),
+    (("stochrsi",), "stochrsi", "k", {"rsiPeriod": 14, "stochPeriod": 14, "kPeriod": 3, "dPeriod": 3}),
+    (("stoch", "스토캐"), "stoch", "k", {"kPeriod": 14, "dPeriod": 3}),
+    (("kdj",), "kdj", "j", {"n": 9, "m1": 3, "m2": 3}),
+    (("rsi", "알에스아이"), "rsi", "value", {"period": 14}),
+    (("cci",), "cci", "value", {"period": 20}),
+    (("roc",), "roc", "value", {"period": 12}),
+    (("mfi",), "mfi", "value", {"period": 14}),
+    (("williams", "%r"), "wr", "value", {"period": 14}),
+    (("atr",), "atr", "value", {"period": 14}),
+    (("obv",), "obv", "value", {}),
+    (("cmf",), "cmf", "value", {"period": 20}),
+    (("trix",), "trix", "value", {"period": 15}),
+    (("ppo",), "ppo", "value", {"fast": 12, "slow": 26}),
+    (("aroon",), "aroon", "up", {"period": 25}),
+    (("mtm",), "mtm", "value", {"period": 12}),
+    (("ao",), "ao", "value", {}),
+)
+
+
+def _parse_consecutive_steps(prompt: str) -> int | None:
+    """Return N for 'N개 이상 연속' / 'N연속' (number of successive comparisons)."""
+    text = _prompt_text(prompt)
+    m = re.search(r"(\d+)\s*개\s*이상", text)
+    if m:
+        return max(1, min(10, int(m.group(1))))
+    m = re.search(r"(\d+)\s*연속", text)
+    if m:
+        return max(1, min(10, int(m.group(1))))
+    m = re.search(r"연속\s*(\d+)", text)
+    if m:
+        return max(1, min(10, int(m.group(1))))
+    if any(k in text for k in ("연속", "약화", "강화", "증가", "감소", "상승", "하락")):
+        # Bare "연속으로 약화" without a number → treat as 2 steps.
+        if "연속" in text:
+            return 2
+    return None
+
+
+def _detect_series_indicator(prompt: str) -> tuple[str, str, dict[str, Any]] | None:
+    text = _prompt_text(prompt)
+    for markers, ind_id, field, params in _SERIES_INDICATOR_SPECS:
+        if any(m in text for m in markers):
+            return ind_id, field, dict(params)
+    return None
+
+
+def _parse_series_direction(prompt: str, *, indicator_id: str, side: str) -> str | None:
+    """Return 'rising' or 'falling' for consecutive bar-to-bar compares."""
+    text = _prompt_text(prompt)
+    weaken = any(k in text for k in ("약화", "약해", "줄어", "둔화"))
+    strengthen = any(k in text for k in ("강화", "강해", "커지", "확대"))
+    rising_kw = any(k in text for k in ("증가", "상승", "올라", "rising", "높아"))
+    falling_kw = any(k in text for k in ("감소", "하락", "내려", "falling", "낮아"))
+
+    if indicator_id == "macd":
+        sell_mom = "매도모멘텀" in text or "sell momentum" in text or "매도 모멘텀" in text
+        buy_mom = "매수모멘텀" in text or "buy momentum" in text or "매수 모멘텀" in text
+        # 매도모멘텀 약화 = sell pressure easing = histogram rising (often still < 0)
+        if sell_mom and weaken:
+            return "rising"
+        if buy_mom and weaken:
+            return "falling"
+        if sell_mom and strengthen:
+            return "falling"
+        if buy_mom and strengthen:
+            return "rising"
+        if rising_kw:
+            return "rising"
+        if falling_kw:
+            return "falling"
+        if weaken and side == "long":
+            return "rising"
+        if weaken and side == "short":
+            return "falling"
+        return None
+
+    if rising_kw or (strengthen and not weaken):
+        return "rising"
+    if falling_kw or (weaken and not strengthen):
+        return "falling"
+    return None
+
+
+def _series_compare_conditions(
+    *,
+    indicator: str,
+    field: str,
+    params: dict[str, Any],
+    steps: int,
+    rising: bool,
+) -> list[dict[str, Any]]:
+    op = ">" if rising else "<"
+    conds: list[dict[str, Any]] = []
+    for i in range(steps):
+        left = {
+            "source": "indicator",
+            "indicator": indicator,
+            "field": field,
+            "params": params,
+            "offset": i,
+        }
+        right = {
+            "source": "indicator",
+            "indicator": indicator,
+            "field": field,
+            "params": params,
+            "offset": i + 1,
+        }
+        conds.append({"type": "compare", "left": left, "op": op, "right": right})
+    return conds
+
+
+def _exit_rules_sl_tp_for_side(side: str, *, ratio: float, sl_offset: int = 2) -> dict[str, Any]:
+    long_sl = {"type": "candle_extreme", "field": "low", "offset": sl_offset}
+    short_sl = {"type": "candle_extreme", "field": "high", "offset": sl_offset}
+    tp = {"type": "risk_reward", "ratio": ratio}
+    return {
+        "long": {"stopLoss": long_sl, "takeProfit": tp},
+        "short": {"stopLoss": short_sl, "takeProfit": tp},
+    }
+
+
+def _local_indicator_consecutive_patch(prompt: str) -> dict[str, Any] | None:
+    """
+    Compile 'indicator N consecutive rising/falling' without GPT.
+    Covers MACD 매도모멘텀 연속 약화, RSI 2연속 상승, CCI/ROC/… same pattern.
+    """
+    text = _prompt_text(prompt)
+    if _prompt_wants_divergence(prompt):
+        return None
+    # Combos / crosses need GPT (local only handles pure consecutive series).
+    if any(
+        k in text
+        for k in (
+            "크로스", "골든", "데드", "상향돌파", "하향돌파", "해머", "hammer",
+            "장악", "engulf", "그리고", "동시에", "같이", "+", "및", "다이버",
+        )
+    ):
+        return None
+
+    detected = _detect_series_indicator(prompt)
+    if not detected:
+        return None
+    ind_id, field, params = detected
+
+    steps = _parse_consecutive_steps(prompt)
+    if steps is None:
+        return None
+
+    # Require series language (연속 / 약화·강화 / 증가·감소) so plain "MACD 롱" stays GPT.
+    series_kw = any(
+        k in text
+        for k in ("연속", "약화", "강화", "모멘텀", "히스토그램", "histogram", "증가", "감소")
+    )
+    if not series_kw:
+        return None
+
+    side = _prompt_side(prompt) or "long"
+    direction = _parse_series_direction(prompt, indicator_id=ind_id, side=side)
+    if direction is None:
+        return None
+
+    # MACD: prefer histogram wording; allow 모멘텀 without explicit hist.
+    if ind_id == "macd" and field == "histogram":
+        if not any(k in text for k in ("모멘텀", "히스토그램", "histogram", "hist", "약화", "강화", "연속")):
+            return None
+
+    conds = _series_compare_conditions(
+        indicator=ind_id,
+        field=field,
+        params=params,
+        steps=steps,
+        rising=(direction == "rising"),
+    )
+    ratio = _parse_risk_reward_ratio(prompt, default=1.0 if re.search(r"1\s*대\s*1|1\s*:\s*1", text) else 1.5)
+    long_on = side == "long"
+    short_on = side == "short"
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": list(conds) if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": list(conds) if short_on else [],
+            },
+        },
+        "exitRules": _exit_rules_sl_tp_for_side(side, ratio=ratio, sl_offset=2),
+    }
 
 
 def _entry_condition_types(rules: Any) -> set[str]:
@@ -2209,7 +2417,13 @@ def _rsi_compare_patch(
 ) -> dict[str, Any]:
     cond = {
         "type": "compare",
-        "left": {"source": "indicator", "id": "rsi", "field": "value", "params": {"period": period}, "offset": 0},
+        "left": {
+            "source": "indicator",
+            "indicator": "rsi",
+            "field": "value",
+            "params": {"period": period},
+            "offset": 0,
+        },
         "op": op,
         "right": {"source": "value", "value": threshold},
     }
@@ -2341,6 +2555,15 @@ def _local_strategy_template(
             else "확인 봉 MA 하회 금지 필터를 로컬 템플릿으로 추가했습니다 (OpenAI 호출 없음)."
         )
         return ma, "ma_touch_local_no_gpt", summary
+
+    # N-bar consecutive rising/falling (MACD 매도모멘텀 약화, RSI 2연속 상승, …) before GPT.
+    consecutive = _local_indicator_consecutive_patch(text)
+    if consecutive:
+        return (
+            consecutive,
+            "indicator_series_local_no_gpt",
+            "지표 연속 비교 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
 
     # Complex indicator entries (MACD/Stoch/ADX/… + combos) → GPT before RSI/swing/band.
     if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
