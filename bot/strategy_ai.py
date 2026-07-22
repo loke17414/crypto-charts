@@ -208,14 +208,20 @@ Settings keys:
 ExitRule:
 {
   "stopLoss": { "type": "candle_extreme", "field": "low"|"high", "offset": 1 }
-             OR { "type": "atr", "period": 14, "mult": 1.5 },
+             OR { "type": "atr", "period": 14, "mult": 1.5 }
+             OR { "type": "price", "price": 66000 },
   "takeProfit": { "type": "risk_reward", "ratio": 1.5 }
 }
 - candle_extreme offset 1 = candle immediately before the ENTRY bar
   (예: MA 터치 봉 = offset 1 when entry is on the next confirm bar; 재진입 직전 봉도 동일)
 - atr stop = entry -/+ ATR(period) * mult (변동성 기반 손절)
+- price stop = absolute price level (손절 66000 → {"type":"price","price":66000})
 - risk_reward ratio 1 = net 1:1 after round-trip fee 0.1%; ratio 1.5 = 1.5R
   (engine sets TP so (reward-fee)/(risk+fee)=ratio; risk sizing also adds 0.1% fee to SL%)
+- Price-level + candle short example:
+  "가격이 65888까지 오른후 하락캔들 숏, 손절 66000, 익절 손절대비 1:1"
+  → short: high[1] >= 65888 AND candle_pattern bearish; exitRules.short stopLoss price 66000 + TP ratio 1
+  Do NOT map this to bullish-candle long just because the word 진입/캔들 appears.
 
 RuleGroup:
 {
@@ -461,6 +467,8 @@ Consecutive series (N bars rising/falling): use compare of same indicator at off
   매수모멘텀 약화 → 숏: hist[0]>0 AND hist falling. Do NOT treat plain histogram rising (any sign) as 매도모멘텀 약화.
   SL 전저점 → exitRules.long.stopLoss candle_extreme field:low offset:2; TP 1:1 → risk_reward ratio:1.
   Same consecutive pattern for RSI/CCI/ROC/MFI/etc with field:"value" (rising=증가/상승, falling=감소/하락).
+Price-level + candle: "65888까지 오른후 하락캔들 숏 손절 66000 익절 손절대비 1:1"
+  → short high[1]>=65888 + bearish; stopLoss {type:"price",price:66000}; TP ratio:1. Absolute SL uses type price.
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
@@ -1133,7 +1141,7 @@ _CATALOG_SHORT = (
     "ids: ma,ema,rsi,macd,boll,stoch,kdj,cci,atr,obv,mfi,wr,roc,psar,vwap,hma,env,kc,dc,dmi | "
     "MULTI field REQUIRED: macd→macd|signal|histogram; stoch→k|d; kdj→k|d|j; dmi→pdi|mdi|adx | "
     "band_reentry boll{period,mult}|env{period,pct}|kc{period,mult}|dc{period} | "
-    "exitRules: candle_extreme(field,offset)|atr(period,mult); TP risk_reward(ratio)"
+    "exitRules: candle_extreme(field,offset)|atr(period,mult)|price(price); TP risk_reward(ratio)"
 )
 
 
@@ -1734,7 +1742,8 @@ def _parse_risk_reward_ratio(prompt: str, default: float = 1.5) -> float:
     if re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", text):
         return 1.5
     if re.search(
-        r"1\s*대\s*1|1\s*:\s*1|손익비\s*(?:대비\s*)?1(?:\D|$)|대비\s*1\s*대\s*1|rr\s*1(?:\D|$)",
+        r"1\s*대\s*1|1\s*:\s*1|손익비\s*(?:대비\s*)?1(?:\D|$)|손절\s*대비\s*1|손절대비\s*1|"
+        r"대비\s*1\s*대\s*1|rr\s*1(?:\D|$)",
         text,
         re.I,
     ):
@@ -2030,7 +2039,7 @@ def _bullish_candle_long_patch() -> dict[str, Any]:
 
 
 def _looks_like_bullish_candle_long(prompt: str) -> bool:
-    text = (prompt or "").lower()
+    text = _prompt_text(prompt)
     # MA/이평 터치 + 다음봉 is NOT a simple "양봉만 롱" strategy.
     if _looks_like_ma_line_touch(prompt):
         return False
@@ -2038,10 +2047,167 @@ def _looks_like_bullish_candle_long(prompt: str) -> bool:
         return False
     if _prompt_wants_band_strategy(prompt) or _prompt_wants_swing(prompt) or _prompt_wants_fvg(prompt):
         return False
-    long_side = any(k in text for k in ("롱", "long", "매수", "진입"))
-    # Require explicit candle words — bare "상승/전환" must not steal indicator prompts.
-    candle_kw = any(k in text for k in ("캔들", "양봉", "음봉", "bullish", "bearish", "봉이"))
-    return long_side and candle_kw
+    if _looks_like_price_level_candle(prompt):
+        return False
+    # Short / bearish prompts must never become "양봉 롱".
+    if _prompt_side(prompt) == "short":
+        return False
+    if any(k in text for k in ("숏", "short", "하락캔들", "음봉", "bearish")):
+        return False
+    # Require explicit long + bullish candle words. Bare "진입"+"캔들" is NOT enough
+    # (e.g. "하락캔들 … 숏 진입" was wrongly matched via 진입+캔들).
+    long_side = any(k in text for k in ("롱", "long", "매수"))
+    bullish_kw = any(k in text for k in ("양봉", "상승캔들", "bullish")) or (
+        "캔들" in text
+        and "상승" in text
+        and "하락" not in text
+        and "음봉" not in text
+    )
+    return long_side and bullish_kw
+
+
+def _parse_price_numbers(prompt: str) -> list[float]:
+    """Extract absolute price-like numbers (skip tiny RR digits like 1 in 1:1)."""
+    text = _prompt_text(prompt)
+    # Strip RR phrases so "1대1" / "1:1" are not treated as prices.
+    cleaned = re.sub(
+        r"손익비\s*(?:대비\s*)?\d+(?:\s*대\s*\d+)?|손절\s*대비\s*\d+|손절대비\s*\d+|"
+        r"\d+\s*대\s*\d+|\d+\s*:\s*\d+|rr\s*\d+",
+        " ",
+        text,
+        flags=re.I,
+    )
+    vals: list[float] = []
+    for m in re.finditer(r"\d+(?:\.\d+)?", cleaned):
+        try:
+            v = float(m.group(0))
+        except ValueError:
+            continue
+        # Futures prices are typically >> 10; ignore tiny counts (2개, 1배, …).
+        if v >= 100:
+            vals.append(v)
+    return vals
+
+
+def _looks_like_price_level_candle(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    has_level = bool(
+        re.search(
+            r"\d{3,}(?:\.\d+)?\s*까지|"
+            r"(?:가격|저항|지지|레벨|부근|근처|터치|도달).{0,12}\d{3,}|"
+            r"\d{3,}(?:\.\d+)?\s*(?:터치|도달|부근|근처|저항|지지)",
+            text,
+        )
+    )
+    has_candle = any(
+        k in text
+        for k in ("하락캔들", "상승캔들", "음봉", "양봉", "bearish", "bullish", "캔들", "봉")
+    )
+    has_side = _prompt_side(prompt) in {"long", "short"} or any(
+        k in text for k in ("롱", "숏", "long", "short", "매수", "매도", "진입")
+    )
+    return has_level and has_candle and has_side
+
+
+def _local_price_level_candle_patch(prompt: str) -> dict[str, Any] | None:
+    """
+    Compile absolute price-level + candle confirmation entries.
+    Ex: 가격이 65888까지 오른후 하락캔들 숏, 손절 66000, 익절 손절대비 1:1
+    """
+    if not _looks_like_price_level_candle(prompt):
+        return None
+    text = _prompt_text(prompt)
+    prices = _parse_price_numbers(prompt)
+    if not prices:
+        return None
+
+    level: float | None = None
+    m_level = re.search(r"(\d+(?:\.\d+)?)\s*까지", text)
+    if m_level:
+        level = float(m_level.group(1))
+    if level is None:
+        m_level = re.search(
+            r"(?:가격|저항|지지|레벨|부근|근처|터치|도달)\s*(?:이|은|는|을|를|:)?\s*(\d+(?:\.\d+)?)",
+            text,
+        )
+        if m_level:
+            level = float(m_level.group(1))
+    if level is None:
+        level = prices[0]
+
+    sl_price: float | None = None
+    m_sl = re.search(r"손절(?:은|는|을|를|:)?\s*(\d+(?:\.\d+)?)", text)
+    if m_sl:
+        cand = float(m_sl.group(1))
+        if cand >= 100:
+            sl_price = cand
+    if sl_price is None:
+        for p in prices:
+            if abs(p - level) > 1e-9:
+                sl_price = p
+                break
+
+    # Side from explicit short/long, else candle direction.
+    side = _prompt_side(prompt)
+    if side is None:
+        if any(k in text for k in ("하락캔들", "음봉", "bearish")):
+            side = "short"
+        elif any(k in text for k in ("상승캔들", "양봉", "bullish")):
+            side = "long"
+        else:
+            return None
+
+    # "오른후/내린후" → level touch on previous bar; else same-bar rejection.
+    after_move = bool(re.search(r"(오른|올린|상승한?|내린|하락한?)\s*후", text))
+    touch_offset = 1 if after_move else 0
+    if side == "short":
+        touch = {
+            "type": "compare",
+            "left": {"source": "price", "field": "high", "offset": touch_offset},
+            "op": ">=",
+            "right": {"source": "value", "value": level},
+        }
+        candle = {"type": "candle_pattern", "pattern": "bearish", "offset": 0}
+    else:
+        touch = {
+            "type": "compare",
+            "left": {"source": "price", "field": "low", "offset": touch_offset},
+            "op": "<=",
+            "right": {"source": "value", "value": level},
+        }
+        candle = {"type": "candle_pattern", "pattern": "bullish", "offset": 0}
+
+    ratio = _parse_risk_reward_ratio(prompt, default=1.0)
+    long_on = side == "long"
+    short_on = side == "short"
+    if sl_price is not None:
+        sl = {"type": "price", "price": sl_price}
+    else:
+        sl = {
+            "type": "candle_extreme",
+            "field": "low" if long_on else "high",
+            "offset": 1,
+        }
+    tp = {"type": "risk_reward", "ratio": ratio}
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": [touch, candle] if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": [touch, candle] if short_on else [],
+            },
+        },
+        "exitRules": {
+            "long": {"stopLoss": sl if long_on else {"type": "candle_extreme", "field": "low", "offset": 1}, "takeProfit": tp},
+            "short": {"stopLoss": sl if short_on else {"type": "candle_extreme", "field": "high", "offset": 1}, "takeProfit": tp},
+        },
+    }
 
 
 def _looks_like_ma_line_touch(prompt: str) -> bool:
@@ -2601,6 +2767,15 @@ def _local_strategy_template(
             "지표 연속 비교 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
         )
 
+    # Absolute price level + candle confirm (e.g. 65888까지 오른후 하락캔들 숏, 손절 66000).
+    price_level = _local_price_level_candle_patch(text)
+    if price_level:
+        return (
+            price_level,
+            "price_level_candle_local_no_gpt",
+            "가격 레벨+캔들 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
     # Complex indicator entries (MACD/Stoch/ADX/… + combos) → GPT before RSI/swing/band.
     if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
         return None
@@ -3022,6 +3197,16 @@ def _reconcile_patch_intent(
             _macd_momentum_kind(prompt),
         )
         return _merge_template_patch(patch, series_local, overwrite_exit=True)
+
+    price_level_local = _local_price_level_candle_patch(prompt)
+    if price_level_local:
+        wrong = types & {"swing_near", "swing_break", "fvg", "divergence", "band_reentry"}
+        if wrong or not types:
+            logger.info(
+                "Intent reconcile: applying local price-level+candle template (was %s)",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, price_level_local, overwrite_exit=True)
 
     if _prompt_wants_band_strategy(prompt):
         indicator = _prompt_band_indicator(prompt)

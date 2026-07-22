@@ -89,7 +89,7 @@ const StrategyEngine = (() => {
     lines.push('  Skip if confirm bar goes under MA: compare low[0] >= ma[0] (AND with the above)');
     lines.push('  params by indicator: boll{period,mult} · env{period,pct} · kc{period,mult} · dc{period}');
     lines.push('  long = closed back above lower band; short = closed back below upper band');
-    lines.push('- exitRules: dynamic SL/TP — candle_extreme (field low|high, offset 1=prev bar) OR atr (period, mult); takeProfit risk_reward (ratio 1.5)');
+    lines.push('- exitRules: dynamic SL/TP — candle_extreme (field low|high, offset 1=prev bar) OR atr (period, mult) OR price (absolute price); takeProfit risk_reward (ratio 1.5)');
     if (window.CandlePatterns) lines.push(CandlePatterns.catalogForAi());
     if (window.ChartStructure) lines.push(ChartStructure.catalogForAi());
     return lines.join('\n');
@@ -1404,6 +1404,11 @@ const StrategyEngine = (() => {
           period: Math.max(1, parseInt(sl.period, 10) || 14),
           mult: Number.isFinite(mult) && mult > 0 ? mult : 1.5,
         };
+      } else if (sl?.type === 'price' || sl?.type === 'fixed' || sl?.type === 'absolute') {
+        const px = parseFloat(sl.price ?? sl.value);
+        if (Number.isFinite(px) && px > 0) {
+          clean.stopLoss = { type: 'price', price: px };
+        }
       }
 
       const tp = rule.takeProfit;
