@@ -1283,7 +1283,7 @@ const FuturesBotApp = (() => {
     if (!state.strategySlots.length) {
       const empty = document.createElement('div');
       empty.className = 'strategy-slot-empty';
-      empty.textContent = '진입 조건이 없습니다. "+ 조건 추가"를 누르거나 AI에게 전략을 설명하세요. (조건이 없으면 기본 RSI 전략이 사용됩니다)';
+      empty.textContent = '진입 조건이 없습니다. "+ 조건 추가"를 누르거나 AI에게 전략을 설명하세요. (조건이 비어 있으면 진입하지 않습니다)';
       list.appendChild(empty);
       return;
     }

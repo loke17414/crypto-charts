@@ -995,7 +995,7 @@ _STRATEGY_RULE_MARKERS = (
 _COMPLEX_RULE_MARKERS = (
     "해머", "장악", "engulfing", "핀바",
     "일목", "ichimoku", "피보", "elliott",
-    "멀티", "multi", "동시", "and 조건", "그리고", "이고", "이면서",
+    "멀티", "multi", "동시", "and 조건",
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
 )
 
@@ -1068,6 +1068,10 @@ def _validate_strategy_apply_or_raise(
 
     if "entryRules" in patch and not entry_rules_have_signals(patch.get("entryRules")):
         raise ValueError(_ENTRY_RULES_INVALID_ERROR)
+
+    bad_exits = _find_unsupported_exit_types(patch)
+    if bad_exits:
+        raise ValueError(_UNSUPPORTED_EXIT_ERROR.format(types=", ".join(bad_exits)))
 
     if "strategySlots" in patch:
         slots = patch.get("strategySlots")
@@ -1167,6 +1171,10 @@ _CATALOG_SHORT = (
 def _prompt_needs_heavy_mapping(prompt: str) -> bool:
     """True only for compiles that compact prompt historically mishandles."""
     text = _prompt_text(prompt)
+    # Atomic AND combos (RSI+MACD) are compiled locally — no full SYSTEM_PROMPT.
+    if _local_and_compose_patch(prompt) is not None:
+        return False
+    # Real multi-indicator / candle hybrids — not bare Korean particles (이고/면서).
     if _local_combo_blocker(prompt):
         return True
     return any(
@@ -1626,8 +1634,8 @@ _STRATEGY_CONTEXT_MARKERS = (
 )
 _BAND_REENTRY_MARKERS = (
     "재진입", "다시 들어", "안으로", "복귀", "밴드 안", "이탈 후", "이탈후",
-    "터치", "닿", "접촉", "touch",
 )
+_BAND_TOUCH_MARKERS = ("터치", "닿", "접촉", "touch")
 # Indicators local templates cannot fully compile → force GPT (except pure divergence).
 _COMPLEX_INDICATOR_MARKERS = (
     "macd", "stochrsi", "stoch", "스토캐", "kdj", "cci", "atr", "natr",
@@ -1636,7 +1644,6 @@ _COMPLEX_INDICATOR_MARKERS = (
     "일목", "전환선", "기준선", "구름", "sar", "psar", "슈퍼트렌드", "supertrend",
     "cho", "adtm", "cmo", "uo", "nvi", "pvi", "mass", "bop", "dma", "dpo",
     "brar", "asi", "wvad", "pvt", "vroc", "mi", "priceosc",
-    # Band breakouts (not reentry) also need GPT — see _prompt_wants_band_strategy.
 )
 
 
@@ -1658,17 +1665,34 @@ def _prompt_band_indicator(prompt: str) -> str:
 
 
 def _prompt_wants_band_strategy(prompt: str) -> bool:
-    """Local band template is reentry/touch only — pure breakouts use band_breakout."""
+    """True for leave-then-reenter (이탈 후 재진입). Pure touch/breakout are separate."""
     text = _prompt_text(prompt)
     if not _prompt_mentions_band(prompt):
         return False
     if not any(k in text for k in _STRATEGY_CONTEXT_MARKERS):
         return False
-    has_reentry = any(k in text for k in _BAND_REENTRY_MARKERS) or "이탈" in text
+    has_reentry = any(k in text for k in _BAND_REENTRY_MARKERS)
+    # Bare "이탈" without 재진입/터치/돌파 → treat as reentry long/short common phrasing.
+    if not has_reentry and "이탈" in text and not any(k in text for k in ("돌파", "터치", "touch")):
+        has_reentry = True
     breakout_only = any(k in text for k in ("돌파", "breakout", "상향돌파", "하향돌파")) and not has_reentry
     if breakout_only:
         return False
+    if any(k in text for k in _BAND_TOUCH_MARKERS) and not has_reentry:
+        return False
     return has_reentry
+
+
+def _prompt_wants_band_touch(prompt: str) -> bool:
+    """Wick/body touch of a band — NOT leave-then-reenter."""
+    text = _prompt_text(prompt)
+    if not _prompt_mentions_band(prompt):
+        return False
+    if _prompt_wants_band_strategy(prompt) or _prompt_wants_band_breakout(prompt):
+        return False
+    if not any(k in text for k in _STRATEGY_CONTEXT_MARKERS):
+        return False
+    return any(k in text for k in _BAND_TOUCH_MARKERS)
 
 
 def _prompt_wants_band_breakout(prompt: str) -> bool:
@@ -1700,19 +1724,128 @@ def _prompt_unsupported_strategy_reason(prompt: str) -> str | None:
     return None
 
 
+_UNSUPPORTED_EXIT_ERROR = (
+    "지원하지 않는 손절/익절 형식입니다: {types}\n"
+    "지원: stopLoss=candle_extreme|atr|price, takeProfit=risk_reward|price"
+)
+
+
+def _find_unsupported_exit_types(patch: dict[str, Any] | None) -> list[str]:
+    if not isinstance(patch, dict):
+        return []
+    exits = patch.get("exitRules")
+    if not isinstance(exits, dict):
+        return []
+    bad: list[str] = []
+    for side in ("long", "short"):
+        rule = exits.get(side)
+        if not isinstance(rule, dict):
+            continue
+        sl = rule.get("stopLoss")
+        if isinstance(sl, dict):
+            t = str(sl.get("type") or "").lower()
+            if t and t not in {"candle_extreme", "atr", "price", "fixed", "absolute"}:
+                bad.append(f"{side}.stopLoss:{t}")
+        tp = rule.get("takeProfit")
+        if isinstance(tp, dict):
+            t = str(tp.get("type") or "").lower()
+            if t and t not in {"risk_reward", "price", "fixed", "absolute"}:
+                bad.append(f"{side}.takeProfit:{t}")
+    return bad
+
+
 def _local_combo_blocker(prompt: str) -> bool:
+    """
+    True when entry needs GPT multi-condition compile.
+    Do NOT treat bare particles (이고/면서) as combos — those are common Korean grammar.
+    """
     text = _prompt_text(prompt)
-    if any(
-        k in text
-        for k in (
-            "그리고", "동시에", "같이", "+", "및", "이고", "이면서", "면서",
-            "해머", "hammer", "장악", "engulf",
-        )
-    ):
+    ind_hits = sum(
+        1 for m in ("macd", "rsi", "stoch", "kdj", "cci", "mfi", "adx", "dmi", "atr", "obv")
+        if m in text
+    )
+    candle_hybrid = any(k in text for k in ("해머", "hammer", "장악", "engulf", "핀바"))
+    if candle_hybrid and (ind_hits >= 1 or "rsi" in text):
         return True
-    # Two named complex indicators in one prompt → GPT.
-    hits = sum(1 for m in ("macd", "rsi", "stoch", "kdj", "cci", "mfi", "adx", "dmi") if m in text)
-    return hits >= 2
+    # Explicit AND between conditions (not bare "이고/면서").
+    explicit_and = any(k in text for k in ("그리고", "동시에", "같이", " and ", "＆"))
+    if "+" in text or re.search(r"(?<!\w)및(?!\w)", text):
+        explicit_and = True
+    if explicit_and and (ind_hits >= 2 or (ind_hits >= 1 and ("캔들" in text or candle_hybrid))):
+        return True
+    # Two+ named indicators without an AND still usually means a combo prompt.
+    return ind_hits >= 2
+
+
+def _split_and_clauses(prompt: str) -> list[str]:
+    text = _prompt_text(prompt)
+    parts = re.split(r"\s*(?:그리고|이고|이면서|\+|및)\s*", text)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _local_and_compose_patch(prompt: str) -> dict[str, Any] | None:
+    """
+    Compose logic-all from 2–3 atomic local clauses (RSI/threshold/cross/series).
+    Avoids GPT round-trips for prompts like "RSI 30 이하이고 MACD 골든크로스 롱".
+    Candle hybrids (hammer+RSI) still go to GPT.
+    """
+    text = _prompt_text(prompt)
+    if any(k in text for k in ("해머", "hammer", "장악", "engulf", "핀바", "일목", "ichimoku")):
+        return None
+    if _prompt_wants_divergence(prompt):
+        return None
+    parts = _split_and_clauses(prompt)
+    if len(parts) < 2 or len(parts) > 3:
+        return None
+
+    side = _prompt_side(prompt) or "long"
+    side_tok = "롱" if side == "long" else "숏"
+    all_conds: list[dict[str, Any]] = []
+    for part in parts:
+        sub = part
+        if not any(k in sub for k in ("롱", "숏", "long", "short", "매수", "매도", "진입")):
+            sub = f"{sub} {side_tok}"
+        patch = (
+            _local_rsi_patch(sub)
+            or _local_indicator_cross_patch(sub)
+            or _local_indicator_threshold_patch(sub)
+            or _local_indicator_consecutive_patch(sub)
+        )
+        if not patch:
+            return None
+        rules = patch.get("entryRules") if isinstance(patch.get("entryRules"), dict) else {}
+        group = rules.get(side) if isinstance(rules.get(side), dict) else {}
+        conds = list(group.get("conditions") or [])
+        if not conds:
+            other = "short" if side == "long" else "long"
+            og = rules.get(other) if isinstance(rules.get(other), dict) else {}
+            conds = list(og.get("conditions") or [])
+        if not conds:
+            return None
+        all_conds.extend(conds)
+
+    if len(all_conds) < 2:
+        return None
+
+    ratio = _parse_risk_reward_ratio(prompt)
+    long_on = side == "long"
+    short_on = side == "short"
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": list(all_conds) if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": list(all_conds) if short_on else [],
+            },
+        },
+        "exitRules": _exit_rules_sl_tp_for_side(side, ratio=ratio, sl_offset=1),
+    }
 
 
 def _prompt_wants_fvg(prompt: str) -> bool:
@@ -2896,7 +3029,16 @@ def _local_strategy_template(
             "지표 임계값 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
         )
 
-    # Complex multi-AND / candle hybrids → GPT (full system prompt).
+    # RSI+MACD 등 원자 조건 AND — GPT 없이 logic:all 로 합성.
+    and_combo = _local_and_compose_patch(text)
+    if and_combo:
+        return (
+            and_combo,
+            "indicator_and_local_no_gpt",
+            "복합 지표 AND 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음).",
+        )
+
+    # Candle hybrids / exotic multi-condition → GPT (full system when heavy).
     if _prompt_has_complex_indicator_entry(text) and not _prompt_wants_divergence(text):
         return None
 
@@ -2923,6 +3065,22 @@ def _local_strategy_template(
             long_only=True if long_only else None,
         )
         return patch, "band_reentry_local_no_gpt", "밴드 재진입 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
+
+    if _prompt_wants_band_touch(text):
+        ratio = _parse_risk_reward_ratio(text)
+        side = _prompt_side(text) or "long"
+        t = _prompt_text(text)
+        if _prompt_side(text) is None:
+            if any(k in t for k in ("상단", "upper")):
+                side = "short"
+            elif any(k in t for k in ("하단", "lower")):
+                side = "long"
+        patch = _band_touch_patch(
+            side=side,
+            indicator=_prompt_band_indicator(text),
+            ratio=ratio,
+        )
+        return patch, "band_touch_local_no_gpt", "밴드 터치 전략을 로컬 템플릿으로 적용했습니다 (OpenAI 호출 없음)."
 
     if _prompt_wants_band_breakout(text):
         ratio = _parse_risk_reward_ratio(text)
@@ -3125,6 +3283,87 @@ def _band_breakout_patch(
         ratio=ratio,
         long_only=long_only,
     )
+
+
+def _band_params_for(indicator: str) -> dict[str, Any]:
+    indicator = indicator if indicator in {"boll", "env", "kc", "dc"} else "boll"
+    if indicator == "env":
+        return {"period": 20, "pct": 0.1}
+    if indicator == "dc":
+        return {"period": 20}
+    return {"period": 20, "mult": 2}
+
+
+def _band_touch_patch(
+    *,
+    side: str = "long",
+    indicator: str = "boll",
+    ratio: float = 1.5,
+) -> dict[str, Any]:
+    """
+    Wick touches band (not leave-then-reenter).
+    long/lower: low <= lower AND high >= lower
+    short/upper: high >= upper AND low <= upper
+    """
+    side = "short" if side == "short" else "long"
+    indicator = indicator if indicator in {"boll", "env", "kc", "dc"} else "boll"
+    params = _band_params_for(indicator)
+    field = "lower" if side == "long" else "upper"
+    band_op = {
+        "source": "indicator",
+        "indicator": indicator,
+        "field": field,
+        "params": params,
+        "offset": 0,
+    }
+    if side == "long":
+        conds = [
+            {
+                "type": "compare",
+                "left": {"source": "price", "field": "low", "offset": 0},
+                "op": "<=",
+                "right": dict(band_op),
+            },
+            {
+                "type": "compare",
+                "left": {"source": "price", "field": "high", "offset": 0},
+                "op": ">=",
+                "right": dict(band_op),
+            },
+        ]
+    else:
+        conds = [
+            {
+                "type": "compare",
+                "left": {"source": "price", "field": "high", "offset": 0},
+                "op": ">=",
+                "right": dict(band_op),
+            },
+            {
+                "type": "compare",
+                "left": {"source": "price", "field": "low", "offset": 0},
+                "op": "<=",
+                "right": dict(band_op),
+            },
+        ]
+    long_on = side == "long"
+    short_on = side == "short"
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": list(conds) if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": list(conds) if short_on else [],
+            },
+        },
+        "exitRules": _exit_rules_sl_tp_for_side(side, ratio=ratio, sl_offset=1),
+    }
 
 
 def _cross_entry_patch(
@@ -3615,8 +3854,10 @@ def _reconcile_patch_intent(
     follow_up: bool,
 ) -> dict[str, Any]:
     """Replace AI output when user intent clearly conflicts with condition types."""
+    # Risk-only follow-ups keep AI entry as-is. Strategy-shaped follow-ups still reconcile.
     if follow_up and not _looks_like_strategy_type_change(prompt):
-        return patch
+        if _looks_like_risk_only_edit(prompt):
+            return patch
 
     entry_rules = patch.get("entryRules")
     types = _entry_condition_types(entry_rules)
@@ -3651,6 +3892,12 @@ def _reconcile_patch_intent(
         logger.info("Intent reconcile: applying local indicator threshold template")
         return _merge_template_patch(patch, threshold_local, overwrite_exit=True)
 
+    and_local = _local_and_compose_patch(prompt)
+    if and_local and (not types or types & {"swing_near", "swing_break", "fvg", "band_reentry"} or len(types) < 2):
+        # Prefer logic:all of two atomic locals when AI returned a single wrong type.
+        logger.info("Intent reconcile: applying local indicator AND compose template")
+        return _merge_template_patch(patch, and_local, overwrite_exit=True)
+
     if _prompt_wants_band_strategy(prompt):
         indicator = _prompt_band_indicator(prompt)
         side = _prompt_side(prompt) or "long"
@@ -3667,6 +3914,25 @@ def _reconcile_patch_intent(
             )
             logger.info(
                 "Intent reconcile: band strategy requested but AI returned %s — applying band_reentry",
+                sorted(types) or "empty",
+            )
+            return _merge_template_patch(patch, tmpl, overwrite_exit=True)
+
+    if _prompt_wants_band_touch(prompt):
+        indicator = _prompt_band_indicator(prompt)
+        side = _prompt_side(prompt) or "long"
+        t = _prompt_text(prompt)
+        if _prompt_side(prompt) is None:
+            if any(k in t for k in ("상단", "upper")):
+                side = "short"
+            elif any(k in t for k in ("하단", "lower")):
+                side = "long"
+        wrong = types & {"fvg", "divergence", "swing_break", "swing_near", "band_reentry", "band_breakout"}
+        # Touch compiles to compare pairs — salvage whenever AI used wrong high-level types.
+        if wrong or not types or _has_band_reentry(entry_rules) or _has_condition_type(entry_rules, "band_breakout"):
+            tmpl = _band_touch_patch(side=side, indicator=indicator, ratio=ratio)
+            logger.info(
+                "Intent reconcile: band touch requested but AI returned %s — applying band_touch",
                 sorted(types) or "empty",
             )
             return _merge_template_patch(patch, tmpl, overwrite_exit=True)
