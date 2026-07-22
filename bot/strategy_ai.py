@@ -469,6 +469,9 @@ Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct,
 Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, band_breakout, line_touch, fvg, divergence, swing_break, swing_near.
 Unsupported (omit empty entryRules; explain): multi-timeframe, order-flow/DOM, trailing stop.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
+Cross: MACD golden = cross_above macd vs signal; EMA12/26 golden = cross_above ema(12) vs ema(26).
+band_breakout: close breaks outside band (상단 돌파 롱 / 하단 돌파 숏). band_reentry = leave then re-enter.
+Threshold: CCI/MFI/WR compare field value vs number. Absolute TP also {type:"price",price:N}.
 Consecutive series (N bars rising/falling): use compare of same indicator at offsets, logic "all".
   Example MACD 매도모멘텀 2연속 약화 → 롱 (sell-momentum zone only):
   hist[0]<0 AND hist[0]>hist[1] AND hist[1]>hist[2]; short.enabled=false.
@@ -987,14 +990,13 @@ _STRATEGY_RULE_MARKERS = (
     "fvg", "갭", "페어밸류", "다이버", "터치", "이평", "이동평균", "line_touch",
 )
 
-# Narrow markers: only these justify expensive gpt-4o routing.
-# Band / swing / FVG / divergence / MA are handled by local templates — do NOT list them here.
+# Narrow markers: only these justify expensive gpt-4o routing (when hybrid is enabled).
+# Cross / MACD / Stoch / band / swing / FVG / MA / thresholds are local — do NOT list them here.
 _COMPLEX_RULE_MARKERS = (
-    "크로스", "cross_above", "cross_below",
-    "골든", "데드", "golden cross", "death cross",
+    "해머", "장악", "engulfing", "핀바",
+    "일목", "ichimoku", "피보", "elliott",
+    "멀티", "multi", "동시", "and 조건", "그리고", "이고", "이면서",
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
-    "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
-    "멀티", "multi", "동시", "and 조건", "그리고",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -1162,23 +1164,47 @@ _CATALOG_SHORT = (
 )
 
 
+def _prompt_needs_heavy_mapping(prompt: str) -> bool:
+    """True only for compiles that compact prompt historically mishandles."""
+    text = _prompt_text(prompt)
+    if _local_combo_blocker(prompt):
+        return True
+    return any(
+        k in text
+        for k in (
+            "일목", "ichimoku", "구름", "전환선", "기준선",
+            "해머", "hammer", "장악", "engulf", "핀바", "pin bar",
+            "피보", "elliott", "엘리어", "볼륨프로파일", "order block",
+            "오더블록", "liquidity", "스윕",
+        )
+    )
+
+
 def _needs_full_system(route_reason: str | None, prompt: str | None = None) -> bool:
     """
-    Full system prompt for strategy compiles by default (even when model routing is mini).
-    Opt out with OPENAI_FULL_SYSTEM=0 to force compact everywhere.
+    Prefer compact system prompt to avoid ~5k-token full SYSTEM_PROMPT waste.
+
+    - OPENAI_FULL_SYSTEM=0 → always compact
+    - OPENAI_FULL_SYSTEM=1 → full for strategy applies / heavy routes
+    - default → full ONLY for hard multi-condition / exotic prompts (combo, Ichimoku, …)
+      Simple applies that miss local templates still use compact (+ local reconcile).
     """
     raw = os.getenv("OPENAI_FULL_SYSTEM", "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
-    if (route_reason or "") in {
+
+    heavy_route = (route_reason or "") in {
         "strategy_rules",
         "research_apply",
         "all_complex",
-    }:
-        return True
-    # Default OPENAI_MODEL_ROUTING=mini tags most calls as "single" — still use full
-    # mapping whenever the user is clearly applying entry rules.
-    if prompt and _looks_like_strategy_apply_request(prompt):
+    }
+    applyish = bool(prompt) and _looks_like_strategy_apply_request(prompt)
+
+    if raw in ("1", "true", "yes", "on"):
+        return heavy_route or applyish
+
+    # Default: do not send the 21k-char SYSTEM_PROMPT for every apply.
+    if prompt and _prompt_needs_heavy_mapping(prompt):
         return True
     return False
 

@@ -115,13 +115,20 @@ def test_price_level_absolute_sl_survives_schema() -> None:
     assert cleaned["short"]["takeProfit"]["type"] == "risk_reward"
 
 
-def test_full_system_default_for_strategy_apply() -> None:
+def test_full_system_only_for_heavy_or_opt_in() -> None:
     prev = os.environ.pop("OPENAI_FULL_SYSTEM", None)
     try:
-        assert _needs_full_system("single", "MACD 골든크로스 롱 진입") is True
+        # Default: simple GPT applies stay compact (avoid ~5k-token SYSTEM_PROMPT).
+        assert _needs_full_system("single", "ATR 14가 증가할 때 롱") is False
         assert _needs_full_system("question", "지금 추세가 뭐야?") is False
+        # Hard multi-condition / exotic → full
+        assert _needs_full_system("single", "해머 캔들 + RSI 30 이하 롱") is True
+        assert _needs_full_system("single", "이치모쿠 전환선이 기준선 상향돌파 롱") is True
+        # Explicit opt-in
+        os.environ["OPENAI_FULL_SYSTEM"] = "1"
+        assert _needs_full_system("single", "ATR 14가 증가할 때 롱") is True
         os.environ["OPENAI_FULL_SYSTEM"] = "0"
-        assert _needs_full_system("strategy_rules", "MACD 골든크로스 롱 진입") is False
+        assert _needs_full_system("strategy_rules", "해머 캔들 + RSI 30 이하 롱") is False
     finally:
         if prev is None:
             os.environ.pop("OPENAI_FULL_SYSTEM", None)
@@ -138,6 +145,6 @@ if __name__ == "__main__":
     test_route_matrix()
     test_macd_sell_momentum_has_hist_zone()
     test_price_level_absolute_sl_survives_schema()
-    test_full_system_default_for_strategy_apply()
+    test_full_system_only_for_heavy_or_opt_in()
     test_unsupported_mtf_detected()
     print(f"ok cases={len(CASES)}")
