@@ -259,6 +259,29 @@ def _sanitize_condition(cond: Any) -> dict[str, Any] | None:
             "tolerancePct": max(0.05, tolerance),
         }
 
+    if cond_type == "line_touch":
+        indicator = _resolve_indicator_id(cond.get("indicator") or "ma")
+        if indicator == "sma":
+            indicator = "ma"
+        params = cond.get("params") if isinstance(cond.get("params"), dict) else {}
+        try:
+            period = max(2, int(params.get("period") or 20))
+        except (TypeError, ValueError):
+            period = 20
+        mode = "body" if str(cond.get("mode") or "").lower() == "body" else "wick"
+        try:
+            offset = max(0, int(cond.get("offset") or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        return {
+            "type": "line_touch",
+            "indicator": indicator,
+            "params": {**params, "period": period},
+            "mode": mode,
+            "offset": offset,
+            "field": cond.get("field") or "value",
+        }
+
     if cond.get("indicator") and cond.get("op") is not None:
         right_val = cond.get("value") if cond.get("value") is not None else cond.get("right")
         left = _sanitize_operand(

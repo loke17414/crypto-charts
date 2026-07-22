@@ -83,6 +83,9 @@ const StrategyEngine = (() => {
     lines.push('- compare: { left: operand, op:"<|<=|>|>=|==|!=", right: operand } — operand can be indicator, price, value, or candle metric.');
     lines.push('- band_reentry: price left a band then closed back inside — works for ANY overlay-band indicator');
     lines.push('  { type:"band_reentry", side:"long"|"short", indicator:"boll"|"env"|"kc"|"dc", params:{...} }');
+    lines.push('- line_touch: candle wick/body touches MA/EMA (NOT close==ma). offset=1 means previous bar.');
+    lines.push('  { type:"line_touch", indicator:"ma"|"ema", params:{period:20}, mode:"wick"|"body", offset:1 }');
+    lines.push('  MA touch + next bullish candle long: line_touch offset:1 AND candle_pattern bullish offset:0');
     lines.push('  params by indicator: boll{period,mult} · env{period,pct} · kc{period,mult} · dc{period}');
     lines.push('  long = closed back above lower band; short = closed back below upper band');
     lines.push('- exitRules: dynamic SL/TP — candle_extreme (field low|high, offset 1=prev bar) OR atr (period, mult); takeProfit risk_reward (ratio 1.5)');
@@ -308,6 +311,19 @@ const StrategyEngine = (() => {
           );
           return;
         }
+        if (cond.type === 'line_touch') {
+          visitor(
+            {
+              source: 'indicator',
+              indicator: cond.indicator || 'ma',
+              params: cond.params || { period: 20 },
+              field: cond.field || 'value',
+            },
+            side,
+            cond,
+          );
+          return;
+        }
         [cond.left, cond.right].forEach((op) => visitor(op, side, cond));
       });
     });
@@ -472,6 +488,23 @@ const StrategyEngine = (() => {
         out.tolerancePct = Math.max(0.05, parseFloat(cond.tolerancePct) || 0.5);
       }
       return out;
+    }
+
+    if (type === 'line_touch') {
+      const rawId = String(cond.indicator || 'ma').toLowerCase();
+      const indicator = INDICATOR_ALIASES[rawId] || rawId;
+      const rawParams = cond.params && typeof cond.params === 'object' ? { ...cond.params } : {};
+      const period = Math.max(2, parseInt(rawParams.period, 10) || 20);
+      rawParams.period = period;
+      const mode = String(cond.mode || 'wick').toLowerCase() === 'body' ? 'body' : 'wick';
+      return {
+        type: 'line_touch',
+        indicator: indicator === 'sma' ? 'ma' : indicator,
+        params: rawParams,
+        mode,
+        offset: Math.max(0, parseInt(cond.offset, 10) || 0),
+        field: cond.field || 'value',
+      };
     }
 
     if (cond.indicator && cond.op != null) {
@@ -824,6 +857,18 @@ const StrategyEngine = (() => {
             indexedSeries(candles, { source: 'indicator', indicator, params, field }, cache);
           });
         }
+        if (cond?.type === 'line_touch') {
+          let indicator = String(cond.indicator || 'ma').toLowerCase();
+          if (INDICATOR_ALIASES[indicator]) indicator = INDICATOR_ALIASES[indicator];
+          if (indicator === 'sma') indicator = 'ma';
+          const params = cond.params && typeof cond.params === 'object' ? cond.params : { period: 20 };
+          indexedSeries(candles, {
+            source: 'indicator',
+            indicator,
+            params,
+            field: cond.field || 'value',
+          }, cache);
+        }
       });
     });
     walkOperands(rules, (op) => {
@@ -1000,11 +1045,53 @@ const StrategyEngine = (() => {
     return closePrev > upperPrev && closeNow <= upperNow;
   }
 
+  function evaluateLineTouch(candles, index, condition, cache) {
+    const offset = Math.max(0, parseInt(condition.offset, 10) || 0);
+    const barIdx = index - offset;
+    if (barIdx < 0 || barIdx >= candles.length) return false;
+    const bar = candles[barIdx];
+    if (!bar) return false;
+
+    let indicator = String(condition.indicator || 'ma').toLowerCase();
+    if (INDICATOR_ALIASES[indicator]) indicator = INDICATOR_ALIASES[indicator];
+    if (indicator === 'sma') indicator = 'ma';
+    const params = condition.params && typeof condition.params === 'object'
+      ? { ...condition.params }
+      : { period: 20 };
+    if (!Number.isFinite(parseInt(params.period, 10))) params.period = 20;
+
+    const line = resolveOperand(
+      candles,
+      barIdx,
+      {
+        source: 'indicator',
+        indicator,
+        params,
+        field: condition.field || 'value',
+      },
+      cache,
+    );
+    if (!Number.isFinite(line)) return false;
+
+    const mode = String(condition.mode || 'wick').toLowerCase();
+    if (mode === 'body') {
+      const top = Math.max(bar.open, bar.close);
+      const bottom = Math.min(bar.open, bar.close);
+      return bottom <= line && line <= top;
+    }
+    // wick (default): "가격 터치" = high-low range crossed the line
+    return bar.low <= line && line <= bar.high;
+  }
+
   function evaluateCondition(candles, index, condition, cache) {
     const type = condition.type || 'compare';
 
     if (type === 'band_reentry') {
       return evaluateBandReentry(candles, index, condition, cache);
+    }
+
+    if (type === 'line_touch') {
+      return evaluateLineTouch(candles, index, condition, cache);
     }
 
     if (type === 'compare') {
@@ -1090,6 +1177,11 @@ const StrategyEngine = (() => {
           const period = cond.params?.period || 20;
           if (period > maxPeriod) maxPeriod = period;
         }
+        if (cond.type === 'line_touch') {
+          const period = cond.params?.period || 20;
+          const need = period + (cond.offset || 0);
+          if (need > maxPeriod) maxPeriod = need;
+        }
         if (cond.type === 'fvg') {
           const lb = parseInt(cond.lookback, 10) || 30;
           if (lb + 3 > maxPeriod) maxPeriod = lb + 3;
@@ -1151,6 +1243,13 @@ const StrategyEngine = (() => {
         : '';
       const paramLabel = params ? ` ${params}` : '';
       return `${id} ${side} 밴드 재진입 (${id}${paramLabel})`;
+    }
+    if (type === 'line_touch') {
+      const id = String(cond.indicator || 'ma').toUpperCase();
+      const period = cond.params?.period ?? '?';
+      const mode = cond.mode === 'body' ? '몸통' : '윅';
+      const offset = cond.offset ? ` ${cond.offset}봉전` : '';
+      return `${id}(${period}) ${mode} 터치${offset}`;
     }
     if (type === 'candle_pattern') {
       const label = window.CandlePatterns?.patternLabel(cond.pattern) || cond.pattern;

@@ -128,9 +128,10 @@ ExitRule:
              OR { "type": "atr", "period": 14, "mult": 1.5 },
   "takeProfit": { "type": "risk_reward", "ratio": 1.5 }
 }
-- candle_extreme offset 1 = candle immediately before entry bar (재진입 직전 봉)
+- candle_extreme offset 1 = candle immediately before the ENTRY bar
+  (예: MA 터치 봉 = offset 1 when entry is on the next confirm bar; 재진입 직전 봉도 동일)
 - atr stop = entry -/+ ATR(period) * mult (변동성 기반 손절)
-- risk_reward ratio 1.5 = net TP/SL after round-trip fee 0.1%
+- risk_reward ratio 1 = net 1:1 after round-trip fee 0.1%; ratio 1.5 = 1.5R
   (engine sets TP so (reward-fee)/(risk+fee)=ratio; risk sizing also adds 0.1% fee to SL%)
 
 RuleGroup:
@@ -165,6 +166,42 @@ Condition types:
 9) swing_near — close within tolerancePct of the last confirmed swing level (support/resistance)
    { "type":"swing_near", "side":"long"|"short", "pivotBars":5, "lookback":60, "tolerancePct":0.5 }
    long = near swing low (전 저점 지지); short = near swing high (전 고점 저항)
+10) line_touch — candle RANGE (wick) touches an MA/EMA/line (NOT close-equals-MA)
+   { "type":"line_touch", "indicator":"ma"|"ema"|"sma", "params":{"period":20}, "mode":"wick"|"body", "offset":1 }
+   wick (default): bar.low <= line <= bar.high on that offset bar
+   body: min(open,close) <= line <= max(open,close)
+   CRITICAL: "가격이 MA 터치" = WICK touch via line_touch — NEVER compare close==ma and call it 터치.
+   "다음 캔들 상승/양봉 후 롱" = line_touch offset:1 AND candle_pattern bullish (or is_bullish) offset:0
+   SL at 터치한 캔들 저점 when entry is on the next bar → exitRules candle_extreme low offset:1
+   TP 손익비 1:1 → takeProfit risk_reward ratio:1
+
+PRICE vs CANDLE (CRITICAL — common AI mistake):
+- "가격 터치" / "라인 터치" means the candle's HIGH-LOW range crossed the line (wick), NOT that close equals the MA.
+- "다음 캔들" / "다음 봉" means conditions on the CONFIRM bar (offset 0) with the touch on the PRIOR bar (offset 1).
+- Do NOT put touch + rise on the same offset:0 bar unless the user says same-candle entry.
+- Do NOT use band_reentry for MA/EMA/이평 터치 (band_reentry is only Bollinger/Envelope/Keltner/Donchian).
+
+MA/이평 터치 + 다음 봉 상승 롱 EXAMPLE (copy this structure):
+{
+  "entryRules": {
+    "long": {
+      "enabled": true,
+      "logic": "all",
+      "conditions": [
+        { "type":"line_touch", "indicator":"ma", "params":{"period":20}, "mode":"wick", "offset":1 },
+        { "type":"candle_pattern", "pattern":"bullish", "offset":0 }
+      ]
+    },
+    "short": { "enabled": false, "logic": "all", "conditions": [] }
+  },
+  "exitRules": {
+    "long": {
+      "stopLoss": { "type":"candle_extreme", "field":"low", "offset":1 },
+      "takeProfit": { "type":"risk_reward", "ratio":1 }
+    }
+  },
+  "allowShort": false
+}
 
 SWING HIGH/LOW (전 고점/전 저점) — CRITICAL (most common AI mistake):
 - WRONG: "이전 캔들이 더 낮으니 지금/직전 봉이 전고점" — NEVER do this.
@@ -299,8 +336,10 @@ MARKET DATA & BACKTEST (critical for accuracy):
 
 CONDITION TYPE MAPPING (user request ALWAYS beats market_context — most common AI mistake):
 - NEVER auto-apply structure.fvg or structure.divergence from market_context unless the user EXPLICITLY asks for FVG/갭/페어밸류 or divergence/다이버전스.
+- MA/SMA/EMA/이평/이동평균 + 터치/touch/닿음 → type:"line_touch" (wick). NEVER band_reentry. NEVER close==ma as "터치".
+- 다음 캔들/다음 봉 + 상승/양봉 + 롱 → line_touch offset:1 + candle_pattern bullish offset:0 (see EXAMPLE above).
 - 볼린저/Bollinger/BB/밴드/Envelope/Keltner/Donchian + 진입/재진입/이탈/터치/하단/상단
-  → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg".
+  → type:"band_reentry" with the matching indicator (boll/env/kc/dc). NEVER type:"fvg". NEVER for plain MA touch.
 - FVG/페어밸류/갭/gap/imbalance mentioned by user → type:"fvg" ONLY. NEVER band_reentry or swing for FVG requests.
 - divergence/다이버전스 mentioned by user → type:"divergence" ONLY.
 - 전고점/전저점/스윙/지지/저항/돌파 (swing pivots, NOT band touch) → swing_break or swing_near. NOT fvg, NOT band_reentry.
@@ -355,8 +394,9 @@ SYSTEM_PROMPT_COMPACT = """You edit BTC USDT-M futures entry strategy. Reply JSO
 
 Incremental edits: change ONLY what the latest user_request needs. Prefer partial entryRules/exitRules patches.
 Settings keys: strategySlots, entryRules, exitRules, stopLossPct, takeProfitPct, useStopLoss, allowShort, leverage, riskPerTradePct, maxAccountLossPct, pollSeconds, rsiPeriod, rsiOversold, rsiOverbought.
-Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, fvg, divergence, swing_break, swing_near.
+Condition types: compare, cross_above, cross_below, candle_pattern, band_reentry, line_touch, fvg, divergence, swing_break, swing_near.
 Operands: price/candle/indicator/value. Multi-field indicators MUST set field (macd/stoch/kdj/dmi).
+MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
 Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
 """
@@ -818,6 +858,7 @@ _COMPLEX_RULE_MARKERS = (
     "swing_break", "swing_near", "골든", "데드",
     "삭제", "제거", "비활성", "슬롯", "strategySlots",
     "macd", "스토캐스틱", "stoch", "kdj", "해머", "장악", "engulfing",
+    "터치", "이평", "이동평균", "line_touch", "ma20", "다음캔들", "다음 봉", "다음봉",
 )
 
 _RISK_ONLY_MARKERS = (
@@ -1449,6 +1490,8 @@ def _parse_risk_reward_ratio(prompt: str, default: float = 1.5) -> float:
     text = _prompt_text(prompt)
     if re.search(r"1\.5\s*배|1\.5\s*:?\s*1|손절.*?1\.5|1\.5\s*배", text):
         return 1.5
+    if re.search(r"1\s*대\s*1|1\s*:\s*1|손익비\s*1(?:\D|$)|rr\s*1(?:\D|$)", text, re.I):
+        return 1.0
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:배|:1|r\b)", text)
     if match:
         try:
@@ -1502,9 +1545,143 @@ def _bullish_candle_long_patch() -> dict[str, Any]:
 
 def _looks_like_bullish_candle_long(prompt: str) -> bool:
     text = (prompt or "").lower()
+    # MA/이평 터치 + 다음봉 is NOT a simple "양봉만 롱" strategy.
+    if _looks_like_ma_line_touch(prompt):
+        return False
     long_side = any(k in text for k in ("롱", "long", "매수", "진입"))
     candle_kw = any(k in text for k in ("캔들", "봉", "양봉", "상승", "bullish", "올라"))
     return long_side and candle_kw
+
+
+def _looks_like_ma_line_touch(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    has_line = any(
+        k in text
+        for k in (
+            "ma", "sma", "ema", "wma", "이평", "이동평균", "이동 평균",
+            "line_touch",
+        )
+    )
+    has_touch = any(k in text for k in ("터치", "touch", "닿", "접촉", "스친"))
+    # Also: "ma20 닿고 다음 봉" without explicit 터치
+    has_ma_num = bool(re.search(r"(?:ma|sma|ema)\s*\d+", text, re.I))
+    has_next = any(k in text for k in ("다음", "next", "확인봉", "확인 봉"))
+    if has_line and has_touch:
+        return True
+    if has_ma_num and (has_touch or has_next):
+        return True
+    return False
+
+
+def _parse_ma_period(prompt: str, default: int = 20) -> int:
+    text = _prompt_text(prompt)
+    match = re.search(r"(?:ma|sma|ema|wma|이평|이동평균)\s*(\d+)", text, re.I)
+    if match:
+        try:
+            return max(2, min(500, int(match.group(1))))
+        except ValueError:
+            pass
+    match = re.search(r"(\d+)\s*(?:이평|이동평균)", text)
+    if match:
+        try:
+            return max(2, min(500, int(match.group(1))))
+        except ValueError:
+            pass
+    return default
+
+
+def _parse_ma_indicator(prompt: str) -> str:
+    text = _prompt_text(prompt).lower()
+    if "ema" in text:
+        return "ema"
+    if "wma" in text:
+        return "wma"
+    return "ma"
+
+
+def _has_line_touch(rules: Any) -> bool:
+    if not isinstance(rules, dict):
+        return False
+    for side in ("long", "short"):
+        group = rules.get(side)
+        if not isinstance(group, dict):
+            continue
+        for cond in group.get("conditions") or []:
+            if isinstance(cond, dict) and cond.get("type") == "line_touch":
+                return True
+            # Approximate wick-straddle compares GPT sometimes emits
+            if not isinstance(cond, dict) or cond.get("type") != "compare":
+                continue
+            left = cond.get("left") if isinstance(cond.get("left"), dict) else {}
+            right = cond.get("right") if isinstance(cond.get("right"), dict) else {}
+            fields = {left.get("field"), right.get("field")}
+            inds = {left.get("indicator"), right.get("indicator")}
+            if fields & {"low", "high"} and inds & {"ma", "sma", "ema", "wma"}:
+                return True
+    return False
+
+
+def _ma_touch_next_candle_patch(prompt: str) -> dict[str, Any]:
+    period = _parse_ma_period(prompt, 20)
+    indicator = _parse_ma_indicator(prompt)
+    ratio = _parse_risk_reward_ratio(prompt, default=1.0)
+    side = _prompt_side(prompt)
+    text = _prompt_text(prompt)
+    long_only = side == "long" or (
+        side is None
+        and any(k in text for k in ("롱", "long", "매수"))
+        and not any(k in text for k in ("숏", "short", "매도"))
+    )
+    enable_long = True if long_only or side in (None, "long") else False
+    enable_short = True if side == "short" or (
+        side is None and any(k in text for k in ("숏", "short", "매도")) and not long_only
+    ) else False
+    if not enable_long and not enable_short:
+        enable_long = True
+
+    def _entry(*, long: bool) -> dict[str, Any]:
+        return {
+            "enabled": True,
+            "logic": "all",
+            "conditions": [
+                {
+                    "type": "line_touch",
+                    "indicator": indicator,
+                    "params": {"period": period},
+                    "mode": "wick",
+                    "offset": 1,
+                },
+                {
+                    "type": "candle_pattern",
+                    "pattern": "bullish" if long else "bearish",
+                    "offset": 0,
+                },
+            ],
+        }
+
+    exit_rules: dict[str, Any] = {}
+    entry: dict[str, Any] = {
+        "long": {"enabled": False, "logic": "all", "conditions": []},
+        "short": {"enabled": False, "logic": "all", "conditions": []},
+    }
+    if enable_long:
+        entry["long"] = _entry(long=True)
+        exit_rules["long"] = {
+            "stopLoss": {"type": "candle_extreme", "field": "low", "offset": 1},
+            "takeProfit": {"type": "risk_reward", "ratio": float(ratio)},
+        }
+    if enable_short:
+        entry["short"] = _entry(long=False)
+        exit_rules["short"] = {
+            "stopLoss": {"type": "candle_extreme", "field": "high", "offset": 1},
+            "takeProfit": {"type": "risk_reward", "ratio": float(ratio)},
+        }
+
+    return {
+        "allowShort": enable_short,
+        "entryRules": entry,
+        "exitRules": exit_rules,
+    }
 
 
 def _has_bullish_entry(rules: Any) -> bool:
@@ -1936,6 +2113,15 @@ def _apply_rule_templates(
             merged["entryRules"] = tmpl["entryRules"]
             if "allowShort" not in merged:
                 merged["allowShort"] = False
+
+    if _looks_like_ma_line_touch(prompt) and (not follow_up or type_change):
+        tmpl = _ma_touch_next_candle_patch(prompt)
+        if not _has_line_touch(merged.get("entryRules")):
+            merged["entryRules"] = tmpl["entryRules"]
+        if not merged.get("exitRules"):
+            merged["exitRules"] = tmpl["exitRules"]
+        if "allowShort" not in merged:
+            merged["allowShort"] = tmpl.get("allowShort", False)
 
     if _looks_like_bb_reentry_long(prompt) and (not follow_up or type_change):
         ratio = _parse_risk_reward_ratio(prompt)

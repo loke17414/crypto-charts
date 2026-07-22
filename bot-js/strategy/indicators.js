@@ -294,11 +294,182 @@ const INDICATOR_REGISTRY = [
 const SETTINGS_KEY = 'crypto-charts-indicator-settings';
 
 const IndicatorManager = (() => {
-  const SUB_HEIGHT = 88;
+  const SUB_HEIGHT = 72;
   const MAIN_CHART_MAX = 280;
+  const IN_CHART_VOL_BAND = 0.14;
+  const IN_CHART_SUB_BAND = 0.09;
+  const SUB_PANE_MIN = 52;
+  const SUB_PANE_MAX = 200;
+  const SUB_PANE_HEADER = 26;
+  const SUB_PANE_STATE_KEY = 'crypto-charts-sub-pane-state';
+
+  function useInChartSubScales() {
+    return panesEl?.classList.contains('indicator-panes--inline-scales');
+  }
+
+  function loadSubPaneState() {
+    try {
+      return JSON.parse(localStorage.getItem(SUB_PANE_STATE_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveSubPaneState(state) {
+    try {
+      localStorage.setItem(SUB_PANE_STATE_KEY, JSON.stringify(state));
+    } catch { /* ignore */ }
+  }
+
+  function getSubPaneChartHeight(id, def) {
+    const saved = loadSubPaneState()[id];
+    if (saved?.collapsed) return 0;
+    return Math.min(SUB_PANE_MAX, Math.max(SUB_PANE_MIN, saved?.height || def?.subHeight || SUB_HEIGHT));
+  }
+
+  function applySubPaneLayout(id) {
+    const sc = subCharts[id];
+    const def = getDef(id);
+    if (!sc?.wrap || !sc.el || sc.inChart) return;
+    const saved = loadSubPaneState()[id] || {};
+    const collapsed = !!saved.collapsed;
+    const chartH = collapsed ? 0 : getSubPaneChartHeight(id, def);
+    sc.wrap.classList.toggle('is-collapsed', collapsed);
+    sc.wrap.style.height = collapsed ? `${SUB_PANE_HEADER}px` : `${SUB_PANE_HEADER + chartH}px`;
+    sc.el.style.height = `${chartH}px`;
+    sc.chart.applyOptions({ height: chartH });
+    const btn = sc.wrap.querySelector('.indicator-pane__collapse');
+    if (btn) {
+      btn.textContent = collapsed ? '+' : '−';
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+  }
+
+  function bindSubPaneControls(wrap, id) {
+    if (wrap.dataset.controlsBound) return;
+    wrap.dataset.controlsBound = '1';
+
+    wrap.querySelector('.indicator-pane__collapse')?.addEventListener('click', () => {
+      const state = loadSubPaneState();
+      const next = !state[id]?.collapsed;
+      state[id] = { ...state[id], collapsed: next };
+      saveSubPaneState(state);
+      applySubPaneLayout(id);
+      resizeMainChart();
+    });
+
+    wrap.querySelector('.indicator-pane__chart')?.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      resetSubPanePriceScale(id);
+    });
+
+    const handle = wrap.querySelector('.indicator-pane__resize-handle');
+    if (!handle) return;
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const sc = subCharts[id];
+      if (!sc?.wrap || sc.inChart) return;
+      const startY = e.clientY;
+      const startH = getSubPaneChartHeight(id, getDef(id));
+      const onMove = (ev) => {
+        const next = Math.min(SUB_PANE_MAX, Math.max(SUB_PANE_MIN, startH + (startY - ev.clientY)));
+        const state = loadSubPaneState();
+        state[id] = { ...state[id], collapsed: false, height: next };
+        saveSubPaneState(state);
+        applySubPaneLayout(id);
+        resizeMainChart();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  function resetMainChartScales() {
+    if (!mainChart || useInChartSubScales()) return;
+    mainChart.priceScale('right').applyOptions({
+      scaleMargins: { top: 0.05, bottom: 0.08 },
+    });
+    mainChart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 },
+    });
+  }
+
+  function subScaleId(id) {
+    return `ind-${id}`;
+  }
+
+  function subSeriesOpts(sc) {
+    if (!sc?.inChart || !sc.scaleId) return {};
+    return { priceScaleId: sc.scaleId };
+  }
+
+  function listInChartSubs() {
+    return [...active]
+      .filter((id) => {
+        const def = getDef(id);
+        if (!def || def.group !== '서브') return false;
+        if (id === 'vol' || id === 'volma') return false;
+        return true;
+      })
+      .sort((a, b) => subPaneSortKey(a) - subPaneSortKey(b));
+  }
+
+  function layoutInChartSubScales() {
+    if (!mainChart || !useInChartSubScales()) return;
+    const subs = listInChartSubs();
+    let bottom = IN_CHART_VOL_BAND;
+    subs.forEach((id) => {
+      const scaleId = subScaleId(id);
+      const h = getDef(id)?.inChartBand || IN_CHART_SUB_BAND;
+      mainChart.priceScale(scaleId).applyOptions({
+        visible: true,
+        borderColor: TV.border,
+        scaleMargins: { top: 1 - bottom - h, bottom },
+      });
+      bottom += h;
+    });
+    mainChart.priceScale('right').applyOptions({
+      scaleMargins: { top: 0.05, bottom: bottom + 0.02 },
+    });
+    mainChart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 1 - IN_CHART_VOL_BAND, bottom: 0 },
+    });
+  }
+
+  function ensureInChartSub(id) {
+    if (subCharts[id]?.inChart) {
+      layoutInChartSubScales();
+      return subCharts[id];
+    }
+    const scaleId = subScaleId(id);
+    mainChart.priceScale(scaleId).applyOptions({
+      visible: true,
+      borderColor: TV.border,
+    });
+    subCharts[id] = {
+      chart: mainChart,
+      wrap: null,
+      series: {},
+      scaleId,
+      inChart: true,
+      el: null,
+      ro: null,
+    };
+    layoutInChartSubScales();
+    return subCharts[id];
+  }
+  const softUi = document.body?.classList?.contains('trading-page--simple') ?? false;
   const TV = {
-    bg: '#131722', text: '#d1d4dc', grid: '#1e222d', border: '#2a2e39',
-    up: '#26a69a', down: '#ef5350',
+    bg: softUi ? '#15171c' : '#131722',
+    text: softUi ? '#eceef2' : '#d1d4dc',
+    grid: softUi ? '#21252d' : '#1e222d',
+    border: softUi ? '#2b3039' : '#2a2e39',
+    up: '#26a69a',
+    down: '#ef5350',
   };
 
   let mainChart = null;
@@ -442,56 +613,24 @@ const IndicatorManager = (() => {
     return s;
   }
 
-  function createBandSeries(id, params, def) {
+  function createBandSeries(id, params) {
     const lw = params.lineWidth || 1.5;
     const midColor = hexToRgba(params.color, 0.65);
     const lineColors = [params.color, midColor, params.color];
-    const withFill = def?.bandFill;
-
-    if (overlaySeries[id] && withFill && !overlaySeries[id].fillLower) {
-      Object.values(overlaySeries[id]).forEach((s) => mainChart.removeSeries(s));
-      delete overlaySeries[id];
-    }
 
     if (overlaySeries[id]) {
-      ['upper', 'middle', 'lower'].forEach((k, i) => {
-        overlaySeries[id][k]?.applyOptions(bandLineOptions(lineColors[i], lw));
-      });
-      if (withFill) {
-        const fillColor = hexToRgba(params.color, params.fillOpacity ?? 0.1);
-        overlaySeries[id].fillLower?.applyOptions({ topColor: fillColor });
-        overlaySeries[id].fillUpper?.applyOptions({ topColor: TV.bg });
+      if (overlaySeries[id].fillLower || overlaySeries[id].fillUpper) {
+        Object.values(overlaySeries[id]).forEach((s) => mainChart.removeSeries(s));
+        delete overlaySeries[id];
+      } else {
+        ['upper', 'middle', 'lower'].forEach((k, i) => {
+          overlaySeries[id][k]?.applyOptions(bandLineOptions(lineColors[i], lw));
+        });
+        return;
       }
-      return;
     }
 
     overlaySeries[id] = {};
-
-    if (withFill) {
-      const fillColor = hexToRgba(params.color, params.fillOpacity ?? 0.1);
-      overlaySeries[id].fillLower = mainChart.addAreaSeries({
-        lineColor: 'transparent',
-        topColor: fillColor,
-        bottomColor: 'transparent',
-        invertFilledArea: true,
-        lineWidth: 0,
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        autoscaleInfoProvider: autoscaleOff(),
-      });
-      overlaySeries[id].fillUpper = mainChart.addAreaSeries({
-        lineColor: 'transparent',
-        topColor: TV.bg,
-        bottomColor: 'transparent',
-        invertFilledArea: true,
-        lineWidth: 0,
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        autoscaleInfoProvider: autoscaleOff(),
-      });
-    }
 
     ['upper', 'middle', 'lower'].forEach((k, i) => {
       overlaySeries[id][k] = mainChart.addLineSeries(bandLineOptions(lineColors[i], lw));
@@ -505,11 +644,13 @@ const IndicatorManager = (() => {
   function ensureRsiSeries(sc, params, lw, range) {
     const [minR, maxR] = range;
     const rp = fixedRangeProvider(minR, maxR);
+    const scaleOpts = subSeriesOpts(sc);
     const base = {
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
       autoscaleInfoProvider: rp,
+      ...scaleOpts,
     };
     const levelColor = 'rgba(209, 212, 220, 0.45)';
     const zoneFill = 'rgba(128, 138, 163, 0.16)';
@@ -568,11 +709,13 @@ const IndicatorManager = (() => {
     sc.series.main.setData(Array.isArray(data) ? data : []);
 
     const last = data?.at(-1)?.value;
-    const label = sc.wrap.querySelector('.indicator-pane__label');
-    label.innerHTML = `<span class="indicator-pane__title">${getDisplayName('rsi')}</span>
+    const label = sc.wrap?.querySelector('.indicator-pane__label');
+    if (label) {
+      label.innerHTML = `<span class="indicator-pane__title">${getDisplayName('rsi')}</span>
       <span class="indicator-pane__values">
         <span style="color:${params.color}">RSI ${last != null ? last.toFixed(2) : '—'}</span>
       </span>`;
+    }
   }
 
   function getSubChartOptions(def) {
@@ -580,13 +723,27 @@ const IndicatorManager = (() => {
       rightPriceScale: {
         borderColor: TV.border,
         scaleMargins: def?.subMargins || { top: 0.1, bottom: 0.1 },
+        autoScale: true,
       },
       timeScale: {
         borderColor: TV.border,
         visible: false,
         rightOffset: def?.rightOffset ?? 5,
       },
+      handleScroll: false,
+      handleScale: {
+        axisPressedMouseMove: { time: false, price: true },
+        axisDoubleClickReset: { time: false, price: true },
+        mouseWheel: false,
+        pinch: false,
+      },
     };
+  }
+
+  function resetSubPanePriceScale(id) {
+    const sc = subCharts[id];
+    if (!sc?.chart || sc.inChart) return;
+    sc.chart.priceScale('right').applyOptions({ autoScale: true });
   }
 
   function subPaneSortKey(id) {
@@ -597,6 +754,11 @@ const IndicatorManager = (() => {
   }
 
   function reorderSubPanes() {
+    if (useInChartSubScales()) {
+      layoutInChartSubScales();
+      resizeMainChart();
+      return;
+    }
     if (!panesEl) return;
     const subs = [...active].filter((id) => getDef(id)?.group === '서브');
     subs.sort((a, b) => subPaneSortKey(a) - subPaneSortKey(b));
@@ -608,13 +770,17 @@ const IndicatorManager = (() => {
   }
 
   function createSubChart(id) {
+    if (useInChartSubScales()) {
+      return ensureInChartSub(id);
+    }
+
     const def = getDef(id);
-    const height = def?.subHeight || SUB_HEIGHT;
+    const chartH = getSubPaneChartHeight(id, def);
     const chartOpts = getSubChartOptions(def);
 
     if (subCharts[id]) {
-      subCharts[id].el.style.height = `${height}px`;
-      subCharts[id].chart.applyOptions({ height, ...chartOpts });
+      applySubPaneLayout(id);
+      subCharts[id].chart.applyOptions({ ...chartOpts });
       reorderSubPanes();
       return subCharts[id];
     }
@@ -623,20 +789,25 @@ const IndicatorManager = (() => {
     wrap.className = 'indicator-pane';
     if (def?.type === 'sub-macd') wrap.classList.add('indicator-pane--macd');
     wrap.dataset.id = id;
-    wrap.innerHTML = `<div class="indicator-pane__label"></div><div class="indicator-pane__chart"></div>`;
+    wrap.innerHTML = `
+      <div class="indicator-pane__resize-handle" title="높이 조절"></div>
+      <div class="indicator-pane__header">
+        <div class="indicator-pane__label"></div>
+        <button type="button" class="indicator-pane__collapse" title="접기/펼치기" aria-expanded="true">−</button>
+      </div>
+      <div class="indicator-pane__chart"></div>`;
     panesEl.appendChild(wrap);
+    bindSubPaneControls(wrap, id);
 
     const el = wrap.querySelector('.indicator-pane__chart');
-    el.style.height = `${height}px`;
+    el.style.height = `${chartH}px`;
     const sub = LightweightCharts.createChart(el, {
       layout: { background: { type: 'solid', color: TV.bg }, textColor: TV.text, fontSize: 10 },
       grid: { vertLines: { color: TV.grid }, horzLines: { color: TV.grid } },
       ...chartOpts,
-      handleScroll: false,
-      handleScale: false,
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       width: el.clientWidth,
-      height: height,
+      height: chartH,
     });
 
     const ro = new ResizeObserver(() => {
@@ -645,6 +816,7 @@ const IndicatorManager = (() => {
     ro.observe(el);
 
     subCharts[id] = { chart: sub, el, wrap, series: {}, ro };
+    applySubPaneLayout(id);
     syncTimeScale(sub);
     reorderSubPanes();
     return subCharts[id];
@@ -683,6 +855,17 @@ const IndicatorManager = (() => {
   function removeSub(id) {
     const sc = subCharts[id];
     if (!sc) return;
+    if (sc.inChart) {
+      Object.values(sc.series).forEach((series) => {
+        if (series && mainChart) {
+          try { mainChart.removeSeries(series); } catch { /* ignore */ }
+        }
+      });
+      delete subCharts[id];
+      layoutInChartSubScales();
+      resizeMainChart();
+      return;
+    }
     sc.ro.disconnect();
     sc.chart.remove();
     sc.wrap.remove();
@@ -717,11 +900,7 @@ const IndicatorManager = (() => {
     const data = def.compute(candles, params);
 
     if (def.type === 'overlay-band') {
-      createBandSeries(id, params, def);
-      if (def.bandFill && overlaySeries[id].fillLower) {
-        overlaySeries[id].fillLower.setData(data.lower || []);
-        overlaySeries[id].fillUpper.setData(data.upper || []);
-      }
+      createBandSeries(id, params);
       overlaySeries[id].upper.setData(data.upper || []);
       overlaySeries[id].middle.setData(data.middle || []);
       overlaySeries[id].lower.setData(data.lower || []);
@@ -740,11 +919,13 @@ const IndicatorManager = (() => {
 
   function applySubLines(sc, data, params, lines) {
     const lw = params.lineWidth || 1;
+    const scaleOpts = subSeriesOpts(sc);
     lines.forEach(({ key, colorParam }) => {
       const color = params[colorParam] || params.color || '#2962ff';
       if (!sc.series[key]) {
         sc.series[key] = sc.chart.addLineSeries({
           color, lineWidth: lw, priceLineVisible: false, lastValueVisible: false,
+          ...scaleOpts,
         });
       } else {
         sc.series[key].applyOptions({ color, lineWidth: lw });
@@ -757,10 +938,19 @@ const IndicatorManager = (() => {
     const def = getDef(id);
     if (!def) return;
     const params = getParams(id);
+
+    if (useInChartSubScales() && (def.type === 'sub-vol' || def.type === 'sub-vol-line')) {
+      document.dispatchEvent(new CustomEvent('indicators-changed'));
+      return;
+    }
+
     const sc = createSubChart(id);
-    sc.wrap.querySelector('.indicator-pane__label').textContent = getDisplayName(id);
+    if (sc.wrap) {
+      sc.wrap.querySelector('.indicator-pane__label').textContent = getDisplayName(id);
+    }
     const data = def.compute(candles, params);
     const lw = params.lineWidth || 1;
+    const scaleOpts = subSeriesOpts(sc);
 
     if (def.type === 'sub-vol') {
       if (!sc.series.vol) {
@@ -814,21 +1004,24 @@ const IndicatorManager = (() => {
     }
 
     if (def.type === 'sub-macd') {
-      sc.chart.applyOptions(getSubChartOptions(def));
+      if (!sc.inChart) sc.chart.applyOptions(getSubChartOptions(def));
 
       if (!sc.series.hist) {
         sc.series.hist = sc.chart.addHistogramSeries({
           priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
           priceLineVisible: false,
           lastValueVisible: false,
+          ...scaleOpts,
         });
         sc.series.macd = sc.chart.addLineSeries({
           color: params.colorMacd, lineWidth: lw, priceLineVisible: false,
           lastValueVisible: false, crosshairMarkerVisible: false,
+          ...scaleOpts,
         });
         sc.series.signal = sc.chart.addLineSeries({
           color: params.colorSignal, lineWidth: lw, priceLineVisible: false,
           lastValueVisible: false, crosshairMarkerVisible: false,
+          ...scaleOpts,
         });
         sc.series.zero = sc.chart.addLineSeries({
           color: 'rgba(209, 212, 220, 0.25)',
@@ -837,6 +1030,7 @@ const IndicatorManager = (() => {
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          ...scaleOpts,
         });
       } else {
         sc.series.macd.applyOptions({ color: params.colorMacd, lineWidth: lw });
@@ -852,13 +1046,15 @@ const IndicatorManager = (() => {
       const lastSignal = data.signal?.at(-1)?.value;
       const lastHist = data.histogram?.at(-1)?.value;
       const histColor = lastHist >= 0 ? params.histUpStrong : params.histDownStrong;
-      const label = sc.wrap.querySelector('.indicator-pane__label');
-      label.innerHTML = `<span class="indicator-pane__title">${getDisplayName(id)}</span>
+      const label = sc.wrap?.querySelector('.indicator-pane__label');
+      if (label) {
+        label.innerHTML = `<span class="indicator-pane__title">${getDisplayName(id)}</span>
         <span class="indicator-pane__values">
           <span style="color:${params.colorMacd}">DIF ${fmt(lastMacd)}</span>
           <span style="color:${params.colorSignal}">DEA ${fmt(lastSignal)}</span>
           <span style="color:${histColor}">MACD ${fmt(lastHist)}</span>
         </span>`;
+      }
       return;
     }
 
@@ -873,6 +1069,7 @@ const IndicatorManager = (() => {
     if (!sc.series.main) {
       sc.series.main = sc.chart.addLineSeries({
         color: params.color, lineWidth: lw, priceLineVisible: false, lastValueVisible: false,
+        ...scaleOpts,
       });
     } else {
       sc.series.main.applyOptions({ color: params.color, lineWidth: lw });
@@ -926,6 +1123,14 @@ const IndicatorManager = (() => {
   function calcMainChartHeight(workspace) {
     const embedded = panesEl?.classList.contains('indicator-panes--in-chart');
     if (!embedded) return Math.min(workspace.clientHeight, MAIN_CHART_MAX);
+    if (useInChartSubScales()) {
+      const container = workspace.closest('.chart-container');
+      const base = Math.max(container?.clientHeight || 0, workspace.clientHeight);
+      return Math.max(180, Math.round(base));
+    }
+    const plot = workspace.querySelector('.chart-main__plot');
+    const plotH = plot?.clientHeight || 0;
+    if (plotH > 0) return Math.max(180, plotH);
     const subH = panesEl?.clientHeight || 0;
     return Math.max(180, workspace.clientHeight - subH);
   }
@@ -1155,8 +1360,6 @@ const IndicatorManager = (() => {
       pushSeriesTail(entry.upper, data.upper, tail);
       pushSeriesTail(entry.middle, data.middle, tail);
       pushSeriesTail(entry.lower, data.lower, tail);
-      if (entry.fillLower) pushSeriesTail(entry.fillLower, data.lower, tail);
-      if (entry.fillUpper) pushSeriesTail(entry.fillUpper, data.upper, tail);
       return;
     }
 
@@ -1285,6 +1488,8 @@ const IndicatorManager = (() => {
       renderMenu(e.target.value);
     });
     renderActiveTags();
+    resetMainChartScales();
+    layoutInChartSubScales();
     resizeMainChart();
     reorderSubPanes();
   }
@@ -1292,8 +1497,10 @@ const IndicatorManager = (() => {
   function onResize() {
     resizeMainChart();
     Object.values(subCharts).forEach((sc) => {
+      if (sc.inChart || !sc.el) return;
       if (sc.el.clientWidth > 0) sc.chart.applyOptions({ width: sc.el.clientWidth });
     });
+    layoutInChartSubScales();
   }
 
   function clear() {
@@ -1319,5 +1526,8 @@ const IndicatorManager = (() => {
     return true;
   }
 
-  return { init, update, updateLive, toggle, onResize, clear, openSettings, setParams, active, getParams, getDisplayName, INDICATOR_REGISTRY, count: () => INDICATOR_REGISTRY.length };
+  return {
+    init, update, updateLive, toggle, onResize, clear, openSettings, setParams, active,
+    getParams, getDisplayName, useInChartSubScales, INDICATOR_REGISTRY, count: () => INDICATOR_REGISTRY.length,
+  };
 })();
