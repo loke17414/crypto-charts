@@ -141,10 +141,67 @@ def test_unsupported_mtf_detected() -> None:
     assert _prompt_unsupported_strategy_reason("RSI 30 이하 롱") is None
 
 
+def test_additive_macd_signal_filter_preserves_series() -> None:
+    """Follow-up 'macd9선 ≥10일때만' must AND onto existing MACD series, not wipe it."""
+    from bot.strategy_ai import (  # noqa: WPS433
+        _looks_like_follow_up_edit,
+        _macd_threshold_field,
+        _parse_threshold_compare_condition,
+    )
+
+    base_prompt = (
+        "macd 매도모멘텀이 2개이상 연속으로 약화될떄 롱 진입 "
+        "손절은 전저점 익절은 손익비 대비 1대1"
+    )
+    base_patch, base_route, _ = _local_strategy_template(base_prompt)
+    assert base_route == "indicator_series_local_no_gpt"
+    base_conds = list(base_patch["entryRules"]["long"]["conditions"])
+    assert len(base_conds) >= 3
+
+    follow = "macd9선이 10이상일때만"
+    assert _looks_like_follow_up_edit(follow)
+    assert _macd_threshold_field(follow) == "signal"
+    cond = _parse_threshold_compare_condition(follow)
+    assert cond is not None
+    assert cond["left"]["field"] == "signal"
+    assert cond["op"] == ">="
+    assert cond["right"]["value"] == 10.0
+
+    add_patch, add_route, _ = _local_strategy_template(
+        follow,
+        {"entryRules": base_patch["entryRules"], "exitRules": base_patch.get("exitRules")},
+    )
+    assert add_route == "additive_threshold_filter_local_no_gpt"
+    assert should_skip_gpt_quota(
+        follow,
+        {"entryRules": base_patch["entryRules"]},
+    )
+    new_conds = add_patch["entryRules"]["long"]["conditions"]
+    assert len(new_conds) == len(base_conds) + 1
+    # Prior series/zone compares preserved
+    assert new_conds[:-1] == base_conds
+    filt = new_conds[-1]
+    assert filt["left"]["indicator"] == "macd"
+    assert filt["left"]["field"] == "signal"
+    assert filt["op"] == ">="
+    assert filt["right"]["value"] == 10.0
+    assert add_patch["entryRules"]["long"]["logic"] == "all"
+
+
+def test_additive_filter_without_current_does_not_hijack() -> None:
+    """Filter-only phrase with empty strategy must not invent a one-condition entry."""
+    local = _local_strategy_template("macd9선이 10이상일때만")
+    assert local is None
+    local_rsi = _local_strategy_template("rsi 50이상일때만")
+    assert local_rsi is None
+
+
 if __name__ == "__main__":
     test_route_matrix()
     test_macd_sell_momentum_has_hist_zone()
     test_price_level_absolute_sl_survives_schema()
     test_full_system_only_for_heavy_or_opt_in()
     test_unsupported_mtf_detected()
+    test_additive_macd_signal_filter_preserves_series()
+    test_additive_filter_without_current_does_not_hijack()
     print(f"ok cases={len(CASES)}")

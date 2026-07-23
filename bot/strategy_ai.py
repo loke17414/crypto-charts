@@ -482,6 +482,10 @@ Price-level + candle: "65888까지 오른후 하락캔들 숏 손절 66000 익�
   → short high[1]>=65888 + bearish; stopLoss {type:"price",price:66000}; TP ratio:1. Absolute SL uses type price.
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
+Follow-up filters ("MACD9선/시그널 ≥10일때만", "RSI 50이상일때만", "CCI -100이하일때만"):
+  APPEND a compare onto existing entryRules.*.conditions; keep prior conditions; set logic "all".
+  macd9선/신호선/시그널 → field:"signal"; macd선/라인/dif → field:"macd"; hist → histogram.
+  Do NOT replace the whole entryRules with only the new filter.
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
 Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
 Do NOT replace indicator entries with swing_near/swing_break just because SL mentions 전저점/전고점.
@@ -971,12 +975,17 @@ def _normalize_history(history: list[dict[str, Any]] | None) -> list[dict[str, s
 
 
 def _looks_like_follow_up_edit(prompt: str) -> bool:
-    text = prompt.lower()
+    text = (prompt or "").lower()
     markers = (
         "그대로", "유지", "만 ", "만,", "만.", "바꿔", "변경", "손절", "익절", "레버",
         "아까", "이전", "빼고", "제외", "추가", "수정", "조정", "높여", "낮춰",
+        # Filter-only follow-ups: "macd9선이 10이상일때만", "rsi 50이상일 때만"
+        "일때만", "일 때만", "때만", "필터", "조건만", "인경우만", "인 경우만",
     )
-    return any(m in text for m in markers)
+    if any(m in text for m in markers):
+        return True
+    # Trailing 만 ("…이상만", "…이하만") without a space after 만.
+    return bool(re.search(r"(이상|이하|초과|미만|위|아래)\s*만\s*$", text.strip()))
 
 
 # Broad markers: detect "user wants a strategy change" (validation / templates).
@@ -2796,7 +2805,7 @@ def _prompt_applyish(prompt: str) -> bool:
             "진입", "조건", "추가", "손절", "익절", "롱", "숏", "long", "short",
             "바꿔", "변경", "설정",
         )
-    )
+    ) or _prompt_has_additive_filter_language(prompt)
 
 
 def _local_risk_patch(prompt: str) -> dict[str, Any] | None:
@@ -2886,6 +2895,9 @@ def _rsi_compare_patch(
 
 def _local_rsi_patch(prompt: str) -> dict[str, Any] | None:
     """Common RSI threshold entries without OpenAI."""
+    # Filter-only follow-ups belong to additive merge, not a standalone RSI strategy.
+    if _prompt_has_additive_filter_language(prompt) and _prompt_side(prompt) is None:
+        return None
     text = _prompt_text(prompt)
     if _prompt_wants_divergence(prompt):
         return None
@@ -2984,6 +2996,16 @@ def _local_strategy_template(
 
     if _looks_like_question_only(text):
         return None
+
+    # Additive threshold filter onto current strategy (…이상일때만 / 필터 추가).
+    # Must run before greenfield series/threshold so follow-ups do not wipe prior conditions.
+    additive = _local_additive_threshold_filter_patch(text, current_settings)
+    if additive:
+        return (
+            additive,
+            "additive_threshold_filter_local_no_gpt",
+            "지표 임계값 필터를 기존 진입 조건에 추가했습니다 (OpenAI 호출 없음).",
+        )
 
     ma = _local_ma_strategy_patch(text, current_settings)
     if ma:
@@ -3512,41 +3534,112 @@ _THRESHOLD_INDICATOR_SPECS: tuple[tuple[tuple[str, ...], str, str, dict[str, Any
     (("roc",), "roc", "value", {"period": 12}),
     (("atr",), "atr", "value", {"period": 14}),
     (("obv",), "obv", "value", {}),
+    (("rsi",), "rsi", "value", {"period": 14}),
 )
 
 
-def _local_indicator_threshold_patch(prompt: str) -> dict[str, Any] | None:
-    """Compile 'CCI -100 이하 롱' style single-threshold entries."""
-    if _local_combo_blocker(prompt) or _prompt_wants_divergence(prompt):
+def _prompt_has_additive_filter_language(prompt: str) -> bool:
+    """True for filter-only phrasing meant to AND onto an existing strategy."""
+    text = _prompt_text(prompt)
+    if any(
+        k in text
+        for k in (
+            "일때만", "일 때만", "때만", "필터", "조건만", "조건 추가",
+            "인경우만", "인 경우만", "경우에만",
+        )
+    ):
+        return True
+    return bool(
+        re.search(r"(이상|이하|초과|미만|위|아래)\s*(?:일\s*)?때?\s*만\b", text)
+        or re.search(r"(이상|이하|초과|미만|위|아래)\s*만\s*$", text.strip())
+    )
+
+
+def _cmp_word_to_op(cmp_word: str) -> str:
+    if cmp_word in {"미만", "아래", "밑", "<"}:
+        return "<"
+    if cmp_word in {"이하", "<="}:
+        return "<="
+    if cmp_word in {"초과", "위", "위로", ">"}:
+        return ">"
+    return ">="
+
+
+def _macd_threshold_field(text: str) -> str:
+    """Resolve MACD multi-field from Korean slang (macd9선 ≈ signal period 9)."""
+    t = text or ""
+    if any(k in t for k in ("히스토그램", "histogram", "hist")):
+        return "histogram"
+    if re.search(r"(?:macd|맥디)\s*9\s*선|9\s*선", t) or any(
+        k in t for k in ("신호선", "시그널선", "시그널", "signal", "dea")
+    ):
+        return "signal"
+    if any(k in t for k in ("메인선", "라인", "dif")) or re.search(r"(?:macd|맥디)\s*선", t):
+        return "macd"
+    return "macd"
+
+
+def _threshold_number_and_op(text: str, *, after: int = 0) -> tuple[float, str] | None:
+    """Find value+comparator, skipping MACD period tokens like '9선'."""
+    for m in re.finditer(
+        r"(-?\d+(?:\.\d+)?)\s*(이하|미만|아래|밑|이상|초과|위|위로|<=|>=|<|>)",
+        text[after:],
+        re.I,
+    ):
+        abs_start = after + m.start(1)
+        abs_end = after + m.end(1)
+        # "9선" is signal-period slang, not a threshold.
+        if re.match(r"\s*선", text[abs_end:abs_end + 2]):
+            continue
+        return float(m.group(1)), _cmp_word_to_op(m.group(2))
+    return None
+
+
+def _parse_threshold_compare_condition(prompt: str) -> dict[str, Any] | None:
+    """
+    Parse a single indicator-vs-number compare (MACD/RSI/CCI/…).
+    Used for greenfield thresholds and additive follow-up filters.
+    """
+    if _prompt_wants_divergence(prompt):
         return None
     text = _prompt_text(prompt)
     if any(k in text for k in ("연속", "모멘텀", "크로스", "골든", "데드", "돌파")):
         return None
-    side = _prompt_side(prompt)
+
+    if "macd" in text or "맥디" in text:
+        parsed = _threshold_number_and_op(text)
+        if not parsed:
+            return None
+        thr, op = parsed
+        return {
+            "type": "compare",
+            "left": {
+                "source": "indicator",
+                "indicator": "macd",
+                "field": _macd_threshold_field(text),
+                "params": {"fast": 12, "slow": 26, "signal": 9},
+                "offset": 0,
+            },
+            "op": op,
+            "right": {"source": "value", "value": thr},
+        }
+
     for markers, ind_id, field, params in _THRESHOLD_INDICATOR_SPECS:
         if not any(m in text for m in markers):
             continue
-        m = re.search(
-            rf"(?:{'|'.join(re.escape(x) for x in markers)})"
-            r".{0,24}?(-?\d+(?:\.\d+)?)\s*(이하|미만|아래|밑|이상|초과|위|위로|<=|>=|<|>)",
-            text,
-            re.I,
-        )
-        if not m:
+        # Anchor near the indicator name so "손절 1.5" etc. is not stolen.
+        anchor = None
+        for m in markers:
+            idx = text.find(m)
+            if idx >= 0 and (anchor is None or idx < anchor):
+                anchor = idx
+        if anchor is None:
             continue
-        thr = float(m.group(1))
-        cmp_word = m.group(2)
-        if cmp_word in {"미만", "아래", "밑", "<"}:
-            op = "<"
-        elif cmp_word in {"이하", "<="}:
-            op = "<="
-        elif cmp_word in {"초과", "위", "위로", ">"}:
-            op = ">"
-        else:
-            op = ">="
-        if side is None:
-            side = "long" if op in {"<", "<="} else "short"
-        cond = {
+        parsed = _threshold_number_and_op(text, after=anchor)
+        if not parsed:
+            continue
+        thr, op = parsed
+        return {
             "type": "compare",
             "left": {
                 "source": "indicator",
@@ -3558,26 +3651,134 @@ def _local_indicator_threshold_patch(prompt: str) -> dict[str, Any] | None:
             "op": op,
             "right": {"source": "value", "value": thr},
         }
-        long_on = side == "long"
-        short_on = side == "short"
-        ratio = _parse_risk_reward_ratio(prompt)
-        return {
-            "allowShort": short_on,
-            "entryRules": {
-                "long": {
-                    "enabled": long_on,
-                    "logic": "all",
-                    "conditions": [cond] if long_on else [],
-                },
-                "short": {
-                    "enabled": short_on,
-                    "logic": "all",
-                    "conditions": [cond] if short_on else [],
-                },
-            },
-            "exitRules": _exit_rules_sl_tp_for_side(side or "long", ratio=ratio, sl_offset=1),
-        }
     return None
+
+
+def _condition_is_same_threshold_filter(a: Any, b: Any) -> bool:
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if a.get("type") != "compare" or b.get("type") != "compare":
+        return False
+    if str(a.get("op") or "") != str(b.get("op") or ""):
+        return False
+    al = a.get("left") if isinstance(a.get("left"), dict) else {}
+    bl = b.get("left") if isinstance(b.get("left"), dict) else {}
+    ar = a.get("right") if isinstance(a.get("right"), dict) else {}
+    br = b.get("right") if isinstance(b.get("right"), dict) else {}
+    if al.get("indicator") != bl.get("indicator"):
+        return False
+    if str(al.get("field") or "") != str(bl.get("field") or ""):
+        return False
+    try:
+        return float(ar.get("value")) == float(br.get("value"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _ensure_threshold_filter(rules: Any, cond: dict[str, Any]) -> dict[str, Any]:
+    """Append a threshold compare onto existing sides without wiping conditions."""
+    out = copy.deepcopy(rules) if isinstance(rules, dict) else {
+        "long": {"enabled": False, "logic": "all", "conditions": []},
+        "short": {"enabled": False, "logic": "all", "conditions": []},
+    }
+    for side in ("long", "short"):
+        group = out.get(side)
+        if not isinstance(group, dict):
+            continue
+        conds = list(group.get("conditions") or [])
+        if not conds:
+            continue
+        if any(_condition_is_same_threshold_filter(c, cond) for c in conds):
+            group["logic"] = "all" if group.get("logic") not in {"all", "any"} else group.get("logic")
+            if group.get("logic") != "any":
+                group["logic"] = "all"
+            out[side] = group
+            continue
+        conds.append(copy.deepcopy(cond))
+        group["conditions"] = conds
+        group["enabled"] = True
+        group["logic"] = "all"
+        out[side] = group
+    return out
+
+
+def _entry_rules_have_any_conditions(rules: Any) -> bool:
+    if not isinstance(rules, dict):
+        return False
+    for side in ("long", "short"):
+        group = rules.get(side) if isinstance(rules.get(side), dict) else {}
+        if group.get("conditions"):
+            return True
+    return False
+
+
+def _looks_like_additive_threshold_filter(prompt: str) -> bool:
+    if _looks_like_strategy_type_change(prompt):
+        return False
+    if not _prompt_has_additive_filter_language(prompt):
+        return False
+    return _parse_threshold_compare_condition(prompt) is not None
+
+
+def _local_additive_threshold_filter_patch(
+    prompt: str,
+    current_settings: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """
+    Follow-up like 'macd9선이 10이상일때만' → AND filter onto current entryRules.
+    Fundamental path for additive filters (not MACD-only).
+    """
+    if not _looks_like_additive_threshold_filter(prompt):
+        return None
+    cond = _parse_threshold_compare_condition(prompt)
+    if not cond:
+        return None
+    cur_rules = (current_settings or {}).get("entryRules")
+    if not _entry_rules_have_any_conditions(cur_rules):
+        return None
+    return {"entryRules": _ensure_threshold_filter(cur_rules, cond)}
+
+
+def _local_indicator_threshold_patch(prompt: str) -> dict[str, Any] | None:
+    """Compile 'CCI -100 이하 롱' / 'MACD선 10 이상 롱' style single-threshold entries."""
+    if _local_combo_blocker(prompt) or _prompt_wants_divergence(prompt):
+        return None
+    text = _prompt_text(prompt)
+    # Filter-only follow-ups must merge via _local_additive_threshold_filter_patch —
+    # never invent a one-condition strategy that wipes the prior entry.
+    if _prompt_has_additive_filter_language(prompt) and _prompt_side(prompt) is None:
+        return None
+    cond = _parse_threshold_compare_condition(prompt)
+    if not cond:
+        return None
+    # Greenfield RSI stays on _local_rsi_patch (route matrix / synonyms).
+    left = cond.get("left") if isinstance(cond.get("left"), dict) else {}
+    if left.get("indicator") == "rsi":
+        return None
+    # MACD greenfield still needs a side or explicit entry language.
+    side = _prompt_side(prompt)
+    if side is None:
+        op = str(cond.get("op") or "")
+        side = "long" if op in {"<", "<="} else "short"
+    long_on = side == "long"
+    short_on = side == "short"
+    ratio = _parse_risk_reward_ratio(prompt)
+    return {
+        "allowShort": short_on,
+        "entryRules": {
+            "long": {
+                "enabled": long_on,
+                "logic": "all",
+                "conditions": [copy.deepcopy(cond)] if long_on else [],
+            },
+            "short": {
+                "enabled": short_on,
+                "logic": "all",
+                "conditions": [copy.deepcopy(cond)] if short_on else [],
+            },
+        },
+        "exitRules": _exit_rules_sl_tp_for_side(side or "long", ratio=ratio, sl_offset=1),
+    }
 
 
 def _bearish_candle_short_patch() -> dict[str, Any]:
@@ -3854,9 +4055,11 @@ def _reconcile_patch_intent(
     follow_up: bool,
 ) -> dict[str, Any]:
     """Replace AI output when user intent clearly conflicts with condition types."""
-    # Risk-only follow-ups keep AI entry as-is. Strategy-shaped follow-ups still reconcile.
+    # Risk-only / additive-filter follow-ups: do not run full-template replaces.
     if follow_up and not _looks_like_strategy_type_change(prompt):
         if _looks_like_risk_only_edit(prompt):
+            return patch
+        if _prompt_has_additive_filter_language(prompt):
             return patch
 
     entry_rules = patch.get("entryRules")
@@ -4068,6 +4271,28 @@ def _apply_rule_templates(
                 base_rules = cur
         if isinstance(base_rules, dict):
             merged["entryRules"] = _ensure_ma_confirm_hold_filter(base_rules, prompt)
+
+    # Follow-up threshold filters (MACD/RSI/CCI …일때만) — append, never replace.
+    if _looks_like_additive_threshold_filter(prompt):
+        cond = _parse_threshold_compare_condition(prompt)
+        base_rules = merged.get("entryRules")
+        if not _entry_rules_have_any_conditions(base_rules):
+            cur = (current_settings or {}).get("entryRules")
+            if isinstance(cur, dict):
+                base_rules = cur
+        if cond is not None and _entry_rules_have_any_conditions(base_rules):
+            # If GPT returned only the filter, restore prior conditions then append.
+            gpt_conds = []
+            if isinstance(merged.get("entryRules"), dict):
+                for side in ("long", "short"):
+                    g = merged["entryRules"].get(side) or {}
+                    gpt_conds.extend(list(g.get("conditions") or []))
+            only_filter = bool(gpt_conds) and all(
+                _condition_is_same_threshold_filter(c, cond) for c in gpt_conds
+            )
+            if only_filter or not _entry_rules_have_any_conditions(merged.get("entryRules")):
+                base_rules = (current_settings or {}).get("entryRules") or base_rules
+            merged["entryRules"] = _ensure_threshold_filter(base_rules, cond)
 
     if _looks_like_bb_reentry_long(prompt) and (not follow_up or type_change):
         ratio = _parse_risk_reward_ratio(prompt)
