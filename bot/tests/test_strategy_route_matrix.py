@@ -11,12 +11,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bot.strategy_ai import (  # noqa: E402
+    _apply_edit_intent,
     _local_strategy_template,
     _needs_full_system,
     _prompt_unsupported_strategy_reason,
+    classify_strategy_edit,
     should_skip_gpt_quota,
 )
-from bot.strategy_schema import sanitize_exit_rules  # noqa: E402
+from bot.strategy_schema import StrategySettings, sanitize_exit_rules  # noqa: E402
 
 # (prompt, expect_local, allowed_routes|None)
 CASES: list[tuple[str, bool, set[str] | None]] = [
@@ -141,6 +143,25 @@ def test_unsupported_mtf_detected() -> None:
     assert _prompt_unsupported_strategy_reason("RSI 30 이하 롱") is None
 
 
+def test_classify_strategy_edit_intents() -> None:
+    empty: dict = {}
+    series_prompt = (
+        "macd 매도모멘텀이 2개이상 연속으로 약화될떄 롱 진입 "
+        "손절은 전저점 익절은 손익비 대비 1대1"
+    )
+    base, _, _ = _local_strategy_template(series_prompt)
+    current = {"entryRules": base["entryRules"]}
+
+    assert classify_strategy_edit("지금 전략이 뭐야?", empty) == "question"
+    assert classify_strategy_edit("손절 1.5% 익절 3%", empty) == "risk_only"
+    assert classify_strategy_edit("macd9선이 10이상일때만", current) == "append_filter"
+    assert classify_strategy_edit("rsi 50이상일때만", current) == "append_filter"
+    assert classify_strategy_edit("CCI -100 이하일때만", current) == "append_filter"
+    assert classify_strategy_edit("macd 필터 빼줘", current) == "remove_filter"
+    assert classify_strategy_edit(series_prompt, empty) == "new_strategy"
+    assert classify_strategy_edit("진입 조건을 RSI로 바꿔", current) == "replace_entry"
+
+
 def test_additive_macd_signal_filter_preserves_series() -> None:
     """Follow-up 'macd9선 ≥10일때만' must AND onto existing MACD series, not wipe it."""
     from bot.strategy_ai import (  # noqa: WPS433
@@ -160,6 +181,7 @@ def test_additive_macd_signal_filter_preserves_series() -> None:
 
     follow = "macd9선이 10이상일때만"
     assert _looks_like_follow_up_edit(follow)
+    assert classify_strategy_edit(follow, {"entryRules": base_patch["entryRules"]}) == "append_filter"
     assert _macd_threshold_field(follow) == "signal"
     cond = _parse_threshold_compare_condition(follow)
     assert cond is not None
@@ -176,16 +198,21 @@ def test_additive_macd_signal_filter_preserves_series() -> None:
         follow,
         {"entryRules": base_patch["entryRules"]},
     )
-    new_conds = add_patch["entryRules"]["long"]["conditions"]
+    assert add_patch.get("editIntent") == "append_filter"
+    assert "conditionsAppend" in add_patch["entryRules"]["long"]
+
+    merged = StrategySettings.model_validate(
+        {"entryRules": base_patch["entryRules"], "exitRules": base_patch.get("exitRules")}
+    ).merged(add_patch)
+    new_conds = merged.entryRules["long"]["conditions"]
     assert len(new_conds) == len(base_conds) + 1
-    # Prior series/zone compares preserved
     assert new_conds[:-1] == base_conds
     filt = new_conds[-1]
     assert filt["left"]["indicator"] == "macd"
     assert filt["left"]["field"] == "signal"
     assert filt["op"] == ">="
     assert filt["right"]["value"] == 10.0
-    assert add_patch["entryRules"]["long"]["logic"] == "all"
+    assert merged.entryRules["long"]["logic"] == "all"
 
 
 def test_additive_filter_without_current_does_not_hijack() -> None:
@@ -196,12 +223,77 @@ def test_additive_filter_without_current_does_not_hijack() -> None:
     assert local_rsi is None
 
 
+def test_multiturn_rsi_then_cci_filter() -> None:
+    rsi_patch, route, _ = _local_strategy_template("RSI 30 이하 롱")
+    assert route == "rsi_local_no_gpt"
+    base_n = len(rsi_patch["entryRules"]["long"]["conditions"])
+    follow = "CCI -100 이하일때만"
+    assert classify_strategy_edit(follow, {"entryRules": rsi_patch["entryRules"]}) == "append_filter"
+    add_patch, add_route, _ = _local_strategy_template(
+        follow, {"entryRules": rsi_patch["entryRules"]}
+    )
+    assert add_route == "additive_threshold_filter_local_no_gpt"
+    merged = StrategySettings.model_validate({"entryRules": rsi_patch["entryRules"]}).merged(add_patch)
+    conds = merged.entryRules["long"]["conditions"]
+    assert len(conds) == base_n + 1
+    assert any(
+        (c.get("left") or {}).get("indicator") == "cci" and c.get("right", {}).get("value") == -100
+        for c in conds
+    )
+
+
+def test_append_filter_gate_blocks_gpt_full_replace() -> None:
+    """Even if GPT returns a one-condition entryRules, append_filter must preserve prior."""
+    base_prompt = "RSI 30 이하 롱"
+    base_patch, _, _ = _local_strategy_template(base_prompt)
+    base_conds = list(base_patch["entryRules"]["long"]["conditions"])
+    current = {"entryRules": base_patch["entryRules"]}
+    follow = "macd9선이 10이상일때만"
+    # Hostile GPT patch: wipe to a single compare
+    gpt_patch = {
+        "entryRules": {
+            "long": {
+                "enabled": True,
+                "logic": "all",
+                "conditions": [{
+                    "type": "compare",
+                    "left": {
+                        "source": "indicator",
+                        "indicator": "macd",
+                        "field": "signal",
+                        "params": {"fast": 12, "slow": 26, "signal": 9},
+                        "offset": 0,
+                    },
+                    "op": ">=",
+                    "right": {"source": "value", "value": 10},
+                }],
+            },
+            "short": {"enabled": False, "logic": "all", "conditions": []},
+        }
+    }
+    gated = _apply_edit_intent(
+        follow,
+        gpt_patch,
+        intent="append_filter",
+        current_settings=current,
+    )
+    assert gated.get("editIntent") == "append_filter"
+    assert "conditionsAppend" in (gated.get("entryRules") or {}).get("long", {})
+    merged = StrategySettings.model_validate(current).merged(gated)
+    conds = merged.entryRules["long"]["conditions"]
+    assert len(conds) == len(base_conds) + 1
+    assert conds[:-1] == base_conds
+
+
 if __name__ == "__main__":
     test_route_matrix()
     test_macd_sell_momentum_has_hist_zone()
     test_price_level_absolute_sl_survives_schema()
     test_full_system_only_for_heavy_or_opt_in()
     test_unsupported_mtf_detected()
+    test_classify_strategy_edit_intents()
     test_additive_macd_signal_filter_preserves_series()
     test_additive_filter_without_current_does_not_hijack()
+    test_multiturn_rsi_then_cci_filter()
+    test_append_filter_gate_blocks_gpt_full_replace()
     print(f"ok cases={len(CASES)}")

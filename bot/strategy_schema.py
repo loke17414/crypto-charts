@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Literal
 
@@ -358,23 +359,117 @@ def strategy_slots_have_signals(slots: Any) -> bool:
     return False
 
 
-def _deep_merge_entry_rules(current: Any, patch: Any) -> dict[str, Any] | None:
+def _condition_signature(cond: Any) -> str:
+    """Stable-ish signature for deduping appended conditions."""
+    try:
+        return json.dumps(cond, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return repr(cond)
+
+
+def _append_unique_conditions(existing: Any, to_add: Any) -> list[Any]:
+    out: list[Any] = [c for c in (existing or []) if isinstance(c, dict)]
+    seen = {_condition_signature(c) for c in out}
+    for cond in to_add or []:
+        if not isinstance(cond, dict):
+            continue
+        sig = _condition_signature(cond)
+        if sig in seen:
+            continue
+        out.append(cond)
+        seen.add(sig)
+    return out
+
+
+def _deep_merge_entry_rules(
+    current: Any,
+    patch: Any,
+    *,
+    edit_intent: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Merge entryRules.
+
+    - Default: conditions replace (full strategy rewrite).
+    - conditionsAppend on a side: append onto existing conditions, force logic all.
+    - edit_intent == append_filter: never replace conditions; treat patch conditions
+      as append (or ignore empty replace that would wipe the strategy).
+    """
     if not isinstance(patch, dict):
         return current if isinstance(current, dict) else None
     base: dict[str, Any] = dict(current) if isinstance(current, dict) else {}
+    append_mode = (edit_intent or "").strip().lower() == "append_filter"
+
     for side in ("long", "short"):
         if side not in patch:
             continue
         patch_group = patch.get(side)
         if not isinstance(patch_group, dict):
             continue
+
+        # Brand-new side with only append → skip empty sides (filter must not invent entries).
         if side not in base or not isinstance(base.get(side), dict):
-            base[side] = patch_group
+            if append_mode or patch_group.get("conditionsAppend") is not None:
+                continue
+            base[side] = {
+                k: v
+                for k, v in patch_group.items()
+                if k not in {"conditionsAppend", "conditionsRemove", "editIntent"}
+            }
             continue
+
         merged_group = dict(base[side])
+        append_list = patch_group.get("conditionsAppend")
+        remove_list = patch_group.get("conditionsRemove")
+
+        if isinstance(remove_list, list) and remove_list:
+            remove_sigs = {_condition_signature(c) for c in remove_list if isinstance(c, dict)}
+            # Also allow remove-by-indicator shorthand: {"indicator": "macd"}
+            remove_inds = {
+                str(c.get("indicator")).lower()
+                for c in remove_list
+                if isinstance(c, dict) and c.get("indicator") and "type" not in c
+            }
+            kept: list[Any] = []
+            for c in merged_group.get("conditions") or []:
+                if not isinstance(c, dict):
+                    continue
+                if _condition_signature(c) in remove_sigs:
+                    continue
+                if remove_inds:
+                    left = c.get("left") if isinstance(c.get("left"), dict) else {}
+                    right = c.get("right") if isinstance(c.get("right"), dict) else {}
+                    inds = {
+                        str(left.get("indicator") or "").lower(),
+                        str(right.get("indicator") or "").lower(),
+                        str(c.get("indicator") or "").lower(),
+                    }
+                    if inds & remove_inds:
+                        continue
+                kept.append(c)
+            merged_group["conditions"] = kept
+
+        if isinstance(append_list, list) and append_list:
+            base_conds = list(merged_group.get("conditions") or [])
+            if base_conds:
+                merged_group["conditions"] = _append_unique_conditions(base_conds, append_list)
+                merged_group["logic"] = "all"
+                merged_group["enabled"] = True
+
         for key, value in patch_group.items():
+            if key in {"conditionsAppend", "conditionsRemove", "editIntent"}:
+                continue
             if key == "conditions" and value is not None:
-                merged_group["conditions"] = value
+                if append_mode:
+                    # Structural guard: append_filter must never wipe prior conditions.
+                    base_conds = list(merged_group.get("conditions") or [])
+                    if base_conds:
+                        merged_group["conditions"] = _append_unique_conditions(base_conds, value)
+                        merged_group["logic"] = "all"
+                        merged_group["enabled"] = True
+                    # else: ignore replace onto empty (no inventing from filter alone)
+                else:
+                    merged_group["conditions"] = value
             elif value is not None:
                 merged_group[key] = value
         base[side] = merged_group
@@ -641,9 +736,20 @@ class StrategySettings(BaseModel):
 
     def merged(self, patch: dict[str, Any]) -> StrategySettings:
         data = self.model_dump()
+        edit_intent = None
+        if isinstance(patch, dict):
+            raw_intent = patch.get("editIntent") or patch.get("edit_intent")
+            if isinstance(raw_intent, str) and raw_intent.strip():
+                edit_intent = raw_intent.strip().lower()
         for key, value in patch.items():
+            if key in {"editIntent", "edit_intent"}:
+                continue
             if key == "entryRules" and value is not None:
-                merged_rules = _deep_merge_entry_rules(data.get("entryRules"), value)
+                merged_rules = _deep_merge_entry_rules(
+                    data.get("entryRules"),
+                    value,
+                    edit_intent=edit_intent,
+                )
                 data["entryRules"] = sanitize_entry_rules(merged_rules) or merged_rules
                 continue
             if key == "exitRules" and value is not None:

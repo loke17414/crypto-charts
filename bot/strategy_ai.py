@@ -369,6 +369,10 @@ Rules:
 - Combine multiple conditions with logic "all" (AND) or "any" (OR).
 - Set short.enabled=false when user wants long-only.
 - Change only what user asks; use partial entryRules/exitRules patches for follow-up edits.
+- Always set settings.editIntent when changing rules:
+  new_strategy | replace_entry | append_filter | remove_filter | risk_only | question
+- append_filter (…일때만 / 필터 추가): use conditionsAppend on existing sides; NEVER replace
+  the whole conditions array with only the new filter. macd9선/시그널→field signal; macd선→macd.
 - Keep summary and rules in Korean.
 
 MARKET DATA & BACKTEST (critical for accuracy):
@@ -482,10 +486,13 @@ Price-level + candle: "65888까지 오른후 하락캔들 숏 손절 66000 익�
   → short high[1]>=65888 + bearish; stopLoss {type:"price",price:66000}; TP ratio:1. Absolute SL uses type price.
 MA/이평 터치 = line_touch wick (NOT close==ma). 다음봉 상승 롱 = line_touch offset:1 + bullish offset:0; SL candle_extreme low offset:1; TP ratio:1 for 1:1.
 MA 밑으로 내려가면 진입 마 = also low[0] >= ma[0] on confirm bar (keep other conditions).
+edit_intent (REQUIRED top-level in settings when changing rules): 
+  "new_strategy"|"replace_entry"|"append_filter"|"remove_filter"|"risk_only"|"question"
 Follow-up filters ("MACD9선/시그널 ≥10일때만", "RSI 50이상일때만", "CCI -100이하일때만"):
-  APPEND a compare onto existing entryRules.*.conditions; keep prior conditions; set logic "all".
+  edit_intent="append_filter". Prefer entryRules.long/short.conditionsAppend:[compare];
+  OR settings.editIntent="append_filter" with compares. Keep prior conditions; logic "all".
   macd9선/신호선/시그널 → field:"signal"; macd선/라인/dif → field:"macd"; hist → histogram.
-  Do NOT replace the whole entryRules with only the new filter.
+  NEVER replace whole entryRules with only the new filter.
 Questions: settings={}, changed_fields=[], answer in summary. Risk-only edits: do not resend entryRules.
 Use market_context.structure.swings for 전고점/전저점 (not recentHigh/recentLow).
 Do NOT replace indicator entries with swing_near/swing_break just because SL mentions 전저점/전고점.
@@ -988,6 +995,92 @@ def _looks_like_follow_up_edit(prompt: str) -> bool:
     return bool(re.search(r"(이상|이하|초과|미만|위|아래)\s*만\s*$", text.strip()))
 
 
+EditIntent = str  # question|risk_only|remove_filter|append_filter|replace_entry|new_strategy
+
+_EDIT_INTENTS = frozenset({
+    "question",
+    "risk_only",
+    "remove_filter",
+    "append_filter",
+    "replace_entry",
+    "new_strategy",
+})
+
+
+def _entry_rules_nonempty(settings: dict[str, Any] | None) -> bool:
+    if not isinstance(settings, dict):
+        return False
+    rules = settings.get("entryRules")
+    if not isinstance(rules, dict):
+        return False
+    for side in ("long", "short"):
+        group = rules.get(side) if isinstance(rules.get(side), dict) else {}
+        if group.get("conditions"):
+            return True
+    return False
+
+
+def _looks_like_remove_filter(prompt: str) -> bool:
+    text = _prompt_text(prompt)
+    if not any(k in text for k in ("빼", "제거", "삭제", "제외", "없애", "지워")):
+        return False
+    # Full strategy wipe / slot delete is not a filter remove.
+    if any(k in text for k in ("전략 전체", "처음부터", "초기화", "슬롯")):
+        return False
+    return any(
+        k in text
+        for k in (
+            "필터", "조건", "macd", "rsi", "cci", "mfi", "ema", "ma",
+            "볼린저", "스토캐", "추가한", "방금",
+        )
+    )
+
+
+def classify_strategy_edit(
+    prompt: str,
+    current_settings: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
+) -> EditIntent:
+    """
+    Single entry for edit intent. Priority:
+    question → risk_only → remove_filter → append_filter → replace_entry → new_strategy
+    """
+    text = (prompt or "").strip()
+    if not text:
+        return "question"
+    if _looks_like_question_only(text):
+        return "question"
+    if _looks_like_risk_only_edit(text):
+        return "risk_only"
+    if _looks_like_remove_filter(text) and _entry_rules_nonempty(current_settings):
+        return "remove_filter"
+
+    has_current = _entry_rules_nonempty(current_settings)
+    additive_lang = _prompt_has_additive_filter_language(text)
+    # append_filter: filter language + existing strategy (or explicit 추가/필터 with current).
+    if has_current and additive_lang and not _looks_like_strategy_type_change(text):
+        return "append_filter"
+    if has_current and any(k in _prompt_text(text) for k in ("필터 추가", "조건 추가", "추가해", "추가 해")):
+        if not _looks_like_strategy_type_change(text) and _prompt_side(text) is None:
+            return "append_filter"
+
+    if _looks_like_strategy_type_change(text) or any(
+        k in _prompt_text(text) for k in ("으로 바꿔", "로 바꿔", "진입 조건", "새 전략")
+    ):
+        # Type-change with apply language → replace_entry when current exists.
+        if has_current and _looks_like_strategy_apply_request(text):
+            return "replace_entry"
+
+    if _looks_like_strategy_apply_request(text) or _prompt_applyish(text):
+        return "new_strategy"
+
+    # Soft follow-ups with history but no clear apply → still treat as append if filter-like.
+    if history and has_current and (_looks_like_follow_up_edit(text) or additive_lang):
+        if additive_lang:
+            return "append_filter"
+    return "question"
+
+
 # Broad markers: detect "user wants a strategy change" (validation / templates).
 _STRATEGY_RULE_MARKERS = (
     "진입", "조건", "entryrules", "entry", "롱", "숏", "long", "short",
@@ -1076,7 +1169,13 @@ def _validate_strategy_apply_or_raise(
         raise ValueError(_STRATEGY_NOT_IN_PATCH_ERROR)
 
     if "entryRules" in patch and not entry_rules_have_signals(patch.get("entryRules")):
-        raise ValueError(_ENTRY_RULES_INVALID_ERROR)
+        # append_filter patches use conditionsAppend (no full conditions array).
+        intent = str(patch.get("editIntent") or patch.get("edit_intent") or "").lower()
+        if not (
+            intent == "append_filter"
+            and entry_rules_have_signals(merged.entryRules)
+        ):
+            raise ValueError(_ENTRY_RULES_INVALID_ERROR)
 
     bad_exits = _find_unsupported_exit_types(patch)
     if bad_exits:
@@ -1418,6 +1517,7 @@ def _call_openai(
     strategy_slot_target: str | None = None,
     api_key: str | None = None,
     route_reason: str | None = None,
+    edit_intent: EditIntent | None = None,
 ) -> dict[str, Any]:
     token = None
     if api_key:
@@ -1441,6 +1541,7 @@ def _call_openai(
             strategy_slot_target=strategy_slot_target,
             api_key=resolved,
             route_reason=route_reason,
+            edit_intent=edit_intent,
         )
     finally:
         if token is not None:
@@ -1460,6 +1561,7 @@ def _call_openai_with_key(
     strategy_slot_target: str | None,
     api_key: str,
     route_reason: str | None = None,
+    edit_intent: EditIntent | None = None,
 ) -> dict[str, Any]:
     chosen_model = model
     heavy = _needs_full_system(route_reason, prompt)
@@ -1480,6 +1582,7 @@ def _call_openai_with_key(
         {
             "current_settings": _compact_current_settings(current, strategy_slot_target),
             "strategy_slot_target": strategy_slot_target,
+            "edit_intent": edit_intent or classify_strategy_edit(prompt, current.model_dump()),
             "indicator_catalog": catalog,
             "market_context": market,
             "backtest_snapshot": bt,
@@ -3720,23 +3823,181 @@ def _looks_like_additive_threshold_filter(prompt: str) -> bool:
     return _parse_threshold_compare_condition(prompt) is not None
 
 
+def compile_atomic_conditions(prompt: str) -> list[dict[str, Any]]:
+    """
+    Compile zero or more atomic Conditions from a prompt fragment.
+    Used by append_filter / remove matching — never a full strategy by itself.
+    """
+    conds: list[dict[str, Any]] = []
+    thr = _parse_threshold_compare_condition(prompt)
+    if thr:
+        conds.append(thr)
+    return conds
+
+
+def _build_conditions_append_entry_rules(
+    current_rules: Any,
+    conds: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Patch entryRules using conditionsAppend on sides that already have conditions."""
+    out: dict[str, Any] = {}
+    if not isinstance(current_rules, dict):
+        return out
+    for side in ("long", "short"):
+        group = current_rules.get(side) if isinstance(current_rules.get(side), dict) else {}
+        if not group.get("conditions"):
+            continue
+        out[side] = {
+            "enabled": True,
+            "logic": "all",
+            "conditionsAppend": [copy.deepcopy(c) for c in conds],
+        }
+    return out
+
+
+def _build_remove_filter_entry_rules(prompt: str, current_rules: Any) -> dict[str, Any] | None:
+    """Remove conditions matching indicator names mentioned in the prompt."""
+    if not isinstance(current_rules, dict):
+        return None
+    text = _prompt_text(prompt)
+    ind_map = (
+        ("macd", "macd"),
+        ("맥디", "macd"),
+        ("rsi", "rsi"),
+        ("cci", "cci"),
+        ("mfi", "mfi"),
+        ("atr", "atr"),
+        ("obv", "obv"),
+        ("williams", "wr"),
+        ("%r", "wr"),
+        ("roc", "roc"),
+        ("스토캐", "stoch"),
+        ("stoch", "stoch"),
+        ("ema", "ema"),
+        ("boll", "boll"),
+        ("볼린저", "boll"),
+    )
+    targets = {ind for key, ind in ind_map if key in text}
+    if not targets:
+        return None
+    out: dict[str, Any] = {}
+    changed = False
+    for side in ("long", "short"):
+        group = current_rules.get(side) if isinstance(current_rules.get(side), dict) else None
+        if not group:
+            continue
+        conds = list(group.get("conditions") or [])
+        if not conds:
+            continue
+        kept: list[Any] = []
+        for c in conds:
+            if not isinstance(c, dict):
+                kept.append(c)
+                continue
+            left = c.get("left") if isinstance(c.get("left"), dict) else {}
+            right = c.get("right") if isinstance(c.get("right"), dict) else {}
+            inds = {
+                str(left.get("indicator") or "").lower(),
+                str(right.get("indicator") or "").lower(),
+                str(c.get("indicator") or "").lower(),
+            }
+            if inds & targets:
+                changed = True
+                continue
+            kept.append(c)
+        out[side] = {
+            "enabled": bool(kept) and group.get("enabled", True),
+            "logic": group.get("logic") if group.get("logic") in {"all", "any"} else "all",
+            "conditions": kept,
+        }
+    return out if changed else None
+
+
+def _apply_edit_intent(
+    prompt: str,
+    patch: dict[str, Any],
+    *,
+    intent: EditIntent,
+    current_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Sole merge-policy gate before StrategySettings.merged.
+    Forces append_filter / remove_filter / risk_only semantics.
+    """
+    out = dict(patch or {})
+    out["editIntent"] = intent
+
+    if intent == "question":
+        return {"editIntent": intent}
+
+    if intent == "risk_only":
+        # Drop accidental entry rewrites from GPT on risk-only turns.
+        out.pop("entryRules", None)
+        out.pop("strategySlots", None)
+        return out
+
+    if intent == "append_filter":
+        conds = compile_atomic_conditions(prompt)
+        cur_rules = (current_settings or {}).get("entryRules")
+        if not conds and isinstance(out.get("entryRules"), dict):
+            # Harvest compares from a GPT full replace that only added filters.
+            harvested: list[dict[str, Any]] = []
+            for side in ("long", "short"):
+                g = out["entryRules"].get(side) if isinstance(out["entryRules"].get(side), dict) else {}
+                for c in g.get("conditions") or []:
+                    if isinstance(c, dict) and c.get("type") == "compare":
+                        harvested.append(c)
+            conds = harvested
+        if conds and _entry_rules_have_any_conditions(cur_rules):
+            append_rules = _build_conditions_append_entry_rules(cur_rules, conds)
+            if append_rules:
+                out["entryRules"] = append_rules
+                # Do not let a full exit rewrite ride along unless user asked.
+                if not any(k in _prompt_text(prompt) for k in ("손절", "익절", "손익")):
+                    out.pop("exitRules", None)
+        elif _looks_like_ma_hold_above_filter(prompt) and _entry_rules_have_any_conditions(cur_rules):
+            out["entryRules"] = _ensure_ma_confirm_hold_filter(cur_rules, prompt)
+        else:
+            # Structural refuse: never emit a one-condition replace for append.
+            out.pop("entryRules", None)
+        return out
+
+    if intent == "remove_filter":
+        cur_rules = (current_settings or {}).get("entryRules")
+        removed = _build_remove_filter_entry_rules(prompt, cur_rules)
+        if removed:
+            out["entryRules"] = removed
+        else:
+            out.pop("entryRules", None)
+        out.pop("exitRules", None)
+        return out
+
+    # replace_entry / new_strategy — keep patch; editIntent is informational.
+    return out
+
+
 def _local_additive_threshold_filter_patch(
     prompt: str,
     current_settings: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     """
     Follow-up like 'macd9선이 10이상일때만' → AND filter onto current entryRules.
-    Fundamental path for additive filters (not MACD-only).
+    Emits conditionsAppend + editIntent (schema merge appends; never replaces).
     """
-    if not _looks_like_additive_threshold_filter(prompt):
-        return None
-    cond = _parse_threshold_compare_condition(prompt)
-    if not cond:
+    if classify_strategy_edit(prompt, current_settings) != "append_filter":
+        # Still allow explicit additive threshold language even if classify is softer.
+        if not _looks_like_additive_threshold_filter(prompt):
+            return None
+    conds = compile_atomic_conditions(prompt)
+    if not conds:
         return None
     cur_rules = (current_settings or {}).get("entryRules")
     if not _entry_rules_have_any_conditions(cur_rules):
         return None
-    return {"entryRules": _ensure_threshold_filter(cur_rules, cond)}
+    append_rules = _build_conditions_append_entry_rules(cur_rules, conds)
+    if not append_rules:
+        return None
+    return {"editIntent": "append_filter", "entryRules": append_rules}
 
 
 def _local_indicator_threshold_patch(prompt: str) -> dict[str, Any] | None:
@@ -4053,9 +4314,13 @@ def _reconcile_patch_intent(
     patch: dict[str, Any],
     *,
     follow_up: bool,
+    edit_intent: EditIntent | None = None,
 ) -> dict[str, Any]:
     """Replace AI output when user intent clearly conflicts with condition types."""
-    # Risk-only / additive-filter follow-ups: do not run full-template replaces.
+    intent = edit_intent or ""
+    # Intent gate: append/risk/remove must not be hijacked by full templates.
+    if intent in {"risk_only", "append_filter", "remove_filter", "question"}:
+        return patch
     if follow_up and not _looks_like_strategy_type_change(prompt):
         if _looks_like_risk_only_edit(prompt):
             return patch
@@ -4233,10 +4498,32 @@ def _apply_rule_templates(
     patch: dict[str, Any],
     history: list[dict[str, str]] | None = None,
     current_settings: dict[str, Any] | None = None,
+    *,
+    edit_intent: EditIntent | None = None,
 ) -> dict[str, Any]:
     merged = dict(patch)
-    follow_up = bool(history and _looks_like_follow_up_edit(prompt))
-    type_change = _looks_like_strategy_type_change(prompt)
+    intent = edit_intent or classify_strategy_edit(prompt, current_settings, history)
+    follow_up = bool(history and _looks_like_follow_up_edit(prompt)) or intent in {
+        "append_filter",
+        "remove_filter",
+        "risk_only",
+    }
+    type_change = _looks_like_strategy_type_change(prompt) or intent == "replace_entry"
+
+    # Intent gate runs first so later templates cannot invent wipe patches.
+    if intent in {"append_filter", "remove_filter", "risk_only", "question"}:
+        gated = _apply_edit_intent(
+            prompt,
+            merged,
+            intent=intent,
+            current_settings=current_settings,
+        )
+        return _reconcile_patch_intent(
+            prompt,
+            gated,
+            follow_up=follow_up,
+            edit_intent=intent,
+        )
 
     if _looks_like_bullish_candle_long(prompt) and (not follow_up or type_change):
         if not _has_bullish_entry(merged.get("entryRules")):
@@ -4271,28 +4558,6 @@ def _apply_rule_templates(
                 base_rules = cur
         if isinstance(base_rules, dict):
             merged["entryRules"] = _ensure_ma_confirm_hold_filter(base_rules, prompt)
-
-    # Follow-up threshold filters (MACD/RSI/CCI …일때만) — append, never replace.
-    if _looks_like_additive_threshold_filter(prompt):
-        cond = _parse_threshold_compare_condition(prompt)
-        base_rules = merged.get("entryRules")
-        if not _entry_rules_have_any_conditions(base_rules):
-            cur = (current_settings or {}).get("entryRules")
-            if isinstance(cur, dict):
-                base_rules = cur
-        if cond is not None and _entry_rules_have_any_conditions(base_rules):
-            # If GPT returned only the filter, restore prior conditions then append.
-            gpt_conds = []
-            if isinstance(merged.get("entryRules"), dict):
-                for side in ("long", "short"):
-                    g = merged["entryRules"].get(side) or {}
-                    gpt_conds.extend(list(g.get("conditions") or []))
-            only_filter = bool(gpt_conds) and all(
-                _condition_is_same_threshold_filter(c, cond) for c in gpt_conds
-            )
-            if only_filter or not _entry_rules_have_any_conditions(merged.get("entryRules")):
-                base_rules = (current_settings or {}).get("entryRules") or base_rules
-            merged["entryRules"] = _ensure_threshold_filter(base_rules, cond)
 
     if _looks_like_bb_reentry_long(prompt) and (not follow_up or type_change):
         ratio = _parse_risk_reward_ratio(prompt)
@@ -4337,7 +4602,18 @@ def _apply_rule_templates(
         if not _has_condition_type(merged.get("entryRules"), "divergence"):
             merged = _merge_template_patch(merged, _divergence_entry_patch(prompt))
 
-    return _reconcile_patch_intent(prompt, merged, follow_up=follow_up)
+    merged = _apply_edit_intent(
+        prompt,
+        merged,
+        intent=intent,
+        current_settings=current_settings,
+    )
+    return _reconcile_patch_intent(
+        prompt,
+        merged,
+        follow_up=follow_up,
+        edit_intent=intent,
+    )
 
 
 def interpret_strategy(
@@ -4392,23 +4668,39 @@ def interpret_strategy(
                 "sources": [],
             }
 
+    edit_intent = classify_strategy_edit(prompt.strip(), raw_settings, history)
+
     # Fast path: local strategy templates (MA / BB / swing / FVG / divergence / bullish) — no OpenAI.
     local_early = _local_strategy_template(prompt.strip(), raw_settings)
     if local_early:
         patch_early, route_early, summary_early = local_early
+        patch_early = _apply_edit_intent(
+            prompt.strip(),
+            patch_early,
+            intent=edit_intent if edit_intent != "question" else (
+                "append_filter" if patch_early.get("editIntent") == "append_filter" else "new_strategy"
+            ),
+            current_settings=raw_settings,
+        )
         append_turn(role="user", content=prompt.strip(), user_id=user_id)
         merged = current.merged(patch_early)
         append_turn(role="assistant", content=summary_early, user_id=user_id)
-        logger.info("Local strategy template applied without OpenAI route=%s user=%s", route_early, user_id)
+        logger.info(
+            "Local strategy template applied without OpenAI route=%s intent=%s user=%s",
+            route_early,
+            patch_early.get("editIntent") or edit_intent,
+            user_id,
+        )
         return {
             "ok": True,
             "settings": merged.model_dump(),
-            "patch": patch_early,
-            "changed_fields": list(patch_early.keys()),
+            "patch": {k: v for k, v in patch_early.items() if k not in {"editIntent", "edit_intent"}},
+            "changed_fields": [k for k in patch_early.keys() if k not in {"editIntent", "edit_intent"}],
             "summary": summary_early,
             "rules": merged.rules_text(),
             "model": "local-template",
             "route_reason": route_early,
+            "edit_intent": patch_early.get("editIntent") or edit_intent,
             "sources": [],
         }
 
@@ -4421,8 +4713,9 @@ def interpret_strategy(
 
     merged_history = merge_histories(history, load_turns(user_id), user_id=user_id)
     prompt_s = prompt.strip()
+    edit_intent = classify_strategy_edit(prompt_s, raw_settings, merged_history)
     # Skip Binance kline fetch for risk-only / Q&A — client snapshot is enough (saves latency & payload).
-    if _looks_like_risk_only_edit(prompt_s) or _looks_like_question_only(prompt_s):
+    if edit_intent in {"risk_only", "question"} or _looks_like_risk_only_edit(prompt_s) or _looks_like_question_only(prompt_s):
         market = dict(market_context or {})
         market.setdefault("symbol", symbol.upper())
         market.setdefault("interval", interval)
@@ -4474,6 +4767,7 @@ def interpret_strategy(
         strategy_slot_target=strategy_slot_target,
         api_key=api_key,
         route_reason=route_reason,
+        edit_intent=edit_intent,
     )
 
     patch = raw.get("settings") or {}
@@ -4492,6 +4786,7 @@ def interpret_strategy(
         patch,
         merged_history,
         current_settings=raw_settings,
+        edit_intent=edit_intent,
     )
     # UI recommended strategies: force exact settings when user names an id.
     rec_patch = None
@@ -4514,14 +4809,21 @@ def interpret_strategy(
             raw["summary"] = summary_hint
         elif "추천" not in str(raw.get("summary")):
             raw["summary"] = f"{summary_hint}. {raw.get('summary')}"
+    # Keep editIntent for merge/validate, strip from client-facing patch keys later.
+    resolved_intent = str(patch.get("editIntent") or patch.get("edit_intent") or edit_intent or "")
     if patch and not changed_fields:
         changed_fields = list(patch.keys())
-    changed_fields = [f for f in changed_fields if isinstance(f, str) and f in patch]
+    changed_fields = [
+        f for f in changed_fields
+        if isinstance(f, str) and f in patch and f not in {"editIntent", "edit_intent"}
+    ]
 
     if patch:
         merged = current.merged(patch)
         if not changed_fields:
-            changed_fields = list(patch.keys())
+            changed_fields = [
+                k for k in patch.keys() if k not in {"editIntent", "edit_intent"}
+            ]
     else:
         merged = current
 
@@ -4546,6 +4848,10 @@ def interpret_strategy(
         merged,
         strategy_slot_target=strategy_slot_target,
     )
+
+    client_patch = {
+        k: v for k, v in patch.items() if k not in {"editIntent", "edit_intent"}
+    }
 
     summary = str(raw.get("summary") or "전략 설정을 업데이트했습니다.").strip()
     rules = str(raw.get("rules") or merged.rules_text()).strip()
@@ -4576,26 +4882,33 @@ def interpret_strategy(
         meta={
             "changed_fields": changed_fields,
             "backtest": bt_meta,
-            "patch_keys": list(patch.keys()),
+            "patch_keys": list(client_patch.keys()),
             "model": chosen_model,
             "route_reason": route_reason,
+            "edit_intent": resolved_intent,
         },
     )
 
-    logger.info("Strategy AI applied patch: %s (model=%s)", patch, chosen_model)
+    logger.info(
+        "Strategy AI applied patch: %s (model=%s intent=%s)",
+        client_patch,
+        chosen_model,
+        resolved_intent,
+    )
 
     return {
         "ok": True,
         "settings": merged.model_dump(),
         "summary": summary,
         "rules": rules,
-        "patch": patch,
+        "patch": client_patch,
         "changed_fields": changed_fields,
         "market_insight": market_insight,
         "backtest_insight": backtest_insight,
         "sources": sources,
         "model": chosen_model,
         "route_reason": route_reason,
+        "edit_intent": resolved_intent,
         "chart_interval": chart_interval,
     }
 
