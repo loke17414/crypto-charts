@@ -235,8 +235,7 @@ async function syncPositionFromExchange() {
         intervalSeconds(cfg.interval) * 1000,
         90_000,
       );
-    entryPausedUntil = Math.max(entryPausedUntil, Date.now() + Math.min(cooldownMs, 15 * 60_000));
-    skipEntryThisTick = !wasBotClose; // external/manual/SLTP: never reopen in this tick
+    armEntryCooldown(cooldownMs, { skipThisTick: !wasBotClose });
     if (!wasBotClose && closedSide) {
       log(
         `재진입 보류 ${Math.ceil((entryPausedUntil - Date.now()) / 1000)}s`
@@ -254,6 +253,17 @@ let entryInFlight = false;
 let tickInFlight = false;
 let skipEntryThisTick = false;
 let lastLossCheckAt = 0;
+/** Once-per-bar gate — same as UI lastAutoEntryKey (`SIDE:barTime`). */
+let lastEntryKey = null;
+let entryFailBackoffUntil = 0;
+
+function armEntryCooldown(ms, { skipThisTick = true } = {}) {
+  const wait = Math.max(0, Math.min(Number(ms) || 0, 15 * 60_000));
+  if (wait > 0) {
+    entryPausedUntil = Math.max(entryPausedUntil, Date.now() + wait);
+  }
+  if (skipThisTick) skipEntryThisTick = true;
+}
 
 // ---- Strategy hot reload --------------------------------------------------
 // The UI rewrites strategy.json when GPT or the user changes SL/TP or entry
@@ -522,6 +532,9 @@ async function closePosition(price, reason) {
     position = null;
     saveState();
     sessionClosedTrades += 1;
+    // Software close previously skipped cooldown (sync only runs when local
+    // position was still set) — arm it here so we do not re-enter next tick.
+    armEntryCooldown(Math.max(cfg.entryCooldownSeconds * 1000, 30_000));
     checkStopSchedule('after close');
     return;
   }
@@ -535,6 +548,7 @@ async function closePosition(price, reason) {
   position = null;
   saveState();
   sessionClosedTrades += 1;
+  armEntryCooldown(Math.max(cfg.entryCooldownSeconds * 1000, 30_000));
   checkStopSchedule('after close');
 }
 
@@ -596,10 +610,13 @@ async function tick() {
     }
   }
 
-  // Entry — evaluate the SAME analyze() the UI uses, on the same candle set.
+  // Entry — evaluate on the last CLOSED candle (exclude forming bar) so we do
+  // not fire mid-candle flashes. Same once-per-bar key as the UI.
   const posSide = position ? position.side : null;
-  const result = FuturesStrategy.analyze(candles, cfg.settings, posSide);
-  const barTime = forming.time;
+  const entryCandles = candles.length >= 3 ? candles.slice(0, -1) : candles;
+  const result = FuturesStrategy.analyze(entryCandles, cfg.settings, posSide);
+  const signalBar = entryCandles[entryCandles.length - 1];
+  const barTime = signalBar?.time;
 
   if (!position && (result.signal === 'LONG' || result.signal === 'SHORT')) {
     if (skipEntryThisTick) {
@@ -618,9 +635,15 @@ async function tick() {
       );
       return;
     }
+    if (Date.now() < entryFailBackoffUntil) return;
     if (entryInFlight) return;
     if (result.signal === 'SHORT' && !cfg.settings.allowShort) {
       log(`Signal SHORT ignored (allowShort=false) — ${result.reason}`);
+      return;
+    }
+    const entryKey = `${result.signal}:${barTime}`;
+    if (entryKey === lastEntryKey) {
+      // Same closed-bar signal already taken (or attempted) this bar.
       return;
     }
     const levels = result.entryLevels;
@@ -628,8 +651,9 @@ async function tick() {
       log(`Entry skipped — no SL/TP levels — ${result.reason}`, 'WARN');
       return;
     }
-    log(`SIGNAL ${result.signal} @ $${price.toFixed(2)} — ${result.reason}`);
+    log(`SIGNAL ${result.signal} @ $${price.toFixed(2)} (closed bar) — ${result.reason}`);
     try {
+      const before = position;
       await openPosition(
         result.signal,
         price,
@@ -638,8 +662,15 @@ async function tick() {
         candles.length - 1,
         result.levelSettings,
       );
+      if (position && position !== before) {
+        lastEntryKey = entryKey;
+      } else {
+        // No fill (margin/skip) — brief backoff, allow retry later this bar if flat.
+        entryFailBackoffUntil = Date.now() + 10_000;
+      }
     } catch (err) {
-      log(`Entry attempt failed — will retry on next check: ${err.message}`, 'WARN');
+      entryFailBackoffUntil = Date.now() + 15_000;
+      log(`Entry attempt failed — retry in 15s: ${err.message}`, 'WARN');
     }
   } else {
     logHoldReason(result.reason);

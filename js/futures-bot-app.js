@@ -3034,6 +3034,10 @@ const FuturesBotApp = (() => {
     if (result.signal !== 'LONG' && result.signal !== 'SHORT') return;
     if (!botRunning) return;
 
+    // Server bot owns live entries — browser must not place parallel orders
+    // (was causing double entries / "wrong timing" spam while conditions stayed true).
+    if (serverBotActive && serverBotLive) return;
+
     const barTime = lastCandles.at(-1)?.time;
     const key = `${result.signal}:${barTime}`;
 
@@ -3077,11 +3081,7 @@ const FuturesBotApp = (() => {
 
     autoEntryBusy = true;
     try {
-      // Browser open: enter immediately from the chart signal. Server bot (if
-      // running) skips when a position already exists — avoids waiting on the
-      // server poll while the UI already shows a live entry signal.
-      const via = serverBotActive ? '차트 신호 → 즉시 진입' : '즉시 진입';
-      addLog(`${result.signal} 신호 감지 — ${via} (${result.reason})`, 'info');
+      addLog(`${result.signal} 신호 감지 — 즉시 진입 (${result.reason})`, 'info');
       await executeSignal(result);
       if (hasOpenPosition()) {
         lastAutoEntryKey = key;
@@ -3695,7 +3695,7 @@ const FuturesBotApp = (() => {
         updateBotStopScheduleUi();
         startStatusPolling();
         addLog(
-          `서버 봇 시작 (${liveTradingLabel()}) — ${state.symbol} ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 브라우저에서도 신호 즉시 진입${stopNote}`,
+          `서버 봇 시작 (${liveTradingLabel()}) — ${state.symbol} ${INTERVALS[state.interval]?.label || state.interval}, ${state.leverage}x · 진입은 서버만 실행 (확정 봉 기준)${stopNote}`,
           'info',
         );
         // Enter right away if the chart already shows a live signal.
