@@ -51,9 +51,46 @@ let sessionStartEquity = 0;
 let dryCash = cfg.dryCash;
 let sessionStartedAt = Date.now();
 let sessionClosedTrades = 0;
+let stopRequested = false;
 
 function stopScheduleActive() {
   return cfg.botStopMode && cfg.botStopMode !== 'none' && cfg.botStopValue > 0;
+}
+
+/**
+ * Persist shouldRun=false so crypto-web restore / admin fleet does not revive
+ * an intentionally auto-stopped bot, then exit the Node process.
+ */
+function requestStop(reason) {
+  if (stopRequested) return;
+  stopRequested = true;
+  running = false;
+  const why = String(reason || 'auto-stop');
+  try {
+    const statePath = path.join(cfg.botHome, 'web-bot-state.json');
+    let prev = {};
+    if (fs.existsSync(statePath)) {
+      try {
+        prev = JSON.parse(fs.readFileSync(statePath, 'utf8')) || {};
+      } catch { /* ignore corrupt */ }
+    }
+    const next = {
+      ...prev,
+      shouldRun: false,
+      autoStopped: true,
+      stopReason: why,
+      stoppedAt: new Date().toISOString(),
+      closedTrades: sessionClosedTrades,
+      botStopMode: cfg.botStopMode,
+      botStopValue: cfg.botStopValue,
+    };
+    fs.writeFileSync(statePath, JSON.stringify(next, null, 2));
+  } catch (err) {
+    log(`Could not persist auto-stop state: ${err.message}`, 'WARN');
+  }
+  log(`Bot stopping — ${why}`, 'WARN');
+  // Exit so Python is_running() flips false; leave a beat for the last log line.
+  setTimeout(() => process.exit(0), 250);
 }
 
 function checkStopSchedule(reasonHint) {
@@ -61,15 +98,15 @@ function checkStopSchedule(reasonHint) {
   const mode = cfg.botStopMode;
   const value = cfg.botStopValue;
   if (mode === 'trades' && sessionClosedTrades >= value) {
-    log(`Auto-stop — ${value} closed trade(s) completed${reasonHint ? ` (${reasonHint})` : ''}`, 'WARN');
-    running = false;
+    const hint = reasonHint ? ` (${reasonHint})` : '';
+    requestStop(`자동 정지 — ${value}회 청산 완료${hint}`);
     return true;
   }
   if (mode === 'hours' || mode === 'minutes') {
     const limitMs = mode === 'hours' ? value * 3_600_000 : value * 60_000;
     if (Date.now() - sessionStartedAt >= limitMs) {
-      log(`Auto-stop — ${value}${mode === 'hours' ? 'h' : 'm'} elapsed${reasonHint ? ` (${reasonHint})` : ''}`, 'WARN');
-      running = false;
+      const hint = reasonHint ? ` (${reasonHint})` : '';
+      requestStop(`자동 정지 — ${value}${mode === 'hours' ? '시간' : '분'} 경과${hint}`);
       return true;
     }
   }
@@ -267,6 +304,11 @@ function maybeReloadStrategy() {
   if ('botStopValue' in s) {
     const v = parseInt(s.botStopValue, 10);
     cfg.botStopValue = Number.isFinite(v) ? Math.max(0, v) : 0;
+  }
+  if (stopScheduleActive()) {
+    log(`자동 정지 유지: ${cfg.botStopMode}=${cfg.botStopValue}`);
+  } else if ('botStopMode' in s || 'botStopValue' in s) {
+    log('자동 정지 비활성 (botStopMode=none) — strategy.json 동기화 값 확인', 'WARN');
   }
 
   const slLabel = st.useStopLoss === false ? '없음' : `-${st.stopLossPct}%`;
@@ -518,8 +560,7 @@ async function tick() {
     lastLossCheckAt = Date.now();
     const equity = await getEquity(price);
     if (RiskSizing.isAccountLossLimitHit(equity, sessionStartEquity, cfg.maxAccountLossPct)) {
-      log(`Account loss limit hit (-${cfg.maxAccountLossPct}% from session start) — stopping bot`, 'WARN');
-      running = false;
+      requestStop(`계좌 손실 한도 도달 (-${cfg.maxAccountLossPct}% from session start)`);
       return;
     }
   }
@@ -626,8 +667,10 @@ async function start() {
   sessionClosedTrades = 0;
   log(`Starting Futures bot [${mode}] ${cfg.symbol} ${cfg.interval} | ${cfg.leverage}x ${cfg.marginType} | risk ${cfg.riskPerTradePct}%/trade | poll ${cfg.pollSeconds}s`);
   if (stopScheduleActive()) {
-    const unit = cfg.botStopMode === 'trades' ? 'trades' : (cfg.botStopMode === 'hours' ? 'hours' : 'minutes');
-    log(`Auto-stop enabled: ${cfg.botStopValue} ${unit}`);
+    const unit = cfg.botStopMode === 'trades' ? '회 청산' : (cfg.botStopMode === 'hours' ? '시간' : '분');
+    log(`자동 정지 설정: ${cfg.botStopValue}${unit} 후 종료`);
+  } else {
+    log('자동 정지: 없음 (strategy.json botStopMode=none)');
   }
   if (cfg.dryRun) {
     log('DRY_RUN=true — 시뮬레이션만 합니다. UI에서 봇 시작 시 live_trading으로 실제 테스트넷 주문 가능', 'WARN');
@@ -697,9 +740,14 @@ async function start() {
     } catch (err) {
       log(`Error during tick: ${err.message}`, 'ERROR');
     }
+    if (!running) break;
     await new Promise((r) => setTimeout(r, tickSeconds * 1000));
   }
   log('Bot stopped.');
+  if (!stopRequested) {
+    // Graceful loop exit without requestStop (e.g. SIGTERM race) — still exit cleanly.
+    process.exit(0);
+  }
 }
 
 function shutdown() {

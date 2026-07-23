@@ -136,6 +136,8 @@ def is_running(user_id: int | None = None) -> bool:
         return False
     if proc.poll() is not None:
         _bots.pop(key, None)
+        # Intentional auto-stop already cleared shouldRun in web-bot-state.json.
+        # If the process died without that flag, leave shouldRun for restore on web restart.
         return False
     return True
 
@@ -173,8 +175,17 @@ def bot_status(user_id: int | None = None) -> dict[str, Any]:
     key = bot_key(user_id)
     running = is_running(key)
     state = _read_state(key)
+    # Heal persisted flag if Node already wrote autoStopped / shouldRun=false.
+    if not running and state.get("autoStopped") and state.get("shouldRun"):
+        state = {**state, "shouldRun": False}
+        _write_state(key, state)
     flags = _bot_trading_flags(key, state)
     proc = _bots.get(key)
+    stop_reason = state.get("stopReason") if isinstance(state.get("stopReason"), str) else None
+    auto_stopped = bool(state.get("autoStopped")) and not running
+    message = None
+    if auto_stopped and stop_reason:
+        message = stop_reason
     return {
         "running": running,
         "userId": None if key == LEGACY_BOT_KEY else key,
@@ -184,6 +195,9 @@ def bot_status(user_id: int | None = None) -> dict[str, Any]:
         "recentLogs": tail_bot_logs(20, user_id=key),
         "entryGate": _entry_gate_status(key),
         "botHome": str(bot_home(key)),
+        "autoStopped": auto_stopped,
+        "stopReason": stop_reason,
+        "message": message,
         **flags,
     }
 
@@ -392,6 +406,8 @@ def start_bot(
             "startedAt": _now_iso(),
             "pid": proc.pid,
             "userId": None if key == LEGACY_BOT_KEY else key,
+            "autoStopped": False,
+            "stopReason": None,
         },
     )
     logger.info("Server bot started (user=%s, pid=%s, live_trading=%s)", key, proc.pid, live_trading)
@@ -528,6 +544,12 @@ def restore_bot_if_needed() -> None:
 
     for key in keys:
         state = _read_state(key)
+        if state.get("autoStopped"):
+            # Do not revive an intentionally auto-stopped session after web restart.
+            if state.get("shouldRun"):
+                _write_state(key, {**state, "shouldRun": False, "stoppedAt": _now_iso()})
+            logger.info("Skip restore bot user=%s — auto-stopped (%s)", key, state.get("stopReason"))
+            continue
         live = bool(state.get("liveTrading", True))
         try:
             clear_expired_entry_gate(key)

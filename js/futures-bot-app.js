@@ -230,7 +230,9 @@ const FuturesBotApp = (() => {
   }
 
   async function checkBotStopSchedule() {
-    if (!botRunning || !isProUser()) return false;
+    if (!botRunning) return false;
+    // Server bot enforces Pro schedule itself; UI still stops the API process on time/trades.
+    if (!serverBotActive && !isProUser()) return false;
     readBotStopSettings();
     const mode = state.botStopMode;
     const value = state.botStopValue;
@@ -2434,7 +2436,9 @@ const FuturesBotApp = (() => {
             $('#startBotBtn').disabled = false;
             $('#stopBotBtn').disabled = true;
             updateBotStopScheduleUi();
-            addLog(st.message || '서버 봇이 종료되었습니다', 'info');
+            const stopMsg = st.stopReason || st.message
+              || (st.autoStopped ? '서버 봇 자동 정지' : '서버 봇이 종료되었습니다');
+            addLog(stopMsg, st.autoStopped ? 'info' : 'info');
           } else if (botRunning) {
             await checkBotStopSchedule();
           }
