@@ -22,6 +22,8 @@ class BinanceFuturesClient {
     this.marginType = marginType || 'ISOLATED';
     this.baseUrl = useTestnet ? TESTNET : MAINNET;
     this._filters = null;
+    /** @type {boolean|null} null=unknown, true=hedge (dual), false=one-way */
+    this._hedgeMode = null;
   }
 
   _sign(params) {
@@ -132,19 +134,39 @@ class BinanceFuturesClient {
 
   async getPosition() {
     const positions = await this._request('GET', '/fapi/v2/positionRisk', {}, true);
+    let best = null;
     for (const p of positions) {
       if (p.symbol !== this.symbol) continue;
       const amt = parseFloat(p.positionAmt);
-      if (Math.abs(amt) < 1e-8) return null;
-      return {
-        side: amt > 0 ? 'LONG' : 'SHORT',
+      if (Math.abs(amt) < 1e-8) continue;
+      // Hedge mode rows carry positionSide LONG/SHORT; one-way uses BOTH.
+      const apiSide = String(p.positionSide || '').toUpperCase();
+      const side = (apiSide === 'LONG' || apiSide === 'SHORT')
+        ? apiSide
+        : (amt > 0 ? 'LONG' : 'SHORT');
+      const candidate = {
+        side,
         quantity: Math.abs(amt),
         entryPrice: parseFloat(p.entryPrice),
         unrealizedPnl: parseFloat(p.unRealizedProfit),
         leverage: parseInt(p.leverage, 10),
       };
+      if (!best || candidate.quantity > best.quantity) best = candidate;
     }
-    return null;
+    return best;
+  }
+
+  /**
+   * Binance USDT-M position mode.
+   * Hedge (dualSidePosition=true) requires positionSide=LONG|SHORT on every order.
+   * One-way forbids LONG/SHORT positionSide (omit it).
+   */
+  async getHedgeMode() {
+    if (this._hedgeMode != null) return this._hedgeMode;
+    const data = await this._request('GET', '/fapi/v1/positionSide/dual', {}, true);
+    const raw = data && data.dualSidePosition;
+    this._hedgeMode = raw === true || raw === 'true';
+    return this._hedgeMode;
   }
 
   async setupLeverageAndMargin() {
@@ -160,6 +182,13 @@ class BinanceFuturesClient {
       symbol: this.symbol,
       leverage: this.leverage,
     }, true);
+    try {
+      const hedge = await this.getHedgeMode();
+      // Soft log via return value — bot.js can print; keep silent here.
+      this._hedgeMode = hedge;
+    } catch {
+      this._hedgeMode = null;
+    }
   }
 
   async getSymbolFilters() {
@@ -256,7 +285,7 @@ class BinanceFuturesClient {
     return qty;
   }
 
-  async marketOrder(side, quantity, reduceOnly = false) {
+  async marketOrder(side, quantity, reduceOnly = false, positionSide = null) {
     const f = await this.getSymbolFilters();
     const qty = BinanceFuturesClient._roundStep(quantity, f.stepSize);
     const params = {
@@ -265,14 +294,45 @@ class BinanceFuturesClient {
       type: 'MARKET',
       quantity: qty.toFixed(8).replace(/0+$/, '').replace(/\.$/, ''),
     };
-    if (reduceOnly) params.reduceOnly = 'true';
-    return this._request('POST', '/fapi/v1/order', params, true);
+    const hedge = await this.getHedgeMode();
+    if (hedge) {
+      // Hedge mode: positionSide is required; reduceOnly is not used.
+      const ps = String(positionSide || '').toUpperCase();
+      params.positionSide = (ps === 'LONG' || ps === 'SHORT')
+        ? ps
+        : (side === 'BUY' ? 'LONG' : 'SHORT');
+    } else if (reduceOnly) {
+      params.reduceOnly = 'true';
+    }
+    try {
+      return await this._request('POST', '/fapi/v1/order', params, true);
+    } catch (err) {
+      const msg = String(err && err.message || err);
+      if (msg.includes('position side') || msg.includes('-4061')) {
+        // Mode may have changed — refresh once and retry with corrected params.
+        this._hedgeMode = null;
+        const hedge2 = await this.getHedgeMode();
+        const retry = { ...params };
+        delete retry.reduceOnly;
+        delete retry.positionSide;
+        if (hedge2) {
+          const ps = String(positionSide || '').toUpperCase();
+          retry.positionSide = (ps === 'LONG' || ps === 'SHORT')
+            ? ps
+            : (side === 'BUY' ? 'LONG' : 'SHORT');
+        } else if (reduceOnly) {
+          retry.reduceOnly = 'true';
+        }
+        return this._request('POST', '/fapi/v1/order', retry, true);
+      }
+      throw err;
+    }
   }
 
-  openLong(qty) { return this.marketOrder('BUY', qty); }
-  openShort(qty) { return this.marketOrder('SELL', qty); }
-  closeLong(qty) { return this.marketOrder('SELL', qty, true); }
-  closeShort(qty) { return this.marketOrder('BUY', qty, true); }
+  openLong(qty) { return this.marketOrder('BUY', qty, false, 'LONG'); }
+  openShort(qty) { return this.marketOrder('SELL', qty, false, 'SHORT'); }
+  closeLong(qty) { return this.marketOrder('SELL', qty, true, 'LONG'); }
+  closeShort(qty) { return this.marketOrder('BUY', qty, true, 'SHORT'); }
 
   _formatPrice(price) {
     const f = this._filters || { tickSize: 0.1 };
@@ -296,7 +356,7 @@ class BinanceFuturesClient {
       throw new Error(`${orderType} trigger $${formatted} above max price $${f.maxPrice}`);
     }
     const side = positionSide === 'LONG' ? 'SELL' : 'BUY';
-    return this._request('POST', '/fapi/v1/algoOrder', {
+    const params = {
       algoType: 'CONDITIONAL',
       symbol: this.symbol,
       side,
@@ -304,7 +364,11 @@ class BinanceFuturesClient {
       triggerPrice: formatted,
       closePosition: 'true',
       workingType: 'MARK_PRICE',
-    }, true);
+    };
+    if (await this.getHedgeMode()) {
+      params.positionSide = positionSide === 'SHORT' ? 'SHORT' : 'LONG';
+    }
+    return this._request('POST', '/fapi/v1/algoOrder', params, true);
   }
 
   placeStopMarket(positionSide, stopPrice) {

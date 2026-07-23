@@ -662,6 +662,12 @@ async function start() {
       process.exit(1);
     }
     await client.setupLeverageAndMargin();
+    try {
+      const hedge = await client.getHedgeMode();
+      log(`Position mode: ${hedge ? 'Hedge (dual) — orders use positionSide' : 'One-way'}`);
+    } catch (err) {
+      log(`Position mode check failed: ${err.message}`, 'WARN');
+    }
   }
 
   loadState();

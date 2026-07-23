@@ -23,6 +23,7 @@ class BinanceFuturesClient:
         self.session = requests.Session()
         self.session.headers.update({"X-MBX-APIKEY": config.api_key})
         self._filters: dict[str, Any] | None = None
+        self._hedge_mode: bool | None = None
 
     def _sign(self, params: dict[str, Any]) -> dict[str, Any]:
         params = {**params, "timestamp": int(time.time() * 1000)}
@@ -109,20 +110,34 @@ class BinanceFuturesClient:
 
     def get_position(self) -> dict[str, float] | None:
         positions = self._request("GET", "/fapi/v2/positionRisk", signed=True)
+        best: dict[str, float] | None = None
         for p in positions:
             if p["symbol"] != self.config.symbol:
                 continue
             amt = float(p["positionAmt"])
             if abs(amt) < 1e-8:
-                return None
-            return {
-                "side": "LONG" if amt > 0 else "SHORT",
+                continue
+            api_side = str(p.get("positionSide") or "").upper()
+            side = api_side if api_side in {"LONG", "SHORT"} else ("LONG" if amt > 0 else "SHORT")
+            candidate = {
+                "side": side,
                 "quantity": abs(amt),
                 "entry_price": float(p["entryPrice"]),
                 "unrealized_pnl": float(p["unRealizedProfit"]),
                 "leverage": int(float(p["leverage"])),
             }
-        return None
+            if best is None or candidate["quantity"] > best["quantity"]:
+                best = candidate
+        return best
+
+    def get_hedge_mode(self) -> bool:
+        """True when account is Hedge Mode (dualSidePosition) — requires positionSide on orders."""
+        if self._hedge_mode is not None:
+            return self._hedge_mode
+        data = self._request("GET", "/fapi/v1/positionSide/dual", signed=True)
+        raw = data.get("dualSidePosition") if isinstance(data, dict) else None
+        self._hedge_mode = raw is True or raw == "true"
+        return self._hedge_mode
 
     def setup_leverage_and_margin(self) -> None:
         if self.config.dry_run:
@@ -147,6 +162,12 @@ class BinanceFuturesClient:
             signed=True,
         )
         logger.info("Leverage set to %sx", result.get("leverage", self.config.leverage))
+        try:
+            hedge = self.get_hedge_mode()
+            logger.info("Position mode: %s", "Hedge (dual)" if hedge else "One-way")
+        except Exception:
+            logger.exception("Failed to read positionSide/dual — orders may fail on hedge accounts")
+            self._hedge_mode = None
 
     def get_symbol_filters(self) -> dict[str, Any]:
         if self._filters:
@@ -258,7 +279,13 @@ class BinanceFuturesClient:
             raise ValueError(f"Notional ${qty * price:.2f} below minimum ${filters['min_notional']}")
         return qty
 
-    def market_order(self, side: str, quantity: float, reduce_only: bool = False) -> dict[str, Any]:
+    def market_order(
+        self,
+        side: str,
+        quantity: float,
+        reduce_only: bool = False,
+        position_side: str | None = None,
+    ) -> dict[str, Any]:
         filters = self.get_symbol_filters()
         qty = self._round_step(quantity, filters["step_size"])
 
@@ -268,22 +295,44 @@ class BinanceFuturesClient:
             "type": "MARKET",
             "quantity": f"{qty:.8f}".rstrip("0").rstrip("."),
         }
-        if reduce_only:
+        hedge = self.get_hedge_mode()
+        if hedge:
+            ps = (position_side or "").upper()
+            params["positionSide"] = ps if ps in {"LONG", "SHORT"} else (
+                "LONG" if side == "BUY" else "SHORT"
+            )
+        elif reduce_only:
             params["reduceOnly"] = "true"
 
-        return self._request("POST", "/fapi/v1/order", params, signed=True)
+        try:
+            return self._request("POST", "/fapi/v1/order", params, signed=True)
+        except requests.HTTPError as exc:
+            msg = str(exc)
+            if "position side" in msg.lower() or "-4061" in msg:
+                self._hedge_mode = None
+                hedge2 = self.get_hedge_mode()
+                retry = {k: v for k, v in params.items() if k not in {"reduceOnly", "positionSide"}}
+                if hedge2:
+                    ps = (position_side or "").upper()
+                    retry["positionSide"] = ps if ps in {"LONG", "SHORT"} else (
+                        "LONG" if side == "BUY" else "SHORT"
+                    )
+                elif reduce_only:
+                    retry["reduceOnly"] = "true"
+                return self._request("POST", "/fapi/v1/order", retry, signed=True)
+            raise
 
     def open_long(self, quantity: float) -> dict[str, Any]:
-        return self.market_order("BUY", quantity)
+        return self.market_order("BUY", quantity, position_side="LONG")
 
     def open_short(self, quantity: float) -> dict[str, Any]:
-        return self.market_order("SELL", quantity)
+        return self.market_order("SELL", quantity, position_side="SHORT")
 
     def close_long(self, quantity: float) -> dict[str, Any]:
-        return self.market_order("SELL", quantity, reduce_only=True)
+        return self.market_order("SELL", quantity, reduce_only=True, position_side="LONG")
 
     def close_short(self, quantity: float) -> dict[str, Any]:
-        return self.market_order("BUY", quantity, reduce_only=True)
+        return self.market_order("BUY", quantity, reduce_only=True, position_side="SHORT")
 
     def _format_price(self, price: float) -> str:
         filters = self.get_symbol_filters()
@@ -308,18 +357,21 @@ class BinanceFuturesClient:
 
         side = "SELL" if position_side == "LONG" else "BUY"
         logger.info("Placing %s %s @ trigger $%s (%s)", order_type, self.config.symbol, formatted, side)
+        params: dict[str, Any] = {
+            "algoType": "CONDITIONAL",
+            "symbol": self.config.symbol,
+            "side": side,
+            "type": order_type,
+            "triggerPrice": formatted,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+        }
+        if self.get_hedge_mode():
+            params["positionSide"] = "SHORT" if position_side == "SHORT" else "LONG"
         return self._request(
             "POST",
             "/fapi/v1/algoOrder",
-            {
-                "algoType": "CONDITIONAL",
-                "symbol": self.config.symbol,
-                "side": side,
-                "type": order_type,
-                "triggerPrice": formatted,
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            },
+            params,
             signed=True,
         )
 
