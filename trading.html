@@ -10,9 +10,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260724e">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260724e">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260724f">
 </head>
-<body class="trading-page trading-page--simple">
+<body class="trading-page trading-page--simple trading-page--tv">
   <div class="app">
     <header class="header">
       <div class="header__brand">
@@ -106,7 +106,8 @@
                   </div>
                 </div>
                 <div class="chart-sidebar__section chart-sidebar__tools">
-                  <div class="indicator-dropdown">
+                  <button type="button" id="chartDisplayToggleBtn" class="btn btn--ghost btn--tool chart-sidebar__tool" title="차트 표시 전환" aria-pressed="true">Orbinex 차트</button>
+                  <div class="indicator-dropdown chart-sidebar__orbinex-tools">
                     <button type="button" id="indicatorBtn" class="btn btn--ghost btn--tool chart-sidebar__tool chart-sidebar__fx" title="Indicators" aria-label="Indicators">
                       <span class="chart-sidebar__fx-label">fx</span>
                     </button>
@@ -119,16 +120,18 @@
                       <div id="indicatorMenuList"></div>
                     </div>
                   </div>
+                  <p class="chart-sidebar__tv-hint">지표·드로잉은 TradingView 차트 안 메뉴를 사용하세요. 봇 진입은 Orbinex 자체 계산입니다.</p>
                 </div>
               </aside>
               <div class="chart-workspace">
-                <aside id="drawingToolbar" class="drawing-toolbar drawing-toolbar--rail" aria-label="Drawing tools"></aside>
+                <aside id="drawingToolbar" class="drawing-toolbar drawing-toolbar--rail chart-sidebar__orbinex-tools" aria-label="Drawing tools"></aside>
                 <div class="chart-stack">
                   <div class="chart-main">
                     <div class="chart-main__plot">
-                      <div id="activeIndicators" class="tv-study-legend hidden" aria-label="Active indicators"></div>
+                      <div id="tvChartHost" class="tv-chart-host" aria-label="TradingView 차트"></div>
+                      <div id="activeIndicators" class="tv-study-legend chart-sidebar__orbinex-tools hidden" aria-label="Active indicators"></div>
                       <div id="chartArea" class="chart-area"></div>
-                      <svg id="drawingOverlay" class="drawing-overlay"></svg>
+                      <svg id="drawingOverlay" class="drawing-overlay chart-sidebar__orbinex-tools"></svg>
                       <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
                       <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>로딩...</span></div>
                       <div id="chartError" class="chart-error hidden"><p>차트 오류</p><button id="retryBtn" class="btn btn--primary">재시도</button></div>
@@ -477,6 +480,7 @@
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
   <script src="js/app.js?v=20260724e"></script>
+  <script src="js/tv-chart-widget.js?v=20260724f"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260720a"></script>
