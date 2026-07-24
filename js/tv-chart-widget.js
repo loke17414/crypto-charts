@@ -64,11 +64,12 @@
 
   function applyBodyMode() {
     document.body.classList.toggle('trading-page--tv', mode === 'tv');
+    document.body.classList.toggle('trading-page--orbinex', mode === 'orbinex');
     if (toggleBtn) {
-      toggleBtn.textContent = mode === 'tv' ? 'Orbinex 차트' : 'TradingView';
+      toggleBtn.textContent = mode === 'tv' ? 'Orbinex chart' : 'TradingView';
       toggleBtn.title = mode === 'tv'
-        ? '봇 오버레이·백테스트 마커용 Orbinex 차트로 전환'
-        : 'TradingView 차트(지표·도구)로 전환';
+        ? 'Switch to Orbinex chart (overlays / backtest markers)'
+        : 'Switch to TradingView chart';
       toggleBtn.setAttribute('aria-pressed', mode === 'tv' ? 'true' : 'false');
     }
   }
@@ -99,7 +100,7 @@
       await loadScript();
     } catch (err) {
       console.warn('[TvChart]', err);
-      hostEl.innerHTML = '<div class="tv-chart-host__fallback">TradingView 차트를 불러오지 못했습니다. 「Orbinex 차트」로 전환해 주세요.</div>';
+      hostEl.innerHTML = '<div class="tv-chart-host__fallback">Could not load TradingView. Switch to Orbinex chart.</div>';
       return;
     }
 
@@ -114,10 +115,10 @@
       autosize: true,
       symbol: tvSymbol,
       interval: tvInterval,
-      timezone: 'Asia/Seoul',
+      timezone: 'Etc/UTC',
       theme: 'dark',
       style: '1',
-      locale: 'kr',
+      locale: 'en',
       toolbar_bg: '#181b21',
       enable_publishing: false,
       allow_symbol_change: false,

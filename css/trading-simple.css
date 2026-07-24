@@ -2078,37 +2078,98 @@
   color: var(--text-muted);
 }
 
+/* Orbinex chart chrome: hidden unless explicitly switched on. */
+.trading-page--simple .chart-sidebar__orbinex-tools,
+.trading-page--simple #drawingToolbar,
+.trading-page--simple .indicator-panes,
+.trading-page--simple .drawing-overlay,
+.trading-page--simple .go-realtime-btn,
+.trading-page--simple .chart-main__plot .chart-loading,
+.trading-page--simple .chart-main__plot .chart-error,
+.trading-page--simple .candle-tooltip {
+  display: none !important;
+}
+
 .trading-page--simple.trading-page--tv .tv-chart-host {
   display: block;
-}
-
-/* Keep LW chart sized for candle engine, but out of view under TV. */
-.trading-page--simple.trading-page--tv .chart-main__plot .chart-area {
-  position: absolute !important;
-  width: 960px !important;
-  height: 540px !important;
-  left: -9999px !important;
-  top: 0 !important;
-  flex: none !important;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.trading-page--simple.trading-page--tv .chart-main__plot .drawing-overlay,
-.trading-page--simple.trading-page--tv .chart-main__plot .go-realtime-btn,
-.trading-page--simple.trading-page--tv .indicator-panes,
-.trading-page--simple.trading-page--tv .chart-sidebar__orbinex-tools,
-.trading-page--simple.trading-page--tv #drawingToolbar {
-  display: none !important;
 }
 
 .trading-page--simple.trading-page--tv .chart-sidebar__tv-hint {
   display: block;
 }
 
-.trading-page--simple.trading-page--tv .chart-main__plot .chart-loading,
-.trading-page--simple.trading-page--tv .chart-main__plot .chart-error {
-  z-index: 6;
+/* Keep LW engine alive off-screen while TV is shown (never visible). */
+.trading-page--simple.trading-page--tv .chart-main__plot .chart-area {
+  position: fixed !important;
+  width: 960px !important;
+  height: 540px !important;
+  left: -10000px !important;
+  top: 0 !important;
+  flex: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+  overflow: hidden !important;
+}
+
+/* Orbinex mode: show native chart UI, hide TV. */
+.trading-page--simple.trading-page--orbinex .tv-chart-host {
+  display: none !important;
+}
+
+.trading-page--simple.trading-page--orbinex .chart-sidebar__tv-hint {
+  display: none !important;
+}
+
+.trading-page--simple.trading-page--orbinex .chart-sidebar__orbinex-tools {
+  display: contents !important;
+}
+
+.trading-page--simple.trading-page--orbinex .chart-sidebar__orbinex-tools.indicator-dropdown {
+  display: block !important;
+}
+
+.trading-page--simple.trading-page--orbinex #drawingToggleBtn.chart-sidebar__orbinex-tools {
+  display: inline-flex !important;
+}
+
+.trading-page--simple.trading-page--orbinex #drawingToolbar:not(.hidden) {
+  display: flex !important;
+}
+
+.trading-page--simple.trading-page--orbinex .indicator-panes {
+  display: flex !important;
+}
+
+.trading-page--simple.trading-page--orbinex .drawing-overlay:not(.hidden) {
+  display: block !important;
+}
+
+.trading-page--simple.trading-page--orbinex .go-realtime-btn:not(.hidden) {
+  display: inline-flex !important;
+}
+
+.trading-page--simple.trading-page--orbinex .chart-main__plot .chart-loading:not(.hidden),
+.trading-page--simple.trading-page--orbinex .chart-main__plot .chart-error:not(.hidden) {
+  display: flex !important;
+}
+
+.trading-page--simple.trading-page--orbinex .candle-tooltip:not(.hidden) {
+  display: block !important;
+}
+
+.trading-page--simple.trading-page--orbinex .chart-main__plot .chart-area {
+  position: relative !important;
+  left: auto !important;
+  width: auto !important;
+  height: auto !important;
+  flex: 1 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  z-index: 1 !important;
+  overflow: visible !important;
 }
 
 #chartDisplayToggleBtn[aria-pressed="true"] {
