@@ -566,14 +566,25 @@ function captureVisiblePriceRange() {
 function ensureLiveOhlcOverlay() {
   const main = document.querySelector('.chart-main');
   if (!main) return null;
-  let el = document.getElementById('chartLiveOhlc');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'chartLiveOhlc';
-    el.className = 'chart-live-ohlc';
-    el.setAttribute('aria-live', 'polite');
-    main.appendChild(el);
+
+  // Trading page: no top-left OHLC price chip (legend/indicators use that corner).
+  if (isTradingPage) {
+    document.getElementById('chartLiveOhlc')?.remove();
   }
+
+  let el = document.getElementById('chartLiveOhlc');
+  if (!isTradingPage) {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'chartLiveOhlc';
+      el.className = 'chart-live-ohlc';
+      el.setAttribute('aria-live', 'polite');
+      main.appendChild(el);
+    }
+  } else {
+    el = null;
+  }
+
   let badge = document.getElementById('chartDataSource');
   if (!badge) {
     badge = document.createElement('div');
@@ -586,7 +597,7 @@ function ensureLiveOhlcOverlay() {
 }
 
 function updateLiveOhlcDisplay(candle) {
-  if (!candle) return;
+  if (!candle || isTradingPage) return;
   const el = ensureLiveOhlcOverlay();
   if (!el) return;
   const chg = candle.close - candle.open;

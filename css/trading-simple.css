@@ -2043,6 +2043,11 @@
   }
 }
 
+/* Hide native OHLC price chip (top-left) on the trading chart. */
+.trading-page--simple .chart-live-ohlc {
+  display: none !important;
+}
+
 /* —— TradingView-like indicators / drawing chrome (native Orbinex chart) —— */
 .trading-page--simple .chart-sidebar__fx {
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
