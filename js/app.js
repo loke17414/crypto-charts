@@ -1842,6 +1842,11 @@ $('#indicatorBtn')?.addEventListener('click', (e) => {
   $('#indicatorMenu')?.classList.toggle('hidden');
 });
 
+$('#indicatorMenuClose')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('#indicatorMenu')?.classList.add('hidden');
+});
+
 $('#drawingToggleBtn')?.addEventListener('click', () => {
   const bar = $('#drawingToolbar');
   const overlay = $('#drawingOverlay');
@@ -1858,7 +1863,7 @@ $('#drawingToggleBtn')?.addEventListener('click', () => {
 document.addEventListener('indicators-changed', () => syncVolumeVisibility());
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.indicator-dropdown')) {
+  if (!e.target.closest('.indicator-dropdown') && !e.target.closest('#indicatorMenu')) {
     $('#indicatorMenu')?.classList.add('hidden');
   }
 });

@@ -322,9 +322,16 @@ a:hover { text-decoration: underline; }
   justify-content: center;
 }
 
+.drawing-tool svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 .drawing-tool:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .drawing-tool.active { background: rgba(41, 98, 255, 0.2); color: #5b9cf6; }
 .drawing-tool--clear { margin-top: 0.5rem; color: var(--red); }
+.drawing-tool--magnet.active { color: #f0b90b; }
 
 .drawing-overlay {
   position: absolute;

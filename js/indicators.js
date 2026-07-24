@@ -1104,11 +1104,10 @@ const IndicatorManager = (() => {
         const def = getDef(id);
         if (def?.type.startsWith('overlay')) removeOverlay(id);
         else removeSub(id);
-        const inp = document.querySelector(`input[data-indicator="${id}"]`);
-        if (inp) inp.checked = false;
         resizeMainChart();
         if (window.__lastCandles?.length) update(window.__lastCandles);
         renderActiveTags();
+        renderMenu(document.getElementById('indicatorSearch')?.value || '');
         document.dispatchEvent(new CustomEvent('indicators-changed'));
       });
     });
@@ -1241,34 +1240,63 @@ const IndicatorManager = (() => {
     });
   }
 
+  const FAVORITE_IDS = ['rsi', 'macd', 'boll', 'ema25', 'vol', 'stoch', 'atr', 'ichimoku'];
+  const GROUP_TITLE = { '메인': 'Overlays', '서브': 'Oscillators' };
+
   function renderMenu(filter = '') {
     const menu = document.getElementById('indicatorMenuList');
     if (!menu) return;
     const q = filter.trim().toLowerCase();
+    const match = (d) => {
+      const name = getDisplayName(d.id).toLowerCase();
+      return !q
+        || name.includes(q)
+        || d.baseName.toLowerCase().includes(q)
+        || d.id.includes(q);
+    };
+
+    const favorites = FAVORITE_IDS
+      .map((id) => getDef(id))
+      .filter((d) => d && match(d));
+
     const groups = {};
     INDICATOR_REGISTRY.forEach((d) => {
-      const name = getDisplayName(d.id).toLowerCase();
-      if (q && !name.includes(q) && !d.baseName.toLowerCase().includes(q) && !d.id.includes(q)) return;
+      if (!match(d)) return;
       if (!groups[d.group]) groups[d.group] = [];
       groups[d.group].push(d);
     });
-    menu.innerHTML = Object.entries(groups).map(([g, items]) => `
-      <div class="indicator-menu__group">
-        <div class="indicator-menu__title">${g} 차트 (${items.length})</div>
-        ${items.map((d) => `
-          <div class="indicator-menu__item">
-            <label class="indicator-menu__check">
-              <input type="checkbox" data-indicator="${d.id}" ${active.has(d.id) ? 'checked' : ''}>
-              <span>${getDisplayName(d.id)}</span>
-            </label>
-            ${d.params?.length ? `<button type="button" class="indicator-menu__gear" data-settings="${d.id}" title="설정">⚙</button>` : ''}
-          </div>
-        `).join('')}
-      </div>
-    `).join('') || '<div class="indicator-menu__empty">검색 결과 없음</div>';
 
-    menu.querySelectorAll('input[data-indicator]').forEach((inp) => {
-      inp.addEventListener('change', () => toggle(inp.dataset.indicator, inp.checked));
+    const rowHtml = (d) => `
+      <button type="button" class="indicator-menu__row ${active.has(d.id) ? 'is-on' : ''}" data-indicator="${d.id}">
+        <span class="indicator-menu__tick" aria-hidden="true">${active.has(d.id) ? '✓' : ''}</span>
+        <span class="indicator-menu__name">${getDisplayName(d.id)}</span>
+        ${d.params?.length ? `<span class="indicator-menu__gear" data-settings="${d.id}" title="Settings">⚙</span>` : ''}
+      </button>
+    `;
+
+    let html = '';
+    if (!q && favorites.length) {
+      html += `<div class="indicator-menu__group">
+        <div class="indicator-menu__title">Favorites</div>
+        ${favorites.map(rowHtml).join('')}
+      </div>`;
+    }
+    html += Object.entries(groups).map(([g, items]) => `
+      <div class="indicator-menu__group">
+        <div class="indicator-menu__title">${GROUP_TITLE[g] || g} (${items.length})</div>
+        ${items.map(rowHtml).join('')}
+      </div>
+    `).join('');
+
+    menu.innerHTML = html || '<div class="indicator-menu__empty">No results</div>';
+
+    menu.querySelectorAll('[data-indicator]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        if (e.target.closest('[data-settings]')) return;
+        const id = btn.dataset.indicator;
+        toggle(id, !active.has(id));
+        renderMenu(document.getElementById('indicatorSearch')?.value || '');
+      });
     });
     menu.querySelectorAll('[data-settings]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -1305,6 +1333,26 @@ const IndicatorManager = (() => {
     }
 
     el.classList.remove('hidden');
+
+    // TradingView-style legend on the chart (trading page).
+    if (el.classList.contains('tv-study-legend')) {
+      el.innerHTML = [...active].map((id) => {
+        const def = getDef(id);
+        if (!def) return '';
+        const gear = def.params?.length
+          ? `<button type="button" class="indicator-tag__gear" data-settings="${id}" title="Settings">⚙</button>`
+          : '';
+        return `<div class="tv-study-legend__item indicator-tag" data-id="${id}">
+          <span class="indicator-tag__dot" style="background:${getIndicatorColor(id)}"></span>
+          <span class="tv-study-legend__name">${getDisplayName(id)}</span>
+          ${gear}
+          <button type="button" class="indicator-tag__remove" aria-label="Remove">×</button>
+        </div>`;
+      }).join('');
+      bindTagEvents(el);
+      return;
+    }
+
     const mainIds = [...active].filter((id) => getDef(id)?.group === '메인');
     const subIds = [...active].filter((id) => getDef(id)?.group === '서브');
     const groupHtml = (title, ids) => (ids.length ? `
