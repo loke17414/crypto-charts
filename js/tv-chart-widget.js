@@ -1,5 +1,5 @@
-/* TradingView Advanced Chart ? display only.
- * Bot / backtest / SL·TP still use CryptoCharts (Lightweight Charts) under the hood. */
+/* TradingView Advanced Chart - display only.
+ * Bot / backtest / SL-TP still use CryptoCharts (Lightweight Charts) under the hood. */
 (function () {
   const TV_SCRIPT = 'https://s3.tradingview.com/tv.js';
   const STORAGE_KEY = 'orbinex_chart_display';
@@ -20,30 +20,29 @@
   let toggleBtn = null;
 
   function loadScript() {
-    if (window.TradingView?.widget) return Promise.resolve();
+    if (window.TradingView && window.TradingView.widget) return Promise.resolve();
     if (scriptPromise) return scriptPromise;
-    scriptPromise = new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${TV_SCRIPT}"]`);
+    scriptPromise = new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[src="' + TV_SCRIPT + '"]');
       if (existing) {
-        existing.addEventListener('load', () => resolve(), { once: true });
-        existing.addEventListener('error', () => reject(new Error('TradingView script failed')), { once: true });
-        if (window.TradingView?.widget) resolve();
+        existing.addEventListener('load', function () { resolve(); }, { once: true });
+        existing.addEventListener('error', function () { reject(new Error('TradingView script failed')); }, { once: true });
+        if (window.TradingView && window.TradingView.widget) resolve();
         return;
       }
-      const s = document.createElement('script');
+      var s = document.createElement('script');
       s.src = TV_SCRIPT;
       s.async = true;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('TradingView script failed'));
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error('TradingView script failed')); };
       document.head.appendChild(s);
     });
     return scriptPromise;
   }
 
   function toTvSymbol(binanceSymbol) {
-    const raw = String(binanceSymbol || 'BTCUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    // Binance USDT-M perpetual on TradingView
-    return `BINANCE:${raw}.P`;
+    var raw = String(binanceSymbol || 'BTCUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return 'BINANCE:' + raw + '.P';
   }
 
   function toTvInterval(interval) {
@@ -52,30 +51,30 @@
 
   function readSavedMode() {
     try {
-      const v = localStorage.getItem(STORAGE_KEY);
+      var v = localStorage.getItem(STORAGE_KEY);
       if (v === 'orbinex' || v === 'tv') return v;
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
     return 'tv';
   }
 
   function saveMode(next) {
-    try { localStorage.setItem(STORAGE_KEY, next); } catch { /* ignore */ }
+    try { localStorage.setItem(STORAGE_KEY, next); } catch (e) { /* ignore */ }
   }
 
   function applyBodyMode() {
     document.body.classList.toggle('trading-page--tv', mode === 'tv');
     document.body.classList.toggle('trading-page--orbinex', mode === 'orbinex');
     if (toggleBtn) {
-      toggleBtn.textContent = mode === 'tv' ? 'Orbinex ??' : 'TradingView';
+      toggleBtn.textContent = mode === 'tv' ? 'Orbinex chart' : 'TradingView';
       toggleBtn.title = mode === 'tv'
-        ? '? ????·???? ??? Orbinex ??? ??'
-        : 'TradingView ??(??·??)? ??';
+        ? 'Switch to Orbinex chart (overlays / backtest markers)'
+        : 'Switch to TradingView chart';
       toggleBtn.setAttribute('aria-pressed', mode === 'tv' ? 'true' : 'false');
     }
   }
 
   function currentState() {
-    const st = window.CryptoCharts?.getState?.() || {};
+    var st = (window.CryptoCharts && window.CryptoCharts.getState && window.CryptoCharts.getState()) || {};
     return {
       symbol: st.symbol || 'BTCUSDT',
       interval: st.interval || '1h',
@@ -88,25 +87,25 @@
     if (hostEl) hostEl.innerHTML = '';
   }
 
-  async function mountWidget(force = false) {
+  async function mountWidget(force) {
     if (mode !== 'tv' || !hostEl) return;
-    const { symbol, interval } = currentState();
-    const tvSymbol = toTvSymbol(symbol);
-    const tvInterval = toTvInterval(interval);
-    const key = `${tvSymbol}|${tvInterval}`;
+    var state = currentState();
+    var tvSymbol = toTvSymbol(state.symbol);
+    var tvInterval = toTvInterval(state.interval);
+    var key = tvSymbol + '|' + tvInterval;
     if (!force && key === mountedKey && hostEl.querySelector('iframe')) return;
 
     try {
       await loadScript();
     } catch (err) {
       console.warn('[TvChart]', err);
-      hostEl.innerHTML = '<div class="tv-chart-host__fallback">TradingView ??? ???? ?????. ?Orbinex ???? ??? ???.</div>';
+      hostEl.innerHTML = '<div class="tv-chart-host__fallback">Could not load TradingView. Switch to Orbinex chart.</div>';
       return;
     }
 
     destroyWidget();
-    const containerId = 'tv_chart_widget';
-    const box = document.createElement('div');
+    var containerId = 'tv_chart_widget';
+    var box = document.createElement('div');
     box.id = containerId;
     box.className = 'tv-chart-host__frame';
     hostEl.appendChild(box);
@@ -142,11 +141,12 @@
       mountWidget(true);
     } else {
       destroyWidget();
-      // Nudge Lightweight Charts to reflow after becoming visible again.
       try {
         window.dispatchEvent(new Event('resize'));
-        window.CryptoCharts?.reloadChart?.();
-      } catch { /* ignore */ }
+        if (window.CryptoCharts && window.CryptoCharts.reloadChart) {
+          window.CryptoCharts.reloadChart();
+        }
+      } catch (e) { /* ignore */ }
     }
   }
 
@@ -164,18 +164,19 @@
     mode = readSavedMode();
     applyBodyMode();
 
-    toggleBtn?.addEventListener('click', () => {
-      setMode(mode === 'tv' ? 'orbinex' : 'tv');
-    });
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        setMode(mode === 'tv' ? 'orbinex' : 'tv');
+      });
+    }
 
     document.addEventListener('chart-candles-updated', syncFromChart);
     window.addEventListener('orbinex:symbol-changed', syncFromChart);
 
     if (mode === 'tv') {
-      // Chart engine may still be loading ? retry a few times.
       mountWidget(true);
-      let tries = 0;
-      const boot = setInterval(() => {
+      var tries = 0;
+      var boot = setInterval(function () {
         tries += 1;
         syncFromChart();
         if (mountedKey || tries > 20) clearInterval(boot);
@@ -183,10 +184,10 @@
     }
 
     window.TvChartWidget = {
-      setMode,
-      getMode: () => mode,
+      setMode: setMode,
+      getMode: function () { return mode; },
       sync: syncFromChart,
-      remount: () => mountWidget(true),
+      remount: function () { return mountWidget(true); },
     };
   }
 
