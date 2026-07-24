@@ -72,6 +72,9 @@
         : 'Switch to TradingView chart';
       toggleBtn.setAttribute('aria-pressed', mode === 'tv' ? 'true' : 'false');
     }
+    try {
+      window.TvLevelsOverlay?.setActive?.(mode === 'tv');
+    } catch { /* ignore */ }
   }
 
   function currentState() {
@@ -123,7 +126,8 @@
       enable_publishing: false,
       allow_symbol_change: false,
       hide_top_toolbar: false,
-      hide_legend: false,
+      hide_legend: true,
+      details: false,
       hide_side_toolbar: false,
       withdateranges: true,
       save_image: false,

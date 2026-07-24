@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260722i">
-  <link rel="stylesheet" href="css/trading-simple.css?v=20260724b">
+  <link rel="stylesheet" href="css/trading-simple.css?v=20260724c">
 </head>
 <body class="trading-page trading-page--simple trading-page--tv">
   <div class="app">
@@ -123,7 +123,12 @@
                 <div class="chart-stack">
                   <div class="chart-main">
                     <div class="chart-main__plot">
-                      <div id="tvChartHost" class="tv-chart-host" aria-label="TradingView 차트"></div>
+                      <div id="tvChartHost" class="tv-chart-host" aria-label="TradingView chart"></div>
+                      <div id="tvLevelsOverlay" class="tv-levels-overlay" aria-hidden="true">
+                        <svg class="tv-levels-overlay__svg" aria-hidden="true"></svg>
+                        <div class="tv-levels-overlay__markers" aria-hidden="true"></div>
+                        <div class="tv-levels-overlay__labels"></div>
+                      </div>
                       <div id="chartArea" class="chart-area"></div>
                       <svg id="drawingOverlay" class="drawing-overlay hidden"></svg>
                       <button id="goRealtimeBtn" class="go-realtime-btn hidden" type="button">실시간 ⟳</button>
@@ -474,7 +479,8 @@
   <script src="js/kline-loader.js"></script>
   <script src="js/module-bridge.js?v=20260716a"></script>
   <script src="js/app.js?v=20260722p"></script>
-  <script src="js/tv-chart-widget.js?v=20260724b"></script>
+  <script src="js/tv-chart-widget.js?v=20260724c"></script>
+  <script src="js/tv-levels-overlay.js?v=20260724c"></script>
   <script src="js/candle-tooltip.js?v=20260718a"></script>
   <script src="js/futures-paper.js"></script>
   <script src="js/futures-strategy.js?v=20260720a"></script>

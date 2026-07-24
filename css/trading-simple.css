@@ -2176,3 +2176,81 @@
   color: var(--simple-accent);
   border-color: rgba(249, 115, 22, 0.45);
 }
+
+/* Cover residual TV legend / last-price chip in the top-left of the iframe. */
+.trading-page--simple.trading-page--tv .tv-chart-host::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(42%, 320px);
+  height: 52px;
+  background: linear-gradient(180deg, #131722 0%, #131722 70%, transparent 100%);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* Native position labels use the off-screen engine scale — hide on TV. */
+.trading-page--simple.trading-page--tv #chartPositionLabels {
+  display: none !important;
+}
+
+/* SVG / label overlay for entry · SL · TP · backtest markers on TV. */
+.trading-page--simple .tv-levels-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.trading-page--simple.trading-page--tv .tv-levels-overlay.is-active {
+  display: block;
+}
+
+.trading-page--simple .tv-levels-overlay__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.trading-page--simple .tv-levels-overlay__labels {
+  position: absolute;
+  inset: 0;
+}
+
+.trading-page--simple .tv-levels-overlay__label {
+  position: absolute;
+  left: 8px;
+  transform: translateY(-50%);
+  padding: 2px 7px;
+  border: 1px solid;
+  border-radius: 3px;
+  background: rgba(19, 23, 34, 0.88);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.trading-page--simple .tv-levels-overlay__markers {
+  position: absolute;
+  inset: 0;
+}
+
+.trading-page--simple .tv-levels-overlay__marker {
+  position: absolute;
+  transform: translate(-50%, -110%);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+
+.trading-page--simple .tv-levels-overlay__marker.is-below {
+  transform: translate(-50%, 20%);
+}
