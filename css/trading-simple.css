@@ -2042,3 +2042,76 @@
     min-height: 0;
   }
 }
+
+/* —— TradingView display layer (bot engine stays on Lightweight Charts) —— */
+.trading-page--simple .tv-chart-host {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: var(--simple-bg);
+  min-height: 0;
+}
+
+.trading-page--simple .tv-chart-host__frame {
+  width: 100%;
+  height: 100%;
+}
+
+.trading-page--simple .tv-chart-host__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 1rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.trading-page--simple .chart-sidebar__tv-hint {
+  display: none;
+  margin: 0.35rem 0 0;
+  padding: 0 0.15rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.trading-page--simple.trading-page--tv .tv-chart-host {
+  display: block;
+}
+
+/* Keep LW chart sized for candle engine, but out of view under TV. */
+.trading-page--simple.trading-page--tv .chart-main__plot .chart-area {
+  position: absolute !important;
+  width: 960px !important;
+  height: 540px !important;
+  left: -9999px !important;
+  top: 0 !important;
+  flex: none !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.trading-page--simple.trading-page--tv .chart-main__plot .drawing-overlay,
+.trading-page--simple.trading-page--tv .chart-main__plot .go-realtime-btn,
+.trading-page--simple.trading-page--tv .indicator-panes,
+.trading-page--simple.trading-page--tv .chart-sidebar__orbinex-tools,
+.trading-page--simple.trading-page--tv #drawingToolbar {
+  display: none !important;
+}
+
+.trading-page--simple.trading-page--tv .chart-sidebar__tv-hint {
+  display: block;
+}
+
+.trading-page--simple.trading-page--tv .chart-main__plot .chart-loading,
+.trading-page--simple.trading-page--tv .chart-main__plot .chart-error {
+  z-index: 6;
+}
+
+#chartDisplayToggleBtn[aria-pressed="true"] {
+  color: var(--simple-accent);
+  border-color: rgba(249, 115, 22, 0.45);
+}
